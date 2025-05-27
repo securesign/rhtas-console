@@ -1,0 +1,478 @@
+openapi: 3.1.1
+info:
+  title: RHTAS Console API
+  version: 1.0.0
+  description: API for interacting with artifact trust, verification, and metadata services in the RHTAS Console.
+servers:
+  - url: https://api.rhtas.example.com
+    description: Production server
+tags:
+  - name: Artifact
+    description: Operations for signing and verifying artifacts
+  - name: Rekor
+    description: Operations for interacting with Rekor transparency log
+  - name: Trust
+    description: Operations for trust configuration and TUF targets
+paths:
+  /healthz:
+    get:
+      operationId: GetHealthz
+      responses:
+        '200':
+          description: Server is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [ok]
+  /api/v1/artifacts/sign:
+    post:
+      summary: Sign an artifact using Cosign
+      tags:
+        - Artifact
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignArtifactRequest'
+      responses:
+        '200':
+          description: Artifact signed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SignArtifactResponse'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/artifacts/verify:
+    post:
+      summary: Verify an artifact using Cosign
+      tags:
+        - Artifact
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VerifyArtifactRequest'
+      responses:
+        '200':
+          description: Verification succeeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VerifyArtifactResponse'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Verification failed due to internal error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/rekor/entries/{uuid}:
+    get:
+      summary: Retrieve Rekor log entry by UUID
+      tags:
+        - Rekor
+      parameters:
+        - name: uuid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Rekor entry data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RekorEntry'
+        '404':
+          description: Entry not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/rekor/public-key:
+    get:
+      summary: Get Rekor public key
+      tags:
+        - Rekor
+      responses:
+        '200':
+          description: Rekor public key in PEM format
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RekorPublicKey'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/artifacts/{artifact}/policies:
+    get:
+      summary: Get policies and attestations for an artifact
+      tags:
+        - Artifact
+      parameters:
+        - name: artifact
+          in: path
+          required: true
+          schema:
+            type: string
+            example: quay.io/example/app:latest
+      responses:
+        '200':
+          description: Policy and attestation data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ArtifactPolicies'
+        '404':
+          description: Artifact not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/trust/config:
+    get:
+      summary: Get TUF targets and Fulcio certificate authorities
+      tags:
+        - Trust
+      responses:
+        '200':
+          description: Trust root data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrustConfig'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+components:
+  schemas:
+    SignArtifactRequest:
+      type: object
+      properties:
+        artifact:
+          type: string
+          description: >
+            URI or identifier of the artifact to sign. This could be a container image (e.g., quay.io/example/app:latest),
+            a file path, a blob digest, or another unique artifact reference.
+          example: quay.io/example/app:latest
+        artifactType:
+          type: string
+          description: >
+            Type of the artifact to sign. Common types include `container-image`, `file`, `blob`, `sbom`, etc.
+          enum:
+            - container-image
+            - file
+            - blob
+            - sbom
+          example: container-image
+        identityToken:
+          type: string
+          description: OIDC token for Fulcio (if using keyless signing)
+          nullable: true
+        privateKeyRef:
+          type: string
+          description: Reference to a private key (KMS URI or file)
+          nullable: true
+        annotations:
+          type: object
+          additionalProperties:
+            type: string
+          description: Optional key-value annotations to include in the signature
+          example:
+            env: prod
+      required:
+        - artifact
+        - artifactType
+    SignArtifactResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          description: Whether the signing was successful
+        signature:
+          type: string
+          description: The generated signature
+        certificate:
+          type: string
+          description: Fulcio-signed certificate (PEM), if keyless
+          nullable: true
+        logEntry:
+          type: object
+          description: Rekor transparency log entry
+          properties:
+            uuid:
+              type: string
+            integratedTime:
+              type: integer
+            logIndex:
+              type: integer
+      required:
+        - success
+        - signature
+    VerifyArtifactRequest:
+      type: object
+      properties:
+        artifact:
+          type: string
+          description: >
+            URI or identifier of the artifact to verify. This could be a container image (e.g., quay.io/example/app:latest),
+            a file path, a blob digest, or another unique artifact reference.
+          example: quay.io/example/app:latest
+        publicKey:
+          type: string
+          description: Optional public key path, KMS URI, or URL (for key-based verification)
+          nullable: true
+          example: cosign.pub
+        cert:
+          type: string
+          description: Path or content of certificate for Fulcio-based verification
+          nullable: true
+        certChain:
+          type: string
+          description: Certificate chain in PEM format (if using keyless verification)
+          nullable: true
+        certificateIdentity:
+          type: string
+          description: Expected identity from Fulcio certificate (OIDC subject)
+          nullable: true
+        certificateOidcIssuer:
+          type: string
+          description: OIDC issuer for Fulcio verification
+          nullable: true
+        annotations:
+          type: object
+          additionalProperties:
+            type: string
+          description: Optional key-value annotations to verify in the signature
+        offline:
+          type: boolean
+          default: false
+          description: Whether to run Cosign in offline mode
+        output:
+          type: string
+          enum: [json, text]
+          default: json
+          description: Output format
+      required:
+        - artifact
+    VerifyArtifactResponse:
+      type: object
+      properties:
+        verified:
+          type: boolean
+          description: Whether verification was successful
+        message:
+          type: string
+          description: Verification result message
+        details:
+          type: object
+          description: Detailed output from Cosign
+      required:
+        - verified
+        - message
+    InclusionProof:
+      type: object
+      description: Merkle tree inclusion proof for a Rekor entry
+      properties:
+        checkpoint:
+          type: string
+          description: Checkpoint string for the log, including tree size and root hash
+        hashes:
+          type: array
+          description: Array of Merkle tree hashes for the inclusion proof
+          items:
+            type: string
+            description: A single hash in the inclusion proof
+        logIndex:
+          type: integer
+          format: int64
+          description: Log index of the entry in the Merkle tree
+        rootHash:
+          type: string
+          description: Root hash of the Merkle tree at the time of inclusion
+        treeSize:
+          type: integer
+          format: int64
+          description: Size of the Merkle tree at the time of inclusion
+      required:
+        - checkpoint
+        - hashes
+        - logIndex
+        - rootHash
+        - treeSize
+    Verification:
+      type: object
+      description: Verification details for a Rekor entry, including inclusion proof and signed timestamp
+      properties:
+        inclusionProof:
+          $ref: '#/components/schemas/InclusionProof'
+          description: Merkle tree inclusion proof for the entry
+        signedEntryTimestamp:
+          type: string
+          description: Base64-encoded signed timestamp for the entry
+      required:
+        - inclusionProof
+        - signedEntryTimestamp
+    RekorEntry:
+      type: object
+      properties:
+        uuid:
+          type: string
+          description: Unique identifier of the Rekor entry
+        body:
+          type: string
+          description: Base64-encoded entry body
+        integratedTime:
+          type: integer
+          description: Timestamp of when the entry was integrated
+        logID:
+          type: string
+          description: Unique identifier of the transparency log
+        logIndex:
+          type: integer
+          description: Index in the transparency log
+        verification:
+          $ref: '#/components/schemas/Verification'
+          description: Verification details for the entry
+      required:
+        - uuid
+        - body
+        - integratedTime
+        - logID
+        - logIndex
+        - verification
+    RekorPublicKey:
+      type: object
+      properties:
+        publicKey:
+          type: string
+          description: Rekor public key in PEM format
+          example: "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkq...\n-----END PUBLIC KEY-----"
+      required:
+        - publicKey
+    ArtifactPolicies:
+      type: object
+      properties:
+        artifact:
+          type: string
+          description: The artifact URI
+        policies:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+                description: Policy name
+              status:
+                type: string
+                description: Policy status
+              lastChecked:
+                type: string
+                format: date-time
+                description: Last time the policy was checked
+        attestations:
+          type: array
+          items:
+            type: object
+            properties:
+              type:
+                type: string
+                description: Attestation type
+              issuer:
+                type: string
+                description: Issuer of the attestation
+              subject:
+                type: string
+                description: Subject of the attestation
+              issuedAt:
+                type: string
+                format: date-time
+                description: Issuance timestamp
+      required:
+        - artifact
+        - policies
+        - attestations
+    TrustConfig:
+      type: object
+      properties:
+        tufRoot:
+          type: object
+          properties:
+            version:
+              type: integer
+              description: TUF root version
+            expires:
+              type: string
+              format: date-time
+              description: Expiration timestamp
+          required:
+            - version
+            - expires
+        fulcioCertAuthorities:
+          type: array
+          items:
+            type: object
+            properties:
+              subject:
+                type: string
+                description: Certificate authority subject
+              pem:
+                type: string
+                description: Certificate in PEM format
+                example: "-----BEGIN CERTIFICATE-----\nMIIBIjANBgkq...\n-----END CERTIFICATE-----"
+            required:
+              - subject
+              - pem
+      required:
+        - tufRoot
+        - fulcioCertAuthorities
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+          description: Error message
+      required:
+        - error
