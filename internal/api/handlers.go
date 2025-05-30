@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"os"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/securesign/rhtas-console/internal/models"
@@ -101,6 +102,48 @@ func (h *Handler) GetApiV1TrustConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func (h *Handler) ServeSwaggerUI(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write([]byte(`
+	<!DOCTYPE html>
+	<html lang="en">
+	<head>
+		<meta charset="UTF-8">
+		<title>RHTAS Console Swagger UI</title>
+		<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css" />
+		<script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+		<script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-standalone-preset.js"></script>
+	</head>
+	<body>
+		<div id="swagger-ui"></div>
+		<script>
+			window.onload = function() {
+				SwaggerUIBundle({
+					url: "/rhtas-console.yaml",
+					dom_id: '#swagger-ui',
+					presets: [
+						SwaggerUIBundle.presets.apis,
+						SwaggerUIStandalonePreset
+					],
+					layout: "StandaloneLayout"
+				});
+			};
+		</script>
+	</body>
+	</html>
+			`))
+}
+
+func (h *Handler) ServeOpenAPIFile(w http.ResponseWriter, r *http.Request) {
+	data, err := os.ReadFile("openapi/rhtas-console.yaml")
+	if err != nil {
+		http.Error(w, "Failed to read OpenAPI file", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/yaml")
+	w.Write(data)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {
