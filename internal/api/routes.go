@@ -15,4 +15,6 @@ func RegisterRoutes(r *chi.Mux, as services.ArtifactService, rs services.RekorSe
 	r.Get("/api/v1/rekor/entries/{uuid}", handler.GetApiV1RekorEntriesUuid)
 	r.Get("/api/v1/rekor/public-key", handler.GetApiV1RekorPublicKey)
 	r.Get("/api/v1/trust/config", handler.GetApiV1TrustConfig)
+	r.Get("/swagger-ui", handler.ServeSwaggerUI)
+	r.Get("/rhtas-console.yaml", handler.ServeOpenAPIFile)
 }

@@ -32,7 +32,7 @@ func main() {
 
 	portStr := strconv.Itoa(*serverPort)
 	addr := ":" + portStr
-	log.Printf("Starting sss server on %s", addr)
+	log.Printf("Starting server on %s", addr)
 	if err := http.ListenAndServe(addr, r); err != nil {
 		log.Fatalf("Server failed: %v", err)
 	}
