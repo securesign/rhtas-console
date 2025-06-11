@@ -70,7 +70,8 @@ The backend exposes the following RESTful endpoints, as defined in the OpenAPI s
 | Method | Endpoint                          | Description                                      |
 |--------|-----------------------------------|--------------------------------------------------|
 | GET    | `/healthz`                           | Retrieves the current health status of the server. |
-| GET    | `/swagger-ui`                           | Serves the Swagger User Interface. |
+| GET    | `/swagger-ui`                        | Serves the Swagger User Interface. |
+| GET    | `/rhtas-console.yaml`                | Returns the project OpenAPI spec file. |
 | POST   | `/api/v1/artifacts/sign`             | Signs an artifact using Cosign.                  |
 | POST   | `/api/v1/artifacts/verify`           | Verifies an artifact using Cosign.               |
 | GET    | `/api/v1/artifacts/{artifact}/policies` | Retrieves policies and attestations for an artifact. |
