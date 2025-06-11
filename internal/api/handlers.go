@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 
+	_ "embed"
+
 	"github.com/go-chi/chi/v5"
 	"github.com/securesign/rhtas-console/internal/models"
 	"github.com/securesign/rhtas-console/internal/services"
@@ -15,6 +17,9 @@ type Handler struct {
 	rekorService    services.RekorService
 	trustService    services.TrustService
 }
+
+//go:embed openapi/rhtas-console.yaml
+var openAPIYaml []byte
 
 func NewHandler(as services.ArtifactService, rs services.RekorService, ts services.TrustService) *Handler {
 	return &Handler{
@@ -101,6 +106,43 @@ func (h *Handler) GetApiV1TrustConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func (h *Handler) ServeSwaggerUI(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write([]byte(`
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<title>RHTAS Console Swagger UI</title>
+	<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css" />
+	<script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+	<script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-standalone-preset.js"></script>
+</head>
+<body>
+	<div id="swagger-ui"></div>
+	<script>
+		window.onload = function() {
+			SwaggerUIBundle({
+				url: "/rhtas-console.yaml",
+				dom_id: '#swagger-ui',
+				presets: [
+					SwaggerUIBundle.presets.apis,
+					SwaggerUIStandalonePreset
+				],
+				layout: "StandaloneLayout"
+			});
+		};
+	</script>
+</body>
+</html>
+		`))
+}
+
+func (h *Handler) ServeOpenAPIFile(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/vnd.oai.openapi;version=3.0.0+yaml")
+	w.Write(openAPIYaml)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {

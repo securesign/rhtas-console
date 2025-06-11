@@ -31,25 +31,25 @@ The RHTAS Console is a Go-based RESTful API server, providing functionality for 
    cd rhtas-console
    ```
 
-2. **Install dependencies**:
+2. **Build the application**:
 
    ```bash
-   go mod tidy
+   make build
    ```
 
-3. **Build the application**:
+3. **Run the server**:
 
    ```bash
-   go build -o rhtas_console ./cmd/rhtas_console
-   ```
-
-4. **Run the server**:
-
-   ```bash
-   ./rhtas_console
+   ./bin/rhtas_console
    ```
 
    The backend server runs on `localhost:8080` by default. Configure the port via `--port` flag.
+
+3. **Clean the project**:
+
+   ```bash
+   make clean
+   ```
 
 ## Usage
 
@@ -58,7 +58,7 @@ The RHTAS Console is a Go-based RESTful API server, providing functionality for 
 Start the server with:
 
 ```bash
-./rhtas_console
+./bin/rhtas_console
 ```
 
 The API will be available at `http://localhost:8080` (or `https://api.rhtas.example.com` in production).
@@ -70,6 +70,8 @@ The backend exposes the following RESTful endpoints, as defined in the OpenAPI s
 | Method | Endpoint                          | Description                                      |
 |--------|-----------------------------------|--------------------------------------------------|
 | GET    | `/healthz`                           | Retrieves the current health status of the server. |
+| GET    | `/swagger-ui`                        | Serves the Swagger User Interface. |
+| GET    | `/rhtas-console.yaml`                | Returns the project OpenAPI spec file. |
 | POST   | `/api/v1/artifacts/sign`             | Signs an artifact using Cosign.                  |
 | POST   | `/api/v1/artifacts/verify`           | Verifies an artifact using Cosign.               |
 | GET    | `/api/v1/artifacts/{artifact}/policies` | Retrieves policies and attestations for an artifact. |
@@ -158,10 +160,10 @@ rhtas-console/
 │       └── main.go         # Backend entry point
 ├── internal/
 │   ├── api/                # API routes and handlers
+│   │   ├── openapi/
+│   │   │   └── rhtas-console.yaml  # OpenAPI specification
 │   ├── models/             # Data models
 │   └── services/           # Business logic (ArtifactService, RekorService, TrustService)
-├── openapi/
-│   └── rhtas-console.yaml  # OpenAPI specification
 ├── go.mod                  
 └── go.sum
 ```
@@ -171,7 +173,7 @@ rhtas-console/
 The `models` package is generated from the OpenAPI specification:
 
 ```bash
-oapi-codegen -generate types,chi-server -package models openapi/rhtas-console.yaml > internal/models/models.go
+make generate-openapi
 ```
 
 This generates Go types such as `RekorEntry`, `SignArtifactRequest`, `VerifyArtifactResponse`, and others.
