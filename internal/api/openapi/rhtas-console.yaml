@@ -89,18 +89,18 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
-  /api/v1/artifacts/{artifact}:
+  /api/v1/artifacts/image:
     get:
       summary: Retrieve metadata and digest from an OCI-compliant registry
       tags:
-        - Artifact
+        - Image
       parameters:
-        - name: artifact
-          in: path
+        - name: image
+          in: query
           required: true
           schema:
             type: string
-            description: URI of the artifact (e.g., docker.io/library/nginx:latest)
+            description: URI of the container image (e.g., docker.io/library/nginx:latest)
             example: docker.io/library/nginx:latest
         - name: username
           in: query
@@ -118,13 +118,13 @@ paths:
             example: my-token
       responses:
         '200':
-          description: Artifact metadata and digest retrieved successfully
+          description: Container image metadata and digest retrieved successfully
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ArtifactMetadataResponse'
+                $ref: '#/components/schemas/ImageMetadataResponse'
         '400':
-          description: Invalid input (e.g., malformed artifact URI)
+          description: Invalid input (e.g., malformed container image URI)
           content:
             application/json:
               schema:
@@ -136,7 +136,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
         '404':
-          description: Artifact not found in the registry
+          description: Container image not found in the registry
           content:
             application/json:
               schema:
@@ -529,45 +529,45 @@ components:
         - fulcioCertAuthorities
     Metadata:
       type: object
-      description: Metadata for an artifact
+      description: Metadata for a container image
       properties:
         mediaType:
           type: string
-          description: Media type of the artifact (e.g., OCI manifest type)
+          description: Media type of the container image (e.g., OCI manifest type)
           example: application/vnd.oci.image.manifest.v1+json
         size:
           type: integer
           format: int64
-          description: Size of the artifact in bytes
+          description: Size of the container image in bytes
           example: 1234
         created:
           type: string
           format: date-time
-          description: Creation timestamp of the artifact (if available)
+          description: Creation timestamp of the container image (if available)
           nullable: true
         labels:
           type: object
           additionalProperties:
             type: string
-          description: Key-value labels or annotations associated with the artifact
+          description: Key-value labels or annotations associated with the container image
           nullable: true
           example:
             org.opencontainers.image.version: 1.0.0
       required:
         - mediaType
         - size
-    ArtifactMetadataResponse:
+    ImageMetadataResponse:
       type: object
       properties:
-        artifact:
+        image:
           type: string
-          description: The artifact URI
+          description: The container image URI
           example: docker.io/library/nginx:latest
         metadata:
           $ref: '#/components/schemas/Metadata'
         digest:
           type: string
-          description: The artifact's digest (e.g., SHA256 hash)
+          description: The container image's digest (e.g., SHA256 hash)
           example: sha256:abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890
       required:
         - artifact

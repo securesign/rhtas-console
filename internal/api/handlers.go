@@ -158,35 +158,34 @@ func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, models.Error{Error: message})
 }
 
-func (h *Handler) GetApiV1ArtifactsArtifact(w http.ResponseWriter, r *http.Request) {
-	// Extract artifact from the URL path
-	artifact := strings.TrimPrefix(r.URL.Path, "/api/v1/artifacts/")
-	if artifact == "" {
-		writeError(w, http.StatusBadRequest, "Missing artifact URI")
+func (h *Handler) GetApiV1ArtifactsImage(w http.ResponseWriter, r *http.Request) {
+	image := strings.TrimPrefix(r.URL.Path, "/api/v1/artifacts/image/")
+	if image == "" {
+		writeError(w, http.StatusBadRequest, "Missing image URI")
 		return
 	}
 
-	// Decode URL-encoded artifact (e.g., %2F to /)
-	artifact, err := url.PathUnescape(artifact)
+	// Decode URL-encoded image (e.g., %2F to /)
+	image, err := url.PathUnescape(image)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("Failed to decode artifact URI: %v", err))
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("Failed to decode image URI: %v", err))
 		return
 	}
 	username := r.URL.Query().Get("username")
 	password := r.URL.Query().Get("password")
 
 	ctx := r.Context()
-	response, err := h.artifactService.GetArtifact(ctx, artifact, username, password)
+	response, err := h.artifactService.GetImage(ctx, image, username, password)
 
 	if err != nil {
 		errMsg := strings.ToLower(err.Error())
 		switch {
-		case strings.Contains(errMsg, "Artifact not found"):
+		case strings.Contains(errMsg, "Image not found"):
 			writeError(w, http.StatusNotFound, "not found")
 		case strings.Contains(errMsg, "authentication failed"):
 			writeError(w, http.StatusUnauthorized, "Authentication failed")
-		case strings.Contains(errMsg, "invalid artifact uri"):
-			writeError(w, http.StatusBadRequest, "Invalid artifact URI")
+		case strings.Contains(errMsg, "invalid image uri"):
+			writeError(w, http.StatusBadRequest, "Invalid image URI")
 		case strings.Contains(errMsg, "failed to fetch image"):
 			writeError(w, http.StatusInternalServerError, "Failed to fetch image")
 		case strings.Contains(errMsg, "failed to compute digest"):
@@ -194,7 +193,7 @@ func (h *Handler) GetApiV1ArtifactsArtifact(w http.ResponseWriter, r *http.Reque
 		case strings.Contains(errMsg, "failed to fetch config file"):
 			writeError(w, http.StatusInternalServerError, "Failed to fetch config file")
 		default:
-			writeError(w, http.StatusInternalServerError, "Failed to fetch artifact metadata")
+			writeError(w, http.StatusInternalServerError, "Failed to fetch image metadata")
 		}
 		return
 	}

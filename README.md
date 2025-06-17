@@ -75,7 +75,7 @@ The backend exposes the following RESTful endpoints, as defined in the OpenAPI s
 | POST   | `/api/v1/artifacts/sign`             | Signs an artifact using Cosign.                  |
 | POST   | `/api/v1/artifacts/verify`           | Verifies an artifact using Cosign.               |
 | GET    | `/api/v1/artifacts/{artifact}/policies` | Retrieves policies and attestations for an artifact. |
-| GET    | `/api/v1/artifacts/*`                | Retrieves metadata for a container image by full reference URI. |
+| GET    | `/api/v1/artifacts/image`            | Retrieves metadata for a container image by full reference URI. |
 | GET    | `/api/v1/rekor/entries/{uuid}`       | Retrieves a Rekor transparency log entry by UUID. |
 | GET    | `/api/v1/rekor/public-key`           | Retrieves the Rekor public key in PEM format.     |
 | GET    | `/api/v1/trust/config`               | Retrieves TUF targets and Fulcio certificate authorities. |

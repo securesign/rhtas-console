@@ -16,7 +16,7 @@ type ArtifactService interface {
 	SignArtifact(ctx context.Context, req models.SignArtifactRequest) (models.SignArtifactResponse, error)
 	VerifyArtifact(ctx context.Context, req models.VerifyArtifactRequest) (models.VerifyArtifactResponse, error)
 	GetArtifactPolicies(ctx context.Context, artifact string) (models.ArtifactPolicies, error)
-	GetArtifact(ctx context.Context, artifact string, username string, password string) (models.ArtifactMetadataResponse, error)
+	GetImage(ctx context.Context, image string, username string, password string) (models.ImageMetadataResponse, error)
 }
 
 type artifactService struct{}
@@ -81,10 +81,10 @@ func (s *artifactService) GetArtifactPolicies(ctx context.Context, artifact stri
 	}, nil
 }
 
-func (s *artifactService) GetArtifact(ctx context.Context, artifact string, username string, password string) (models.ArtifactMetadataResponse, error) {
-	ref, err := name.ParseReference(artifact)
+func (s *artifactService) GetImage(ctx context.Context, image string, username string, password string) (models.ImageMetadataResponse, error) {
+	ref, err := name.ParseReference(image)
 	if err != nil {
-		return models.ArtifactMetadataResponse{}, fmt.Errorf("invalid artifact URI: %w", err)
+		return models.ImageMetadataResponse{}, fmt.Errorf("invalid image URI: %w", err)
 	}
 
 	auth := authn.Anonymous
@@ -97,28 +97,28 @@ func (s *artifactService) GetArtifact(ctx context.Context, artifact string, user
 	descriptor, err := remote.Get(ref, opts...)
 	if err != nil {
 		if isNotFound(err) {
-			return models.ArtifactMetadataResponse{}, fmt.Errorf("Artifact not found: %w", err)
+			return models.ImageMetadataResponse{}, fmt.Errorf("Image not found: %w", err)
 		} else if isAuthError(err) {
-			return models.ArtifactMetadataResponse{}, fmt.Errorf("Authentication failed: %w", err)
+			return models.ImageMetadataResponse{}, fmt.Errorf("Authentication failed: %w", err)
 		} else {
-			return models.ArtifactMetadataResponse{}, fmt.Errorf("Failed to fetch metadata: %w", err)
+			return models.ImageMetadataResponse{}, fmt.Errorf("Failed to fetch metadata: %w", err)
 		}
 	}
 
 	// Fetch digest
 	img, err := remote.Image(ref, opts...)
 	if err != nil {
-		return models.ArtifactMetadataResponse{}, fmt.Errorf("Failed to fetch image: %w", err)
+		return models.ImageMetadataResponse{}, fmt.Errorf("Failed to fetch image: %w", err)
 	}
 	digest, err := img.Digest()
 	if err != nil {
-		return models.ArtifactMetadataResponse{}, fmt.Errorf("Failed to compute digest: %w", err)
+		return models.ImageMetadataResponse{}, fmt.Errorf("Failed to compute digest: %w", err)
 	}
 
 	// Extract config metadata
 	configFile, err := img.ConfigFile()
 	if err != nil {
-		return models.ArtifactMetadataResponse{}, fmt.Errorf("Failed to fetch config file: %w", err)
+		return models.ImageMetadataResponse{}, fmt.Errorf("Failed to fetch config file: %w", err)
 	}
 
 	created := configFile.Created
@@ -127,8 +127,8 @@ func (s *artifactService) GetArtifact(ctx context.Context, artifact string, user
 		labels = nil
 	}
 
-	response := models.ArtifactMetadataResponse{
-		Artifact: artifact,
+	response := models.ImageMetadataResponse{
+		Image: &image,
 		Metadata: models.Metadata{
 			MediaType: string(descriptor.MediaType),
 			Size:      descriptor.Size,
@@ -140,7 +140,7 @@ func (s *artifactService) GetArtifact(ctx context.Context, artifact string, user
 	return response, nil
 }
 
-// isNotFound checks if the error indicates the artifact was not found
+// isNotFound checks if the error indicates the image was not found
 func isNotFound(err error) bool {
 	if err == nil {
 		return false
