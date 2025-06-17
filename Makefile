@@ -7,12 +7,12 @@ all: generate-openapi build
 
 # Generate Go code from OpenAPI specification using oapi-codegen
 .PHONY: generate-openapi
-generate-openapi: deps
+generate-openapi:
 	@echo "Generating Go code from OpenAPI specification..."
 	oapi-codegen -generate types,chi-server -package models internal/api/openapi/rhtas-console.yaml > internal/models/models.go
 
 .PHONY: build
-build: generate-openapi
+build: generate-openapi deps
 	@echo "Building $(BINARY_NAME)..."
 	@mkdir -p $(BUILD_DIR)
 	go build -v -o $(BUILD_DIR)/$(BINARY_NAME) ./$(CMD_DIR)
@@ -24,9 +24,8 @@ run: build
 
 .PHONY: clean
 clean:
-	@echo "Cleaning build artifacts and generated files..."
+	@echo "Cleaning build artifacts..."
 	@rm -rf $(BUILD_DIR)
-	@rm -f internal/models/models.go
 
 .PHONY: deps
 deps:
