@@ -2,7 +2,10 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"net/url"
+	"strings"
 
 	_ "embed"
 
@@ -153,4 +156,47 @@ func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 
 func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, models.Error{Error: message})
+}
+
+func (h *Handler) GetApiV1ArtifactsArtifact(w http.ResponseWriter, r *http.Request) {
+	// Extract artifact from the URL path
+	artifact := strings.TrimPrefix(r.URL.Path, "/api/v1/artifacts/")
+	if artifact == "" {
+		writeError(w, http.StatusBadRequest, "Missing artifact URI")
+		return
+	}
+
+	// Decode URL-encoded artifact (e.g., %2F to /)
+	artifact, err := url.PathUnescape(artifact)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("Failed to decode artifact URI: %v", err))
+		return
+	}
+	username := r.URL.Query().Get("username")
+	password := r.URL.Query().Get("password")
+
+	ctx := r.Context()
+	response, err := h.artifactService.GetArtifact(ctx, artifact, username, password)
+
+	if err != nil {
+		errMsg := strings.ToLower(err.Error())
+		switch {
+		case strings.Contains(errMsg, "Artifact not found"):
+			writeError(w, http.StatusNotFound, "not found")
+		case strings.Contains(errMsg, "authentication failed"):
+			writeError(w, http.StatusUnauthorized, "Authentication failed")
+		case strings.Contains(errMsg, "invalid artifact uri"):
+			writeError(w, http.StatusBadRequest, "Invalid artifact URI")
+		case strings.Contains(errMsg, "failed to fetch image"):
+			writeError(w, http.StatusInternalServerError, "Failed to fetch image")
+		case strings.Contains(errMsg, "failed to compute digest"):
+			writeError(w, http.StatusInternalServerError, "Failed to compute digest")
+		case strings.Contains(errMsg, "failed to fetch config file"):
+			writeError(w, http.StatusInternalServerError, "Failed to fetch config file")
+		default:
+			writeError(w, http.StatusInternalServerError, "Failed to fetch artifact metadata")
+		}
+		return
+	}
+	json.NewEncoder(w).Encode(response)
 }

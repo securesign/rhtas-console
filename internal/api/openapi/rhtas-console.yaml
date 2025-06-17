@@ -88,6 +88,65 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+
+  /api/v1/artifacts/{artifact}:
+    get:
+      summary: Retrieve metadata and digest from an OCI-compliant registry
+      tags:
+        - Artifact
+      parameters:
+        - name: artifact
+          in: path
+          required: true
+          schema:
+            type: string
+            description: URI of the artifact (e.g., docker.io/library/nginx:latest)
+            example: docker.io/library/nginx:latest
+        - name: username
+          in: query
+          required: false
+          schema:
+            type: string
+            description: Username for registry authentication (optional for public registries)
+            example: my-username
+        - name: password
+          in: query
+          required: false
+          schema:
+            type: string
+            description: Password or token for registry authentication (optional for public registries)
+            example: my-token
+      responses:
+        '200':
+          description: Artifact metadata and digest retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ArtifactMetadataResponse'
+        '400':
+          description: Invalid input (e.g., malformed artifact URI)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Authentication failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Artifact not found in the registry
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /api/v1/rekor/entries/{uuid}:
     get:
       summary: Retrieve Rekor log entry by UUID
@@ -468,6 +527,52 @@ components:
       required:
         - tufRoot
         - fulcioCertAuthorities
+    Metadata:
+      type: object
+      description: Metadata for an artifact
+      properties:
+        mediaType:
+          type: string
+          description: Media type of the artifact (e.g., OCI manifest type)
+          example: application/vnd.oci.image.manifest.v1+json
+        size:
+          type: integer
+          format: int64
+          description: Size of the artifact in bytes
+          example: 1234
+        created:
+          type: string
+          format: date-time
+          description: Creation timestamp of the artifact (if available)
+          nullable: true
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+          description: Key-value labels or annotations associated with the artifact
+          nullable: true
+          example:
+            org.opencontainers.image.version: 1.0.0
+      required:
+        - mediaType
+        - size
+    ArtifactMetadataResponse:
+      type: object
+      properties:
+        artifact:
+          type: string
+          description: The artifact URI
+          example: docker.io/library/nginx:latest
+        metadata:
+          $ref: '#/components/schemas/Metadata'
+        digest:
+          type: string
+          description: The artifact's digest (e.g., SHA256 hash)
+          example: sha256:abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890
+      required:
+        - artifact
+        - metadata
+        - digest
     Error:
       type: object
       properties:

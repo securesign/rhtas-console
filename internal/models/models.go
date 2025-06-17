@@ -26,6 +26,18 @@ const (
 	Text VerifyArtifactRequestOutput = "text"
 )
 
+// ArtifactMetadataResponse defines model for ArtifactMetadataResponse.
+type ArtifactMetadataResponse struct {
+	// Artifact The artifact URI
+	Artifact string `json:"artifact"`
+
+	// Digest The artifact's digest (e.g., SHA256 hash)
+	Digest string `json:"digest"`
+
+	// Metadata Metadata for an artifact
+	Metadata Metadata `json:"metadata"`
+}
+
 // ArtifactPolicies defines model for ArtifactPolicies.
 type ArtifactPolicies struct {
 	// Artifact The artifact URI
@@ -77,6 +89,21 @@ type InclusionProof struct {
 
 	// TreeSize Size of the Merkle tree at the time of inclusion
 	TreeSize int64 `json:"treeSize"`
+}
+
+// Metadata Metadata for an artifact
+type Metadata struct {
+	// Created Creation timestamp of the artifact (if available)
+	Created *time.Time `json:"created"`
+
+	// Labels Key-value labels or annotations associated with the artifact
+	Labels *map[string]string `json:"labels"`
+
+	// MediaType Media type of the artifact (e.g., OCI manifest type)
+	MediaType string `json:"mediaType"`
+
+	// Size Size of the artifact in bytes
+	Size int64 `json:"size"`
 }
 
 // RekorEntry defines model for RekorEntry.
@@ -218,6 +245,12 @@ type VerifyArtifactResponse struct {
 	Verified bool `json:"verified"`
 }
 
+// GetApiV1ArtifactsArtifactParams defines parameters for GetApiV1ArtifactsArtifact.
+type GetApiV1ArtifactsArtifactParams struct {
+	Username *string `form:"username,omitempty" json:"username,omitempty"`
+	Password *string `form:"password,omitempty" json:"password,omitempty"`
+}
+
 // PostApiV1ArtifactsSignJSONRequestBody defines body for PostApiV1ArtifactsSign for application/json ContentType.
 type PostApiV1ArtifactsSignJSONRequestBody = SignArtifactRequest
 
@@ -232,6 +265,9 @@ type ServerInterface interface {
 	// Verify an artifact using Cosign
 	// (POST /api/v1/artifacts/verify)
 	PostApiV1ArtifactsVerify(w http.ResponseWriter, r *http.Request)
+	// Retrieve metadata and digest from an OCI-compliant registry
+	// (GET /api/v1/artifacts/{artifact})
+	GetApiV1ArtifactsArtifact(w http.ResponseWriter, r *http.Request, artifact string, params GetApiV1ArtifactsArtifactParams)
 	// Get policies and attestations for an artifact
 	// (GET /api/v1/artifacts/{artifact}/policies)
 	GetApiV1ArtifactsArtifactPolicies(w http.ResponseWriter, r *http.Request, artifact string)
@@ -262,6 +298,12 @@ func (_ Unimplemented) PostApiV1ArtifactsSign(w http.ResponseWriter, r *http.Req
 // Verify an artifact using Cosign
 // (POST /api/v1/artifacts/verify)
 func (_ Unimplemented) PostApiV1ArtifactsVerify(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Retrieve metadata and digest from an OCI-compliant registry
+// (GET /api/v1/artifacts/{artifact})
+func (_ Unimplemented) GetApiV1ArtifactsArtifact(w http.ResponseWriter, r *http.Request, artifact string, params GetApiV1ArtifactsArtifactParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -322,6 +364,50 @@ func (siw *ServerInterfaceWrapper) PostApiV1ArtifactsVerify(w http.ResponseWrite
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PostApiV1ArtifactsVerify(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetApiV1ArtifactsArtifact operation middleware
+func (siw *ServerInterfaceWrapper) GetApiV1ArtifactsArtifact(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "artifact" -------------
+	var artifact string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "artifact", chi.URLParam(r, "artifact"), &artifact, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "artifact", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetApiV1ArtifactsArtifactParams
+
+	// ------------- Optional query parameter "username" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "username", r.URL.Query(), &params.Username)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "username", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "password" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "password", r.URL.Query(), &params.Password)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "password", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetApiV1ArtifactsArtifact(w, r, artifact, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -541,6 +627,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/v1/artifacts/verify", wrapper.PostApiV1ArtifactsVerify)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/artifacts/{artifact}", wrapper.GetApiV1ArtifactsArtifact)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/artifacts/{artifact}/policies", wrapper.GetApiV1ArtifactsArtifactPolicies)
