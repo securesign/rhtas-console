@@ -198,5 +198,5 @@ func (h *Handler) GetApiV1ArtifactsArtifact(w http.ResponseWriter, r *http.Reque
 		}
 		return
 	}
-	json.NewEncoder(w).Encode(response)
+	writeJSON(w, http.StatusOK, response)
 }
