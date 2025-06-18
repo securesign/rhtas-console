@@ -9,6 +9,7 @@ require (
 
 require (
 	github.com/apapsch/go-jsonmerge/v2 v2.0.0 // indirect
+	github.com/go-chi/cors v1.2.1
 	github.com/google/uuid v1.5.0 // indirect
 	github.com/stretchr/testify v1.9.0 // indirect
 )
