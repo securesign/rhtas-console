@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	_ "embed"
 
@@ -153,4 +154,43 @@ func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 
 func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, models.Error{Error: message})
+}
+
+func (h *Handler) GetApiV1ArtifactsImage(w http.ResponseWriter, r *http.Request) {
+
+	image := r.URL.Query().Get("uri")
+	if image == "" {
+		writeError(w, http.StatusBadRequest, "Missing image URI")
+		return
+	}
+	username, password, ok := r.BasicAuth()
+	if !ok && (username != "" || password != "") {
+		writeError(w, http.StatusBadRequest, "Invalid Authorization header")
+		return
+	}
+
+	ctx := r.Context()
+	response, err := h.artifactService.GetImageMetadata(ctx, image, username, password)
+
+	if err != nil {
+		errMsg := strings.ToLower(err.Error())
+		switch {
+		case strings.Contains(errMsg, "Image not found"):
+			writeError(w, http.StatusNotFound, "not found")
+		case strings.Contains(errMsg, "authentication failed"):
+			writeError(w, http.StatusUnauthorized, "Authentication failed")
+		case strings.Contains(errMsg, "invalid image uri"):
+			writeError(w, http.StatusBadRequest, "Invalid image URI")
+		case strings.Contains(errMsg, "failed to fetch image"):
+			writeError(w, http.StatusInternalServerError, "Failed to fetch image")
+		case strings.Contains(errMsg, "failed to compute digest"):
+			writeError(w, http.StatusInternalServerError, "Failed to compute digest")
+		case strings.Contains(errMsg, "failed to fetch config file"):
+			writeError(w, http.StatusInternalServerError, "Failed to fetch config file")
+		default:
+			writeError(w, http.StatusInternalServerError, "Failed to fetch image metadata")
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
 }
