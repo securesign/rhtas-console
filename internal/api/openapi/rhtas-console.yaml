@@ -95,27 +95,15 @@ paths:
       tags:
         - Image
       parameters:
-        - name: image
+        - name: uri
           in: query
           required: true
           schema:
             type: string
             description: URI of the container image (e.g., docker.io/library/nginx:latest)
             example: docker.io/library/nginx:latest
-        - name: username
-          in: query
-          required: false
-          schema:
-            type: string
-            description: Username for registry authentication (optional for public registries)
-            example: my-username
-        - name: password
-          in: query
-          required: false
-          schema:
-            type: string
-            description: Password or token for registry authentication (optional for public registries)
-            example: my-token
+      security:
+        - basicAuth: []
       responses:
         '200':
           description: Container image metadata and digest retrieved successfully
@@ -245,6 +233,10 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 components:
+  securitySchemes:
+    basicAuth:
+      type: http
+      scheme: basic
   schemas:
     SignArtifactRequest:
       type: object

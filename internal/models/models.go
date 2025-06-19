@@ -4,12 +4,17 @@
 package models
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/oapi-codegen/runtime"
+)
+
+const (
+	BasicAuthScopes = "basicAuth.Scopes"
 )
 
 // Defines values for SignArtifactRequestArtifactType.
@@ -247,9 +252,7 @@ type VerifyArtifactResponse struct {
 
 // GetApiV1ArtifactsImageParams defines parameters for GetApiV1ArtifactsImage.
 type GetApiV1ArtifactsImageParams struct {
-	Image    string  `form:"image" json:"image"`
-	Username *string `form:"username,omitempty" json:"username,omitempty"`
-	Password *string `form:"password,omitempty" json:"password,omitempty"`
+	Uri string `form:"uri" json:"uri"`
 }
 
 // PostApiV1ArtifactsSignJSONRequestBody defines body for PostApiV1ArtifactsSign for application/json ContentType.
@@ -351,37 +354,27 @@ func (siw *ServerInterfaceWrapper) GetApiV1ArtifactsImage(w http.ResponseWriter,
 
 	var err error
 
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BasicAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
 	// Parameter object where we will unmarshal all parameters from the context
 	var params GetApiV1ArtifactsImageParams
 
-	// ------------- Required query parameter "image" -------------
+	// ------------- Required query parameter "uri" -------------
 
-	if paramValue := r.URL.Query().Get("image"); paramValue != "" {
+	if paramValue := r.URL.Query().Get("uri"); paramValue != "" {
 
 	} else {
-		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "image"})
+		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "uri"})
 		return
 	}
 
-	err = runtime.BindQueryParameter("form", true, true, "image", r.URL.Query(), &params.Image)
+	err = runtime.BindQueryParameter("form", true, true, "uri", r.URL.Query(), &params.Uri)
 	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "image", Err: err})
-		return
-	}
-
-	// ------------- Optional query parameter "username" -------------
-
-	err = runtime.BindQueryParameter("form", true, false, "username", r.URL.Query(), &params.Username)
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "username", Err: err})
-		return
-	}
-
-	// ------------- Optional query parameter "password" -------------
-
-	err = runtime.BindQueryParameter("form", true, false, "password", r.URL.Query(), &params.Password)
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "password", Err: err})
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "uri", Err: err})
 		return
 	}
 

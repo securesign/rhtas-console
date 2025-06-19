@@ -16,7 +16,7 @@ type ArtifactService interface {
 	SignArtifact(ctx context.Context, req models.SignArtifactRequest) (models.SignArtifactResponse, error)
 	VerifyArtifact(ctx context.Context, req models.VerifyArtifactRequest) (models.VerifyArtifactResponse, error)
 	GetArtifactPolicies(ctx context.Context, artifact string) (models.ArtifactPolicies, error)
-	GetImage(ctx context.Context, image string, username string, password string) (models.ImageMetadataResponse, error)
+	GetImageMetadata(ctx context.Context, image string, username string, password string) (models.ImageMetadataResponse, error)
 }
 
 type artifactService struct{}
@@ -81,7 +81,7 @@ func (s *artifactService) GetArtifactPolicies(ctx context.Context, artifact stri
 	}, nil
 }
 
-func (s *artifactService) GetImage(ctx context.Context, image string, username string, password string) (models.ImageMetadataResponse, error) {
+func (s *artifactService) GetImageMetadata(ctx context.Context, image string, username string, password string) (models.ImageMetadataResponse, error) {
 	ref, err := name.ParseReference(image)
 	if err != nil {
 		return models.ImageMetadataResponse{}, fmt.Errorf("invalid image URI: %w", err)

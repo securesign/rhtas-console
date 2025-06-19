@@ -2,9 +2,7 @@ package api
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
-	"net/url"
 	"strings"
 
 	_ "embed"
@@ -159,23 +157,20 @@ func writeError(w http.ResponseWriter, status int, message string) {
 }
 
 func (h *Handler) GetApiV1ArtifactsImage(w http.ResponseWriter, r *http.Request) {
-	image := strings.TrimPrefix(r.URL.Path, "/api/v1/artifacts/image/")
+
+	image := r.URL.Query().Get("uri")
 	if image == "" {
 		writeError(w, http.StatusBadRequest, "Missing image URI")
 		return
 	}
-
-	// Decode URL-encoded image (e.g., %2F to /)
-	image, err := url.PathUnescape(image)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("Failed to decode image URI: %v", err))
+	username, password, ok := r.BasicAuth()
+	if !ok && (username != "" || password != "") {
+		writeError(w, http.StatusBadRequest, "Invalid Authorization header")
 		return
 	}
-	username := r.URL.Query().Get("username")
-	password := r.URL.Query().Get("password")
 
 	ctx := r.Context()
-	response, err := h.artifactService.GetImage(ctx, image, username, password)
+	response, err := h.artifactService.GetImageMetadata(ctx, image, username, password)
 
 	if err != nil {
 		errMsg := strings.ToLower(err.Error())
