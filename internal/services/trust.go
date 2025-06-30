@@ -27,12 +27,6 @@ func NewTrustService() TrustService {
 }
 
 func (s *trustService) GetTrustConfig(ctx context.Context, tufRepoUrl string) (models.TrustConfig, error) {
-	opts := tuf.DefaultOptions()
-	if tufRepoUrl != "" {
-		opts.RepositoryBaseURL = tufRepoUrl
-	} else {
-		opts.RepositoryBaseURL = "https://tuf-repo-cdn.sigstore.dev"
-	}
 	// TODO: complete logic
 	return models.TrustConfig{
 		FulcioCertAuthorities: []struct {
@@ -48,12 +42,7 @@ func (s *trustService) GetTrustConfig(ctx context.Context, tufRepoUrl string) (m
 }
 
 func (s *trustService) GetTrustRootMetadata(ctx context.Context, tufRepoUrl string) (models.RootMetadata, error) {
-	opts := tuf.DefaultOptions()
-	if tufRepoUrl != "" {
-		opts.RepositoryBaseURL = tufRepoUrl
-	} else {
-		opts.RepositoryBaseURL = "https://tuf-repo-cdn.sigstore.dev"
-	}
+	opts := buildTufOptions(tufRepoUrl)
 	rootBytes, err := fetchTufRootMetadata(opts)
 	if err != nil {
 		return models.RootMetadata{}, fmt.Errorf("fetching TUF root metadata: %w", err)
@@ -67,6 +56,16 @@ func (s *trustService) GetTrustRootMetadata(ctx context.Context, tufRepoUrl stri
 	return models.RootMetadata{
 		TufRootJson: prettyRoot.Bytes(),
 	}, nil
+}
+
+func buildTufOptions(tufRepoUrl string) *tuf.Options {
+	opts := tuf.DefaultOptions()
+	if tufRepoUrl != "" {
+		opts.RepositoryBaseURL = tufRepoUrl
+	} else {
+		opts.RepositoryBaseURL = "https://tuf-repo-cdn.sigstore.dev"
+	}
+	return opts
 }
 
 func fetchTufRootMetadata(opts *tuf.Options) ([]byte, error) {
