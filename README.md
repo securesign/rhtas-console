@@ -78,7 +78,8 @@ The backend exposes the following RESTful endpoints, as defined in the OpenAPI s
 | GET    | `/api/v1/artifacts/image`            | Retrieves metadata for a container image by full reference URI. |
 | GET    | `/api/v1/rekor/entries/{uuid}`       | Retrieves a Rekor transparency log entry by UUID. |
 | GET    | `/api/v1/rekor/public-key`           | Retrieves the Rekor public key in PEM format.     |
-| GET    | `/api/v1/trust/config`               | Retrieves TUF targets and Fulcio certificate authorities. |
+| GET    | `/api/v1/trust/config`               | Retrieves Fulcio certificate authorities and Rekor transparency logs. |
+| GET    | `/api/v1/trust/root-metadata`        | Retrieves raw TUF root Metadata. |
 
 #### Example: Sign an artifact
 

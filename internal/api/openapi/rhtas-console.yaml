@@ -4,7 +4,7 @@ info:
   version: 1.0.0
   description: API for interacting with artifact trust, verification, and metadata services in the RHTAS Console.
 servers:
-  - url: https://api.rhtas.example.com
+  - url: http://localhost:8080
     description: Production server
 tags:
   - name: Artifact
@@ -216,9 +216,20 @@ paths:
                 $ref: '#/components/schemas/Error'
   /api/v1/trust/config:
     get:
-      summary: Get TUF targets and Fulcio certificate authorities
+      summary: Get Fulcio and Rekor metadata from TUF targets
+      description: |
+        Parses the TUF targets metadata from the specified repository and returns information about
+        Fulcio certificate authorities and Rekor transparency logs.
       tags:
         - Trust
+      parameters:
+        - name: tufRepositoryUrl
+          in: query
+          required: true
+          schema:
+            type: string
+            description: URL of the TUF repository
+            example: https://tuf-repo-cdn.sigstore.dev/
       responses:
         '200':
           description: Trust root data
@@ -226,6 +237,46 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/TrustConfig'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/trust/root-metadata:
+    get:
+      summary: Get TUF Root Metadata
+      description: |
+        Fetches and returns raw TUF root metadata from the specified repository, including roles, keys, and signatures.
+      tags:
+        - Trust
+      parameters:
+        - name: tufRepositoryUrl
+          in: query
+          required: true
+          schema:
+            type: string
+            description: URL of the TUF repository
+            example: https://tuf-repo-cdn.sigstore.dev/
+      responses:
+        '200':
+          description: Trust root data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RootMetadata'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '500':
           description: Internal server error
           content:
@@ -488,19 +539,6 @@ components:
     TrustConfig:
       type: object
       properties:
-        tufRoot:
-          type: object
-          properties:
-            version:
-              type: integer
-              description: TUF root version
-            expires:
-              type: string
-              format: date-time
-              description: Expiration timestamp
-          required:
-            - version
-            - expires
         fulcioCertAuthorities:
           type: array
           items:
@@ -517,7 +555,6 @@ components:
               - subject
               - pem
       required:
-        - tufRoot
         - fulcioCertAuthorities
     Metadata:
       type: object
@@ -565,6 +602,15 @@ components:
         - artifact
         - metadata
         - digest
+    RootMetadata:
+      type: object
+      properties:
+        tufRootJson:
+          type: string
+          format: json
+          description: Full raw TUF root metadata JSON
+      required:
+        - tufRootJson
     Error:
       type: object
       properties:

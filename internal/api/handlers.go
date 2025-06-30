@@ -103,7 +103,18 @@ func (h *Handler) GetApiV1ArtifactsArtifactPolicies(w http.ResponseWriter, r *ht
 }
 
 func (h *Handler) GetApiV1TrustConfig(w http.ResponseWriter, r *http.Request) {
-	resp, err := h.trustService.GetTrustConfig(r.Context())
+	tufRepoUrl := r.URL.Query().Get("tufRepositoryUrl")
+	resp, err := h.trustService.GetTrustConfig(r.Context(), tufRepoUrl)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (h *Handler) GetApiV1TrustRootMetadata(w http.ResponseWriter, r *http.Request) {
+	tufRepoUrl := r.URL.Query().Get("tufRepositoryUrl")
+	resp, err := h.trustService.GetTrustRootMetadata(r.Context(), tufRepoUrl)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
