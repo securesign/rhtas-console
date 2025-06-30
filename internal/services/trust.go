@@ -58,6 +58,7 @@ func (s *trustService) GetTrustRootMetadata(ctx context.Context, tufRepoUrl stri
 	}, nil
 }
 
+// buildTufOptions returns TUF options with the provided or default repository URL.
 func buildTufOptions(tufRepoUrl string) *tuf.Options {
 	opts := tuf.DefaultOptions()
 	if tufRepoUrl != "" {
@@ -68,7 +69,8 @@ func buildTufOptions(tufRepoUrl string) *tuf.Options {
 	return opts
 }
 
-func fetchTufRootMetadata(opts *tuf.Options) ([]byte, error) {
+// buildTufConfig creates a TUF updater config based on the given options.
+func buildTufConfig(opts *tuf.Options) (*config.UpdaterConfig, error) {
 	tufCfg, err := config.New(opts.RepositoryBaseURL, opts.Root)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create config: %w", err)
@@ -85,6 +87,15 @@ func fetchTufRootMetadata(opts *tuf.Options) ([]byte, error) {
 		f := fetcher.NewDefaultFetcher()
 		f.SetHTTPUserAgent(util.ConstructUserAgent())
 		tufCfg.Fetcher = f
+	}
+
+	return tufCfg, nil
+}
+
+func fetchTufRootMetadata(opts *tuf.Options) ([]byte, error) {
+	tufCfg, err := buildTufConfig(opts)
+	if err != nil {
+		return nil, err
 	}
 
 	up, err := updater.New(tufCfg)
