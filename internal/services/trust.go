@@ -33,16 +33,6 @@ func (s *trustService) GetTrustConfig(ctx context.Context, tufRepoUrl string) (m
 	} else {
 		opts.RepositoryBaseURL = "https://tuf-repo-cdn.sigstore.dev"
 	}
-	rootBytes, err := fetchTufRootMetadata(opts)
-	if err != nil {
-		return models.TrustConfig{}, fmt.Errorf("fetching TUF root metadata: %w", err)
-	}
-
-	var prettyRoot bytes.Buffer
-	if err := json.Indent(&prettyRoot, rootBytes, "", "    "); err != nil {
-		return models.TrustConfig{}, fmt.Errorf("formatting root JSON: %w", err)
-	}
-
 	// TODO: complete logic
 	return models.TrustConfig{
 		FulcioCertAuthorities: []struct {
