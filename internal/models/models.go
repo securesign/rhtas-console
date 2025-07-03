@@ -139,10 +139,16 @@ type RekorPublicKey struct {
 	PublicKey string `json:"publicKey"`
 }
 
-// RootMetadata defines model for RootMetadata.
-type RootMetadata struct {
-	// TufRootJson Full raw TUF root metadata JSON
-	TufRootJson json.RawMessage `json:"tufRootJson"`
+// RootMetadataInfo defines model for RootMetadataInfo.
+type RootMetadataInfo struct {
+	// Expires Expiry date of the TUF root metadata
+	Expires string `json:"expires"`
+
+	// Status Status of the TUF root metadata
+	Status string `json:"status"`
+
+	// Version Version of the TUF root metadata
+	Version string `json:"version"`
 }
 
 // SignArtifactRequest defines model for SignArtifactRequest.
@@ -260,8 +266,8 @@ type GetApiV1TrustConfigParams struct {
 	TufRepositoryUrl string `form:"tufRepositoryUrl" json:"tufRepositoryUrl"`
 }
 
-// GetApiV1TrustRootMetadataParams defines parameters for GetApiV1TrustRootMetadata.
-type GetApiV1TrustRootMetadataParams struct {
+// GetApiV1TrustRootMetadataInfoParams defines parameters for GetApiV1TrustRootMetadataInfo.
+type GetApiV1TrustRootMetadataInfoParams struct {
 	TufRepositoryUrl string `form:"tufRepositoryUrl" json:"tufRepositoryUrl"`
 }
 
@@ -295,8 +301,8 @@ type ServerInterface interface {
 	// (GET /api/v1/trust/config)
 	GetApiV1TrustConfig(w http.ResponseWriter, r *http.Request, params GetApiV1TrustConfigParams)
 	// Get TUF Root Metadata
-	// (GET /api/v1/trust/root-metadata)
-	GetApiV1TrustRootMetadata(w http.ResponseWriter, r *http.Request, params GetApiV1TrustRootMetadataParams)
+	// (GET /api/v1/trust/root-metadata-info)
+	GetApiV1TrustRootMetadataInfo(w http.ResponseWriter, r *http.Request, params GetApiV1TrustRootMetadataInfoParams)
 
 	// (GET /healthz)
 	GetHealthz(w http.ResponseWriter, r *http.Request)
@@ -349,8 +355,8 @@ func (_ Unimplemented) GetApiV1TrustConfig(w http.ResponseWriter, r *http.Reques
 }
 
 // Get TUF Root Metadata
-// (GET /api/v1/trust/root-metadata)
-func (_ Unimplemented) GetApiV1TrustRootMetadata(w http.ResponseWriter, r *http.Request, params GetApiV1TrustRootMetadataParams) {
+// (GET /api/v1/trust/root-metadata-info)
+func (_ Unimplemented) GetApiV1TrustRootMetadataInfo(w http.ResponseWriter, r *http.Request, params GetApiV1TrustRootMetadataInfoParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -534,13 +540,13 @@ func (siw *ServerInterfaceWrapper) GetApiV1TrustConfig(w http.ResponseWriter, r 
 	handler.ServeHTTP(w, r)
 }
 
-// GetApiV1TrustRootMetadata operation middleware
-func (siw *ServerInterfaceWrapper) GetApiV1TrustRootMetadata(w http.ResponseWriter, r *http.Request) {
+// GetApiV1TrustRootMetadataInfo operation middleware
+func (siw *ServerInterfaceWrapper) GetApiV1TrustRootMetadataInfo(w http.ResponseWriter, r *http.Request) {
 
 	var err error
 
 	// Parameter object where we will unmarshal all parameters from the context
-	var params GetApiV1TrustRootMetadataParams
+	var params GetApiV1TrustRootMetadataInfoParams
 
 	// ------------- Required query parameter "tufRepositoryUrl" -------------
 
@@ -558,7 +564,7 @@ func (siw *ServerInterfaceWrapper) GetApiV1TrustRootMetadata(w http.ResponseWrit
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetApiV1TrustRootMetadata(w, r, params)
+		siw.Handler.GetApiV1TrustRootMetadataInfo(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -717,7 +723,7 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Get(options.BaseURL+"/api/v1/trust/config", wrapper.GetApiV1TrustConfig)
 	})
 	r.Group(func(r chi.Router) {
-		r.Get(options.BaseURL+"/api/v1/trust/root-metadata", wrapper.GetApiV1TrustRootMetadata)
+		r.Get(options.BaseURL+"/api/v1/trust/root-metadata-info", wrapper.GetApiV1TrustRootMetadataInfo)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/healthz", wrapper.GetHealthz)

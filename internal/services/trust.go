@@ -1,11 +1,12 @@
 package services
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"strconv"
+	"time"
 
 	"github.com/securesign/rhtas-console/internal/models"
 	"github.com/sigstore/sigstore-go/pkg/tuf"
@@ -17,7 +18,7 @@ import (
 
 type TrustService interface {
 	GetTrustConfig(ctx context.Context, tufRepoUrl string) (models.TrustConfig, error)
-	GetTrustRootMetadata(ctx context.Context, tufRepoUrl string) (models.RootMetadata, error)
+	GetTrustRootMetadataInfo(ctx context.Context, tufRepoUrl string) (models.RootMetadataInfo, error)
 }
 
 type trustService struct{}
@@ -41,20 +42,20 @@ func (s *trustService) GetTrustConfig(ctx context.Context, tufRepoUrl string) (m
 	}, nil
 }
 
-func (s *trustService) GetTrustRootMetadata(ctx context.Context, tufRepoUrl string) (models.RootMetadata, error) {
+func (s *trustService) GetTrustRootMetadataInfo(ctx context.Context, tufRepoUrl string) (models.RootMetadataInfo, error) {
 	opts := buildTufOptions(tufRepoUrl)
 	rootBytes, err := fetchTufRootMetadata(opts)
 	if err != nil {
-		return models.RootMetadata{}, fmt.Errorf("fetching TUF root metadata: %w", err)
+		return models.RootMetadataInfo{}, fmt.Errorf("fetching TUF root metadata: %w", err)
 	}
-
-	var prettyRoot bytes.Buffer
-	if err := json.Indent(&prettyRoot, rootBytes, "", "    "); err != nil {
-		return models.RootMetadata{}, fmt.Errorf("formatting root JSON: %w", err)
+	rootInfo, err := extractRootMetadataInfo(rootBytes)
+	if err != nil {
+		return models.RootMetadataInfo{}, fmt.Errorf("extracting root metadata info: %w", err)
 	}
-
-	return models.RootMetadata{
-		TufRootJson: prettyRoot.Bytes(),
+	return models.RootMetadataInfo{
+		Version: rootInfo["version"],
+		Expires: rootInfo["expires"],
+		Status:  rootInfo["status"],
 	}, nil
 }
 
@@ -119,4 +120,44 @@ func fetchTufRootMetadata(opts *tuf.Options) ([]byte, error) {
 	}
 
 	return rootBytes, nil
+}
+
+// Retrieves TUF root metadata info including version, expiration, and status.
+func extractRootMetadataInfo(rootMetadataBytes []byte) (map[string]string, error) {
+	var parsed struct {
+		Signed struct {
+			Expired string `json:"expires"`
+			Version int    `json:"version"`
+		} `json:"signed"`
+	}
+
+	if err := json.Unmarshal(rootMetadataBytes, &parsed); err != nil {
+		return nil, fmt.Errorf("unmarshal targets metadata: %w", err)
+	}
+
+	expiresTime, err := time.Parse(time.RFC3339, parsed.Signed.Expired)
+	if err != nil {
+		return nil, fmt.Errorf("parse expires time: %w", err)
+	}
+
+	now := time.Now().UTC()
+	var status string
+
+	switch {
+	case expiresTime.Before(now):
+		status = "expired"
+	case expiresTime.Sub(now) < 30*24*time.Hour:
+		status = "expiring"
+	default:
+		status = "valid"
+	}
+
+	rootMetadataInfo := make(map[string]string)
+	rootMetadataInfo = map[string]string{
+		"version": strconv.Itoa(parsed.Signed.Version),
+		"expires": parsed.Signed.Expired,
+		"status":  status,
+	}
+
+	return rootMetadataInfo, nil
 }
