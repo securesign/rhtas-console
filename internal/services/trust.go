@@ -152,8 +152,7 @@ func extractRootMetadataInfo(rootMetadataBytes []byte) (map[string]string, error
 		status = "valid"
 	}
 
-	rootMetadataInfo := make(map[string]string)
-	rootMetadataInfo = map[string]string{
+	rootMetadataInfo := map[string]string{
 		"version": strconv.Itoa(parsed.Signed.Version),
 		"expires": parsed.Signed.Expired,
 		"status":  status,
