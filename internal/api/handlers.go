@@ -114,7 +114,7 @@ func (h *Handler) GetApiV1TrustConfig(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) GetApiV1TrustRootMetadata(w http.ResponseWriter, r *http.Request) {
 	tufRepoUrl := r.URL.Query().Get("tufRepositoryUrl")
-	resp, err := h.trustService.GetTrustRootMetadataInfo(r.Context(), tufRepoUrl)
+	resp, err := h.trustService.GetTrustRootMetadataInfo(tufRepoUrl)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

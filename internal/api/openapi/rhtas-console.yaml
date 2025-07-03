@@ -4,7 +4,7 @@ info:
   version: 1.0.0
   description: API for interacting with artifact trust, verification, and metadata services in the RHTAS Console.
 servers:
-  - url: http://localhost:8080
+  - url: https://api.rhtas.example.com
     description: Production server
 tags:
   - name: Artifact

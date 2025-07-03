@@ -18,7 +18,7 @@ import (
 
 type TrustService interface {
 	GetTrustConfig(ctx context.Context, tufRepoUrl string) (models.TrustConfig, error)
-	GetTrustRootMetadataInfo(ctx context.Context, tufRepoUrl string) (models.RootMetadataInfo, error)
+	GetTrustRootMetadataInfo(tufRepoUrl string) (models.RootMetadataInfo, error)
 }
 
 type trustService struct{}
@@ -42,7 +42,7 @@ func (s *trustService) GetTrustConfig(ctx context.Context, tufRepoUrl string) (m
 	}, nil
 }
 
-func (s *trustService) GetTrustRootMetadataInfo(ctx context.Context, tufRepoUrl string) (models.RootMetadataInfo, error) {
+func (s *trustService) GetTrustRootMetadataInfo(tufRepoUrl string) (models.RootMetadataInfo, error) {
 	opts := buildTufOptions(tufRepoUrl)
 	rootBytes, err := fetchTufRootMetadata(opts)
 	if err != nil {
