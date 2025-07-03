@@ -187,6 +187,8 @@ func (h *Handler) GetApiV1ArtifactsImage(w http.ResponseWriter, r *http.Request)
 			writeError(w, http.StatusInternalServerError, "Failed to compute digest")
 		case strings.Contains(errMsg, "failed to fetch config file"):
 			writeError(w, http.StatusInternalServerError, "Failed to fetch config file")
+		case strings.Contains(errMsg, "connection refused"):
+			writeError(w, http.StatusServiceUnavailable, "Connection refused")
 		default:
 			writeError(w, http.StatusInternalServerError, "Failed to fetch image metadata")
 		}
