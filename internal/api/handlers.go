@@ -111,7 +111,8 @@ func (h *Handler) GetApiV1TrustConfig(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) ServeSwaggerUI(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write([]byte(`
+
+	const swaggerHTML = `
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -138,18 +139,27 @@ func (h *Handler) ServeSwaggerUI(w http.ResponseWriter, r *http.Request) {
 	</script>
 </body>
 </html>
-		`))
+`
+	if _, err := w.Write([]byte(swaggerHTML)); err != nil {
+		http.Error(w, "Failed to write response", http.StatusInternalServerError)
+		return
+	}
 }
 
 func (h *Handler) ServeOpenAPIFile(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/vnd.oai.openapi;version=3.0.0+yaml")
-	w.Write(openAPIYaml)
+	if _, err := w.Write(openAPIYaml); err != nil {
+		http.Error(w, "Failed to write response", http.StatusInternalServerError)
+		return
+	}
 }
 
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	}
 }
 
 func writeError(w http.ResponseWriter, status int, message string) {
