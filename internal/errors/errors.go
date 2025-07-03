@@ -1,20 +1,16 @@
 package errors
 
-import "strings"
-
-var (
-	ErrArtifactNotFound              = "not found"
-	ErrArtifactAuthFailed            = "authentication failed"
-	ErrArtifactInvalidImageURI       = "invalid image uri"
-	ErrArtifactFailedToFetchImage    = "failed to fetch image"
-	ErrArtifactFailedToComputeDigest = "failed to compute digest"
-	ErrArtifactFailedToFetchConfig   = "failed to fetch config file"
-	ErrArtifactConnectionRefused     = "connection refused"
+import (
+	"errors"
 )
 
-func IsArtifactError(err error, target string) bool {
-	if err == nil {
-		return false
-	}
-	return strings.Contains(strings.ToLower(err.Error()), target)
-}
+var (
+	ErrImageNotFound                 = errors.New("image not found")
+	ErrArtifactAuthFailed            = errors.New("authentication failed")
+	ErrArtifactInvalidImageURI       = errors.New("invalid image uri")
+	ErrArtifactFailedToFetchImage    = errors.New("failed to fetch image")
+	ErrArtifactFailedToComputeDigest = errors.New("failed to compute digest")
+	ErrArtifactFailedToFetchConfig   = errors.New("failed to fetch config file")
+	ErrArtifactConnectionRefused     = errors.New("connection refused")
+	ErrFetchImageMetadataFailed      = errors.New("failed to fetch image metadata")
+)

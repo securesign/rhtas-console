@@ -3,12 +3,13 @@ package services
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
-	"github.com/securesign/rhtas-console/internal/errors"
+	console_errors "github.com/securesign/rhtas-console/internal/errors"
 	"github.com/securesign/rhtas-console/internal/models"
 )
 
@@ -97,31 +98,40 @@ func (s *artifactService) GetImageMetadata(ctx context.Context, image string, us
 	descriptor, err := remote.Get(ref, opts...)
 	if err != nil {
 		if isNotFound(err) {
-			return models.ImageMetadataResponse{}, fmt.Errorf("image not found: %w", err)
+			return models.ImageMetadataResponse{}, fmt.Errorf("%w: %v", console_errors.ErrImageNotFound, err)
+
 		} else if isAuthError(err) {
-			return models.ImageMetadataResponse{}, fmt.Errorf("authentication failed: %w", err)
+			return models.ImageMetadataResponse{}, fmt.Errorf("%w: %v", console_errors.ErrArtifactAuthFailed, err)
+
+		} else if isConnectionError(err) {
+			return models.ImageMetadataResponse{}, fmt.Errorf("%w: %v", console_errors.ErrArtifactConnectionRefused, err)
+
 		} else {
-			return models.ImageMetadataResponse{}, fmt.Errorf("failed to fetch metadata: %w", err)
+			return models.ImageMetadataResponse{}, fmt.Errorf("%w: %v", console_errors.ErrFetchImageMetadataFailed, err)
 		}
 	}
 
 	// Fetch digest
 	img, err := remote.Image(ref, opts...)
 	if err != nil {
-		return models.ImageMetadataResponse{}, fmt.Errorf("failed to fetch image: %w", err)
+		return models.ImageMetadataResponse{}, fmt.Errorf("%w: %v", console_errors.ErrArtifactFailedToFetchImage, err)
 	}
 	digest, err := img.Digest()
 	if err != nil {
-		return models.ImageMetadataResponse{}, fmt.Errorf("failed to compute digest: %w", err)
+		return models.ImageMetadataResponse{}, fmt.Errorf("%w: %v", console_errors.ErrArtifactFailedToComputeDigest, err)
 	}
 
 	// Extract config metadata
 	configFile, err := img.ConfigFile()
 	if err != nil {
-		return models.ImageMetadataResponse{}, fmt.Errorf("failed to fetch config file: %w", err)
+		return models.ImageMetadataResponse{}, fmt.Errorf("%w: %v", console_errors.ErrArtifactFailedToFetchConfig, err)
 	}
 
-	created := configFile.Created
+	var createdTime *time.Time
+	if !configFile.Created.IsZero() {
+		createdTime = &configFile.Created.Time
+	}
+
 	labels := configFile.Config.Labels
 	if len(labels) == 0 {
 		labels = nil
@@ -132,7 +142,7 @@ func (s *artifactService) GetImageMetadata(ctx context.Context, image string, us
 		Metadata: models.Metadata{
 			MediaType: string(descriptor.MediaType),
 			Size:      descriptor.Size,
-			Created:   &created.Time,
+			Created:   createdTime,
 			Labels:    &labels,
 		},
 		Digest: digest.String(),
@@ -145,9 +155,9 @@ func isNotFound(err error) bool {
 	if err == nil {
 		return false
 	}
-	return errors.IsArtifactError(err, "not found") ||
-		errors.IsArtifactError(err, "404") ||
-		errors.IsArtifactError(err, "name unknown")
+	return strings.Contains(strings.ToLower(err.Error()), "not found") ||
+		strings.Contains(strings.ToLower(err.Error()), "404") ||
+		strings.Contains(strings.ToLower(err.Error()), "name unknown")
 }
 
 // isAuthError checks if the error indicates an authentication failure
@@ -155,7 +165,15 @@ func isAuthError(err error) bool {
 	if err == nil {
 		return false
 	}
-	return errors.IsArtifactError(err, "unauthorized") ||
-		errors.IsArtifactError(err, "401") ||
-		errors.IsArtifactError(err, "authentication required")
+	return strings.Contains(strings.ToLower(err.Error()), "unauthorized") ||
+		strings.Contains(strings.ToLower(err.Error()), "401") ||
+		strings.Contains(strings.ToLower(err.Error()), "authentication required")
+}
+
+// isConnectionError checks if the connection failed
+func isConnectionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "connection refused")
 }

@@ -6,8 +6,10 @@ import (
 
 	_ "embed"
 
+	"errors"
+
 	"github.com/go-chi/chi/v5"
-	"github.com/securesign/rhtas-console/internal/errors"
+	console_errors "github.com/securesign/rhtas-console/internal/errors"
 	"github.com/securesign/rhtas-console/internal/models"
 	"github.com/securesign/rhtas-console/internal/services"
 )
@@ -38,7 +40,7 @@ func (h *Handler) GetHealthz(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) PostApiV1ArtifactsSign(w http.ResponseWriter, r *http.Request) {
 	var req models.SignArtifactRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "Invalid request body")
+		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	resp, err := h.artifactService.SignArtifact(r.Context(), req)
@@ -52,7 +54,7 @@ func (h *Handler) PostApiV1ArtifactsSign(w http.ResponseWriter, r *http.Request)
 func (h *Handler) PostApiV1ArtifactsVerify(w http.ResponseWriter, r *http.Request) {
 	var req models.VerifyArtifactRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "Invalid request body")
+		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	resp, err := h.artifactService.VerifyArtifact(r.Context(), req)
@@ -66,12 +68,12 @@ func (h *Handler) PostApiV1ArtifactsVerify(w http.ResponseWriter, r *http.Reques
 func (h *Handler) GetApiV1RekorEntriesUuid(w http.ResponseWriter, r *http.Request) {
 	uuid := chi.URLParam(r, "uuid")
 	if uuid == "" {
-		writeError(w, http.StatusBadRequest, "Missing UUID")
+		writeError(w, http.StatusBadRequest, "missing uuid")
 		return
 	}
 	resp, err := h.rekorService.GetRekorEntry(r.Context(), uuid)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "Missing entry")
+		writeError(w, http.StatusNotFound, "missing entry")
 		return
 	}
 	writeJSON(w, http.StatusOK, resp)
@@ -89,12 +91,12 @@ func (h *Handler) GetApiV1RekorPublicKey(w http.ResponseWriter, r *http.Request)
 func (h *Handler) GetApiV1ArtifactsArtifactPolicies(w http.ResponseWriter, r *http.Request) {
 	artifact := chi.URLParam(r, "artifact")
 	if artifact == "" {
-		writeError(w, http.StatusBadRequest, "Missing artifact")
+		writeError(w, http.StatusBadRequest, "missing artifact")
 		return
 	}
 	resp, err := h.artifactService.GetArtifactPolicies(r.Context(), artifact)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "Artifact not found")
+		writeError(w, http.StatusNotFound, "artifact not found")
 		return
 	}
 	writeJSON(w, http.StatusOK, resp)
@@ -141,7 +143,7 @@ func (h *Handler) ServeSwaggerUI(w http.ResponseWriter, r *http.Request) {
 </html>
 `
 	if _, err := w.Write([]byte(swaggerHTML)); err != nil {
-		http.Error(w, "Failed to write response", http.StatusInternalServerError)
+		http.Error(w, "failed to write response", http.StatusInternalServerError)
 		return
 	}
 }
@@ -149,7 +151,7 @@ func (h *Handler) ServeSwaggerUI(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) ServeOpenAPIFile(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/vnd.oai.openapi;version=3.0.0+yaml")
 	if _, err := w.Write(openAPIYaml); err != nil {
-		http.Error(w, "Failed to write response", http.StatusInternalServerError)
+		http.Error(w, "failed to write response", http.StatusInternalServerError)
 		return
 	}
 }
@@ -158,7 +160,7 @@ func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(v); err != nil {
-		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+		http.Error(w, "failed to encode response", http.StatusInternalServerError)
 	}
 }
 
@@ -170,12 +172,12 @@ func (h *Handler) GetApiV1ArtifactsImage(w http.ResponseWriter, r *http.Request)
 
 	image := r.URL.Query().Get("uri")
 	if image == "" {
-		writeError(w, http.StatusBadRequest, "Missing image URI")
+		writeError(w, http.StatusBadRequest, "missing image uri")
 		return
 	}
 	username, password, ok := r.BasicAuth()
 	if !ok && (username != "" || password != "") {
-		writeError(w, http.StatusBadRequest, "Invalid Authorization header")
+		writeError(w, http.StatusBadRequest, "invalid authorization header")
 		return
 	}
 
@@ -184,22 +186,22 @@ func (h *Handler) GetApiV1ArtifactsImage(w http.ResponseWriter, r *http.Request)
 
 	if err != nil {
 		switch {
-		case errors.IsArtifactError(err, errors.ErrArtifactNotFound):
-			writeError(w, http.StatusNotFound, "Image not found")
-		case errors.IsArtifactError(err, errors.ErrArtifactAuthFailed):
-			writeError(w, http.StatusUnauthorized, "Authentication failed")
-		case errors.IsArtifactError(err, errors.ErrArtifactInvalidImageURI):
-			writeError(w, http.StatusBadRequest, "Invalid image URI")
-		case errors.IsArtifactError(err, errors.ErrArtifactFailedToFetchImage):
-			writeError(w, http.StatusInternalServerError, "Failed to fetch image")
-		case errors.IsArtifactError(err, errors.ErrArtifactFailedToComputeDigest):
-			writeError(w, http.StatusInternalServerError, "Failed to compute digest")
-		case errors.IsArtifactError(err, errors.ErrArtifactFailedToFetchConfig):
-			writeError(w, http.StatusInternalServerError, "Failed to fetch config file")
-		case errors.IsArtifactError(err, errors.ErrArtifactConnectionRefused):
-			writeError(w, http.StatusServiceUnavailable, "Connection refused")
+		case errors.Is(err, console_errors.ErrImageNotFound):
+			writeError(w, http.StatusNotFound, console_errors.ErrImageNotFound.Error())
+		case errors.Is(err, console_errors.ErrArtifactAuthFailed):
+			writeError(w, http.StatusUnauthorized, console_errors.ErrArtifactAuthFailed.Error())
+		case errors.Is(err, console_errors.ErrArtifactInvalidImageURI):
+			writeError(w, http.StatusBadRequest, console_errors.ErrArtifactInvalidImageURI.Error())
+		case errors.Is(err, console_errors.ErrArtifactFailedToFetchImage):
+			writeError(w, http.StatusInternalServerError, console_errors.ErrArtifactFailedToFetchImage.Error())
+		case errors.Is(err, console_errors.ErrArtifactFailedToComputeDigest):
+			writeError(w, http.StatusInternalServerError, console_errors.ErrArtifactFailedToComputeDigest.Error())
+		case errors.Is(err, console_errors.ErrArtifactFailedToFetchConfig):
+			writeError(w, http.StatusInternalServerError, console_errors.ErrArtifactFailedToFetchConfig.Error())
+		case errors.Is(err, console_errors.ErrArtifactConnectionRefused):
+			writeError(w, http.StatusServiceUnavailable, console_errors.ErrArtifactConnectionRefused.Error())
 		default:
-			writeError(w, http.StatusInternalServerError, "Failed to fetch image metadata")
+			writeError(w, http.StatusInternalServerError, console_errors.ErrFetchImageMetadataFailed.Error())
 		}
 		return
 	}
