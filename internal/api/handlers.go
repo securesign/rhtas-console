@@ -3,11 +3,11 @@ package api
 import (
 	"encoding/json"
 	"net/http"
-	"strings"
 
 	_ "embed"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/securesign/rhtas-console/internal/errors"
 	"github.com/securesign/rhtas-console/internal/models"
 	"github.com/securesign/rhtas-console/internal/services"
 )
@@ -173,21 +173,20 @@ func (h *Handler) GetApiV1ArtifactsImage(w http.ResponseWriter, r *http.Request)
 	response, err := h.artifactService.GetImageMetadata(ctx, image, username, password)
 
 	if err != nil {
-		errMsg := strings.ToLower(err.Error())
 		switch {
-		case strings.Contains(errMsg, "Image not found"):
-			writeError(w, http.StatusNotFound, "not found")
-		case strings.Contains(errMsg, "authentication failed"):
+		case errors.IsArtifactError(err, errors.ErrArtifactNotFound):
+			writeError(w, http.StatusNotFound, "Image not found")
+		case errors.IsArtifactError(err, errors.ErrArtifactAuthFailed):
 			writeError(w, http.StatusUnauthorized, "Authentication failed")
-		case strings.Contains(errMsg, "invalid image uri"):
+		case errors.IsArtifactError(err, errors.ErrArtifactInvalidImageURI):
 			writeError(w, http.StatusBadRequest, "Invalid image URI")
-		case strings.Contains(errMsg, "failed to fetch image"):
+		case errors.IsArtifactError(err, errors.ErrArtifactFailedToFetchImage):
 			writeError(w, http.StatusInternalServerError, "Failed to fetch image")
-		case strings.Contains(errMsg, "failed to compute digest"):
+		case errors.IsArtifactError(err, errors.ErrArtifactFailedToComputeDigest):
 			writeError(w, http.StatusInternalServerError, "Failed to compute digest")
-		case strings.Contains(errMsg, "failed to fetch config file"):
+		case errors.IsArtifactError(err, errors.ErrArtifactFailedToFetchConfig):
 			writeError(w, http.StatusInternalServerError, "Failed to fetch config file")
-		case strings.Contains(errMsg, "connection refused"):
+		case errors.IsArtifactError(err, errors.ErrArtifactConnectionRefused):
 			writeError(w, http.StatusServiceUnavailable, "Connection refused")
 		default:
 			writeError(w, http.StatusInternalServerError, "Failed to fetch image metadata")

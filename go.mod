@@ -1,12 +1,12 @@
 module github.com/securesign/rhtas-console
 
-go 1.24
+go 1.23.0
 
-toolchain go1.24.4
+toolchain go1.23.9
 
 require (
 	github.com/go-chi/chi/v5 v5.2.1
-	github.com/google/go-containerregistry v0.20.6
+	github.com/google/go-containerregistry v0.19.1
 	github.com/oapi-codegen/runtime v1.1.1
 )
 
