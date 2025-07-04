@@ -126,7 +126,6 @@ func fetchAllTufRootMetadata(opts *tuf.Options) ([][]byte, error) {
 		parsedURL.Path += "/"
 	}
 	tufCfg.RemoteMetadataURL = parsedURL.String()
-	fmt.Printf("TUF Config: RemoteMetadataURL=%s\n", tufCfg.RemoteMetadataURL)
 
 	up, err := updater.New(tufCfg)
 	if err != nil {
@@ -146,7 +145,6 @@ func fetchAllTufRootMetadata(opts *tuf.Options) ([][]byte, error) {
 	if latestVersion < 1 {
 		return nil, fmt.Errorf("invalid latest root version: %d", latestVersion)
 	}
-	fmt.Printf("Latest root version: %d\n", latestVersion)
 
 	// Collect all root metadata versions
 	var allRootBytes [][]byte
@@ -156,7 +154,6 @@ func fetchAllTufRootMetadata(opts *tuf.Options) ([][]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get signed latest root bytes: %w", err)
 	}
-	fmt.Printf("Latest root metadata fetched (%d bytes)\n", len(latestRootBytes))
 	allRootBytes = append(allRootBytes, latestRootBytes)
 
 	// Fetch previous versions (1.root.json, 2.root.json...N-1.root.json)
@@ -164,43 +161,28 @@ func fetchAllTufRootMetadata(opts *tuf.Options) ([][]byte, error) {
 		rootFilename := fmt.Sprintf("%d.root.json", version)
 		metadataURL, err := url.JoinPath(tufCfg.RemoteMetadataURL, rootFilename)
 		if err != nil {
-			fmt.Printf("Failed to construct URL for %s: %v\n", rootFilename, err)
 			continue
 		}
-		fmt.Printf("Fetching %s\n", metadataURL)
-
 		resp, err := http.Get(metadataURL)
 		if err != nil {
-			fmt.Printf("Failed to fetch %s: %v\n", rootFilename, err)
 			continue
 		}
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
-			fmt.Printf("Non-OK status for %s: %s\n", rootFilename, resp.Status)
 			continue
 		}
 
 		rootBytes, err := io.ReadAll(resp.Body)
 		if err != nil {
-			fmt.Printf("Failed to read %s: %v\n", rootFilename, err)
 			continue
 		}
 		var signedRoot data.Signed
 		if err := json.Unmarshal(rootBytes, &signedRoot); err != nil {
-			fmt.Printf("Failed to unmarshal %s: %v\n", rootFilename, err)
 			continue
 		}
-		fmt.Printf("Successfully fetched %s (%d bytes)\n", rootFilename, len(rootBytes))
 		allRootBytes = append(allRootBytes, rootBytes)
 	}
-
-	if len(allRootBytes) == 0 {
-		fmt.Println("No root metadata collected")
-	} else {
-		fmt.Printf("Collected %d root metadata versions\n", len(allRootBytes))
-	}
-
 	return allRootBytes, nil
 }
 
