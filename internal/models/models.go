@@ -5,7 +5,6 @@ package models
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
@@ -150,6 +149,9 @@ type RootMetadataInfo struct {
 	// Version Version of the TUF root metadata
 	Version string `json:"version"`
 }
+
+// RootMetadataInfoList defines model for RootMetadataInfoList.
+type RootMetadataInfoList = []RootMetadataInfo
 
 // SignArtifactRequest defines model for SignArtifactRequest.
 type SignArtifactRequest struct {

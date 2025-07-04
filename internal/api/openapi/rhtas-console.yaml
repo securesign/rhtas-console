@@ -270,7 +270,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/RootMetadataInfo'
+                $ref: '#/components/schemas/RootMetadataInfoList'
         '400':
           description: Invalid input
           content:
@@ -618,6 +618,10 @@ components:
         - version
         - expires
         - status
+    RootMetadataInfoList:
+      type: array
+      items:
+        $ref: '#/components/schemas/RootMetadataInfo'
     Error:
       type: object
       properties:

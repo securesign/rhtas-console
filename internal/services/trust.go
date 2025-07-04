@@ -4,13 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/securesign/rhtas-console/internal/models"
 	"github.com/sigstore/sigstore-go/pkg/tuf"
 	"github.com/sigstore/sigstore-go/pkg/util"
+	"github.com/theupdateframework/go-tuf/data"
 	"github.com/theupdateframework/go-tuf/v2/metadata/config"
 	"github.com/theupdateframework/go-tuf/v2/metadata/fetcher"
 	"github.com/theupdateframework/go-tuf/v2/metadata/updater"
@@ -18,7 +23,7 @@ import (
 
 type TrustService interface {
 	GetTrustConfig(ctx context.Context, tufRepoUrl string) (models.TrustConfig, error)
-	GetTrustRootMetadataInfo(tufRepoUrl string) (models.RootMetadataInfo, error)
+	GetTrustRootMetadataInfo(tufRepoUrl string) (models.RootMetadataInfoList, error)
 }
 
 type trustService struct{}
@@ -42,21 +47,27 @@ func (s *trustService) GetTrustConfig(ctx context.Context, tufRepoUrl string) (m
 	}, nil
 }
 
-func (s *trustService) GetTrustRootMetadataInfo(tufRepoUrl string) (models.RootMetadataInfo, error) {
+func (s *trustService) GetTrustRootMetadataInfo(tufRepoUrl string) (models.RootMetadataInfoList, error) {
 	opts := buildTufOptions(tufRepoUrl)
-	rootBytes, err := fetchTufRootMetadata(opts)
+	var results models.RootMetadataInfoList
+	rootBytesList, err := fetchAllTufRootMetadata(opts)
 	if err != nil {
-		return models.RootMetadataInfo{}, fmt.Errorf("fetching TUF root metadata: %w", err)
+		return models.RootMetadataInfoList{}, fmt.Errorf("fetching TUF root metadata: %w", err)
 	}
-	rootInfo, err := extractRootMetadataInfo(rootBytes)
-	if err != nil {
-		return models.RootMetadataInfo{}, fmt.Errorf("extracting root metadata info: %w", err)
+	for _, rootBytes := range rootBytesList {
+		rootInfo, err := extractRootMetadataInfo(rootBytes)
+		if err != nil {
+			return models.RootMetadataInfoList{}, fmt.Errorf("extracting root metadata info: %w", err)
+		}
+		entry := models.RootMetadataInfo{
+			Version: rootInfo["version"],
+			Expires: rootInfo["expires"],
+			Status:  rootInfo["status"],
+		}
+		results = append(results, entry)
 	}
-	return models.RootMetadataInfo{
-		Version: rootInfo["version"],
-		Expires: rootInfo["expires"],
-		Status:  rootInfo["status"],
-	}, nil
+
+	return results, nil
 }
 
 // buildTufOptions returns TUF options with the provided or default repository URL.
@@ -93,11 +104,29 @@ func buildTufConfig(opts *tuf.Options) (*config.UpdaterConfig, error) {
 	return tufCfg, nil
 }
 
-func fetchTufRootMetadata(opts *tuf.Options) ([]byte, error) {
+// fetchAllTufRootMetadata retrieves all versions of the TUF root metadata as byte slices.
+func fetchAllTufRootMetadata(opts *tuf.Options) ([][]byte, error) {
 	tufCfg, err := buildTufConfig(opts)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to build TUF config: %w", err)
 	}
+
+	if tufCfg.RemoteMetadataURL == "" {
+		return nil, fmt.Errorf("RemoteMetadataURL is empty")
+	}
+	parsedURL, err := url.Parse(tufCfg.RemoteMetadataURL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid RemoteMetadataURL %s: %w", tufCfg.RemoteMetadataURL, err)
+	}
+	if parsedURL.Scheme != "https" && parsedURL.Scheme != "http" {
+		return nil, fmt.Errorf("unsupported URL scheme in RemoteMetadataURL: %s", parsedURL.Scheme)
+	}
+	// Ensure trailing slash for consistent URL joining
+	if !strings.HasSuffix(parsedURL.Path, "/") {
+		parsedURL.Path += "/"
+	}
+	tufCfg.RemoteMetadataURL = parsedURL.String()
+	fmt.Printf("TUF Config: RemoteMetadataURL=%s\n", tufCfg.RemoteMetadataURL)
 
 	up, err := updater.New(tufCfg)
 	if err != nil {
@@ -107,19 +136,72 @@ func fetchTufRootMetadata(opts *tuf.Options) ([]byte, error) {
 	if err := up.Refresh(); err != nil {
 		return nil, fmt.Errorf("failed to refresh updater: %w", err)
 	}
-
-	// Get raw root metadata
-	rootMeta := up.GetTrustedMetadataSet().Root
-	if rootMeta == nil {
-		return nil, fmt.Errorf("root metadata not available")
+	// Get the latest root metadata
+	latestRootMeta := up.GetTrustedMetadataSet().Root
+	if latestRootMeta == nil {
+		return nil, fmt.Errorf("latest root metadata not available")
 	}
+	// Extract the version number from the latest root metadata
+	latestVersion := latestRootMeta.Signed.Version
+	if latestVersion < 1 {
+		return nil, fmt.Errorf("invalid latest root version: %d", latestVersion)
+	}
+	fmt.Printf("Latest root version: %d\n", latestVersion)
 
-	rootBytes, err := rootMeta.ToBytes(true)
+	// Collect all root metadata versions
+	var allRootBytes [][]byte
+
+	// Add the latest root metadata
+	latestRootBytes, err := latestRootMeta.ToBytes(true)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get signed root bytes: %w", err)
+		return nil, fmt.Errorf("failed to get signed latest root bytes: %w", err)
+	}
+	fmt.Printf("Latest root metadata fetched (%d bytes)\n", len(latestRootBytes))
+	allRootBytes = append(allRootBytes, latestRootBytes)
+
+	// Fetch previous versions (1.root.json, 2.root.json...N-1.root.json)
+	for version := 1; version < int(latestVersion); version++ {
+		rootFilename := fmt.Sprintf("%d.root.json", version)
+		metadataURL, err := url.JoinPath(tufCfg.RemoteMetadataURL, rootFilename)
+		if err != nil {
+			fmt.Printf("Failed to construct URL for %s: %v\n", rootFilename, err)
+			continue
+		}
+		fmt.Printf("Fetching %s\n", metadataURL)
+
+		resp, err := http.Get(metadataURL)
+		if err != nil {
+			fmt.Printf("Failed to fetch %s: %v\n", rootFilename, err)
+			continue
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			fmt.Printf("Non-OK status for %s: %s\n", rootFilename, resp.Status)
+			continue
+		}
+
+		rootBytes, err := io.ReadAll(resp.Body)
+		if err != nil {
+			fmt.Printf("Failed to read %s: %v\n", rootFilename, err)
+			continue
+		}
+		var signedRoot data.Signed
+		if err := json.Unmarshal(rootBytes, &signedRoot); err != nil {
+			fmt.Printf("Failed to unmarshal %s: %v\n", rootFilename, err)
+			continue
+		}
+		fmt.Printf("Successfully fetched %s (%d bytes)\n", rootFilename, len(rootBytes))
+		allRootBytes = append(allRootBytes, rootBytes)
 	}
 
-	return rootBytes, nil
+	if len(allRootBytes) == 0 {
+		fmt.Println("No root metadata collected")
+	} else {
+		fmt.Printf("Collected %d root metadata versions\n", len(allRootBytes))
+	}
+
+	return allRootBytes, nil
 }
 
 // Retrieves TUF root metadata info including version, expiration, and status.
