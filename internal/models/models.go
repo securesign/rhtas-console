@@ -4,12 +4,17 @@
 package models
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/oapi-codegen/runtime"
+)
+
+const (
+	BasicAuthScopes = "basicAuth.Scopes"
 )
 
 // Defines values for SignArtifactRequestArtifactType.
@@ -61,6 +66,18 @@ type Error struct {
 	Error string `json:"error"`
 }
 
+// ImageMetadataResponse defines model for ImageMetadataResponse.
+type ImageMetadataResponse struct {
+	// Digest The container image's digest (e.g., SHA256 hash)
+	Digest string `json:"digest"`
+
+	// Image The container image URI
+	Image *string `json:"image,omitempty"`
+
+	// Metadata Metadata for a container image
+	Metadata Metadata `json:"metadata"`
+}
+
 // InclusionProof Merkle tree inclusion proof for a Rekor entry
 type InclusionProof struct {
 	// Checkpoint Checkpoint string for the log, including tree size and root hash
@@ -77,6 +94,21 @@ type InclusionProof struct {
 
 	// TreeSize Size of the Merkle tree at the time of inclusion
 	TreeSize int64 `json:"treeSize"`
+}
+
+// Metadata Metadata for a container image
+type Metadata struct {
+	// Created Creation timestamp of the container image (if available)
+	Created *time.Time `json:"created"`
+
+	// Labels Key-value labels or annotations associated with the container image
+	Labels *map[string]string `json:"labels"`
+
+	// MediaType Media type of the container image (e.g., OCI manifest type)
+	MediaType string `json:"mediaType"`
+
+	// Size Size of the container image in bytes
+	Size int64 `json:"size"`
 }
 
 // RekorEntry defines model for RekorEntry.
@@ -218,6 +250,11 @@ type VerifyArtifactResponse struct {
 	Verified bool `json:"verified"`
 }
 
+// GetApiV1ArtifactsImageParams defines parameters for GetApiV1ArtifactsImage.
+type GetApiV1ArtifactsImageParams struct {
+	Uri string `form:"uri" json:"uri"`
+}
+
 // PostApiV1ArtifactsSignJSONRequestBody defines body for PostApiV1ArtifactsSign for application/json ContentType.
 type PostApiV1ArtifactsSignJSONRequestBody = SignArtifactRequest
 
@@ -226,6 +263,9 @@ type PostApiV1ArtifactsVerifyJSONRequestBody = VerifyArtifactRequest
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+	// Retrieve metadata and digest from an OCI-compliant registry
+	// (GET /api/v1/artifacts/image)
+	GetApiV1ArtifactsImage(w http.ResponseWriter, r *http.Request, params GetApiV1ArtifactsImageParams)
 	// Sign an artifact using Cosign
 	// (POST /api/v1/artifacts/sign)
 	PostApiV1ArtifactsSign(w http.ResponseWriter, r *http.Request)
@@ -252,6 +292,12 @@ type ServerInterface interface {
 // Unimplemented server implementation that returns http.StatusNotImplemented for each endpoint.
 
 type Unimplemented struct{}
+
+// Retrieve metadata and digest from an OCI-compliant registry
+// (GET /api/v1/artifacts/image)
+func (_ Unimplemented) GetApiV1ArtifactsImage(w http.ResponseWriter, r *http.Request, params GetApiV1ArtifactsImageParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
 
 // Sign an artifact using Cosign
 // (POST /api/v1/artifacts/sign)
@@ -302,6 +348,46 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(http.Handler) http.Handler
+
+// GetApiV1ArtifactsImage operation middleware
+func (siw *ServerInterfaceWrapper) GetApiV1ArtifactsImage(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BasicAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetApiV1ArtifactsImageParams
+
+	// ------------- Required query parameter "uri" -------------
+
+	if paramValue := r.URL.Query().Get("uri"); paramValue != "" {
+
+	} else {
+		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "uri"})
+		return
+	}
+
+	err = runtime.BindQueryParameter("form", true, true, "uri", r.URL.Query(), &params.Uri)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "uri", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetApiV1ArtifactsImage(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
 
 // PostApiV1ArtifactsSign operation middleware
 func (siw *ServerInterfaceWrapper) PostApiV1ArtifactsSign(w http.ResponseWriter, r *http.Request) {
@@ -536,6 +622,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/artifacts/image", wrapper.GetApiV1ArtifactsImage)
+	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/v1/artifacts/sign", wrapper.PostApiV1ArtifactsSign)
 	})
