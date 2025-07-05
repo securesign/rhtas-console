@@ -122,6 +122,37 @@ func (h *Handler) GetApiV1TrustRootMetadata(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, resp)
 }
 
+func (h *Handler) GetApiV1TrustTargets(w http.ResponseWriter, r *http.Request) {
+	tufRepoUrl := r.URL.Query().Get("tufRepositoryUrl")
+	resp, err := h.trustService.GetTargetsList(r.Context(), tufRepoUrl)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (h *Handler) GetApiV1TrustTarget(w http.ResponseWriter, r *http.Request) {
+	tufRepoUrl := r.URL.Query().Get("tufRepositoryUrl")
+	target := r.URL.Query().Get("target")
+	resp, err := h.trustService.GetTarget(r.Context(), tufRepoUrl, target)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (h *Handler) GetApiV1TrustTargetsCertificates(w http.ResponseWriter, r *http.Request) {
+	tufRepoUrl := r.URL.Query().Get("tufRepositoryUrl")
+	resp, err := h.trustService.GetCertificatesInfo(r.Context(), tufRepoUrl)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
 func (h *Handler) ServeSwaggerUI(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
