@@ -149,11 +149,9 @@ func (s *trustService) GetCertificatesInfo(ctx context.Context, tufRepoUrl strin
 	if err != nil {
 		return models.CertificateInfoList{}, fmt.Errorf("fetching TUF root metadata: %w", err)
 	}
-	certificates := []string{}
 	for target, info := range targetMetadataSpecs {
 		// Only targets of type certificate
 		if strings.ToLower(info["type"]) == "fulcio" || strings.ToLower(info["type"]) == "tsa" {
-			certificates = append(certificates, target)
 			cert_content, err := s.GetTarget(ctx, tufRepoUrl, target)
 			if err != nil {
 				return models.CertificateInfoList{}, fmt.Errorf("getting target certificate content: %w", err)
