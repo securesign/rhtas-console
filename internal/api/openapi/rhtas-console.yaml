@@ -253,7 +253,8 @@ paths:
     get:
       summary: Get TUF Root Metadata
       description: |
-        Fetches and returns raw TUF root metadata from the specified repository, including roles, keys, and signatures.
+        Retrieves metadata information about the TUF root versions from the trust repository.
+        This includes metadata versioning, expiration timestamps, and current status (e.g., valid or expired).
       tags:
         - Trust
       parameters:
@@ -266,7 +267,7 @@ paths:
             example: https://tuf-repo-cdn.sigstore.dev/
       responses:
         '200':
-          description: Trust root data
+          description: List of TUF root metadata entries
           content:
             application/json:
               schema:
@@ -619,9 +620,14 @@ components:
         - expires
         - status
     RootMetadataInfoList:
-      type: array
-      items:
-        $ref: '#/components/schemas/RootMetadataInfo'
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/RootMetadataInfo'
+      required:
+        - data
     Error:
       type: object
       properties:

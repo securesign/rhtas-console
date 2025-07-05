@@ -151,7 +151,9 @@ type RootMetadataInfo struct {
 }
 
 // RootMetadataInfoList defines model for RootMetadataInfoList.
-type RootMetadataInfoList = []RootMetadataInfo
+type RootMetadataInfoList struct {
+	Data []RootMetadataInfo `json:"data"`
+}
 
 // SignArtifactRequest defines model for SignArtifactRequest.
 type SignArtifactRequest struct {

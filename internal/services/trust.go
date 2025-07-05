@@ -64,7 +64,7 @@ func (s *trustService) GetTrustRootMetadataInfo(tufRepoUrl string) (models.RootM
 			Expires: rootInfo["expires"],
 			Status:  rootInfo["status"],
 		}
-		results = append(results, entry)
+		results.Data = append(results.Data, entry)
 	}
 
 	return results, nil
