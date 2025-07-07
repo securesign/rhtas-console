@@ -225,7 +225,7 @@ paths:
       parameters:
         - name: tufRepositoryUrl
           in: query
-          required: true
+          required: false
           schema:
             type: string
             description: URL of the TUF repository
@@ -260,7 +260,7 @@ paths:
       parameters:
         - name: tufRepositoryUrl
           in: query
-          required: true
+          required: false
           schema:
             type: string
             description: URL of the TUF repository
@@ -294,7 +294,7 @@ paths:
       parameters:
         - name: tufRepositoryUrl
           in: query
-          required: true
+          required: false
           schema:
             type: string
             description: URL of the TUF repository
@@ -328,7 +328,7 @@ paths:
       parameters:
         - name: tufRepositoryUrl
           in: query
-          required: true
+          required: false
           schema:
             type: string
             description: URL of the TUF repository
@@ -369,7 +369,7 @@ paths:
       parameters:
         - name: tufRepositoryUrl
           in: query
-          required: true
+          required: false
           schema:
             type: string
             description: URL of the TUF repository

@@ -303,28 +303,28 @@ type GetApiV1ArtifactsImageParams struct {
 
 // GetApiV1TrustConfigParams defines parameters for GetApiV1TrustConfig.
 type GetApiV1TrustConfigParams struct {
-	TufRepositoryUrl string `form:"tufRepositoryUrl" json:"tufRepositoryUrl"`
+	TufRepositoryUrl *string `form:"tufRepositoryUrl,omitempty" json:"tufRepositoryUrl,omitempty"`
 }
 
 // GetApiV1TrustRootMetadataInfoParams defines parameters for GetApiV1TrustRootMetadataInfo.
 type GetApiV1TrustRootMetadataInfoParams struct {
-	TufRepositoryUrl string `form:"tufRepositoryUrl" json:"tufRepositoryUrl"`
+	TufRepositoryUrl *string `form:"tufRepositoryUrl,omitempty" json:"tufRepositoryUrl,omitempty"`
 }
 
 // GetApiV1TrustTargetParams defines parameters for GetApiV1TrustTarget.
 type GetApiV1TrustTargetParams struct {
-	TufRepositoryUrl string `form:"tufRepositoryUrl" json:"tufRepositoryUrl"`
-	Target           string `form:"target" json:"target"`
+	TufRepositoryUrl *string `form:"tufRepositoryUrl,omitempty" json:"tufRepositoryUrl,omitempty"`
+	Target           string  `form:"target" json:"target"`
 }
 
 // GetApiV1TrustTargetsParams defines parameters for GetApiV1TrustTargets.
 type GetApiV1TrustTargetsParams struct {
-	TufRepositoryUrl string `form:"tufRepositoryUrl" json:"tufRepositoryUrl"`
+	TufRepositoryUrl *string `form:"tufRepositoryUrl,omitempty" json:"tufRepositoryUrl,omitempty"`
 }
 
 // GetApiV1TrustTargetsCertificatesParams defines parameters for GetApiV1TrustTargetsCertificates.
 type GetApiV1TrustTargetsCertificatesParams struct {
-	TufRepositoryUrl string `form:"tufRepositoryUrl" json:"tufRepositoryUrl"`
+	TufRepositoryUrl *string `form:"tufRepositoryUrl,omitempty" json:"tufRepositoryUrl,omitempty"`
 }
 
 // PostApiV1ArtifactsSignJSONRequestBody defines body for PostApiV1ArtifactsSign for application/json ContentType.
@@ -597,16 +597,9 @@ func (siw *ServerInterfaceWrapper) GetApiV1TrustConfig(w http.ResponseWriter, r 
 	// Parameter object where we will unmarshal all parameters from the context
 	var params GetApiV1TrustConfigParams
 
-	// ------------- Required query parameter "tufRepositoryUrl" -------------
+	// ------------- Optional query parameter "tufRepositoryUrl" -------------
 
-	if paramValue := r.URL.Query().Get("tufRepositoryUrl"); paramValue != "" {
-
-	} else {
-		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "tufRepositoryUrl"})
-		return
-	}
-
-	err = runtime.BindQueryParameter("form", true, true, "tufRepositoryUrl", r.URL.Query(), &params.TufRepositoryUrl)
+	err = runtime.BindQueryParameter("form", true, false, "tufRepositoryUrl", r.URL.Query(), &params.TufRepositoryUrl)
 	if err != nil {
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "tufRepositoryUrl", Err: err})
 		return
@@ -631,16 +624,9 @@ func (siw *ServerInterfaceWrapper) GetApiV1TrustRootMetadataInfo(w http.Response
 	// Parameter object where we will unmarshal all parameters from the context
 	var params GetApiV1TrustRootMetadataInfoParams
 
-	// ------------- Required query parameter "tufRepositoryUrl" -------------
+	// ------------- Optional query parameter "tufRepositoryUrl" -------------
 
-	if paramValue := r.URL.Query().Get("tufRepositoryUrl"); paramValue != "" {
-
-	} else {
-		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "tufRepositoryUrl"})
-		return
-	}
-
-	err = runtime.BindQueryParameter("form", true, true, "tufRepositoryUrl", r.URL.Query(), &params.TufRepositoryUrl)
+	err = runtime.BindQueryParameter("form", true, false, "tufRepositoryUrl", r.URL.Query(), &params.TufRepositoryUrl)
 	if err != nil {
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "tufRepositoryUrl", Err: err})
 		return
@@ -665,16 +651,9 @@ func (siw *ServerInterfaceWrapper) GetApiV1TrustTarget(w http.ResponseWriter, r 
 	// Parameter object where we will unmarshal all parameters from the context
 	var params GetApiV1TrustTargetParams
 
-	// ------------- Required query parameter "tufRepositoryUrl" -------------
+	// ------------- Optional query parameter "tufRepositoryUrl" -------------
 
-	if paramValue := r.URL.Query().Get("tufRepositoryUrl"); paramValue != "" {
-
-	} else {
-		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "tufRepositoryUrl"})
-		return
-	}
-
-	err = runtime.BindQueryParameter("form", true, true, "tufRepositoryUrl", r.URL.Query(), &params.TufRepositoryUrl)
+	err = runtime.BindQueryParameter("form", true, false, "tufRepositoryUrl", r.URL.Query(), &params.TufRepositoryUrl)
 	if err != nil {
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "tufRepositoryUrl", Err: err})
 		return
@@ -714,16 +693,9 @@ func (siw *ServerInterfaceWrapper) GetApiV1TrustTargets(w http.ResponseWriter, r
 	// Parameter object where we will unmarshal all parameters from the context
 	var params GetApiV1TrustTargetsParams
 
-	// ------------- Required query parameter "tufRepositoryUrl" -------------
+	// ------------- Optional query parameter "tufRepositoryUrl" -------------
 
-	if paramValue := r.URL.Query().Get("tufRepositoryUrl"); paramValue != "" {
-
-	} else {
-		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "tufRepositoryUrl"})
-		return
-	}
-
-	err = runtime.BindQueryParameter("form", true, true, "tufRepositoryUrl", r.URL.Query(), &params.TufRepositoryUrl)
+	err = runtime.BindQueryParameter("form", true, false, "tufRepositoryUrl", r.URL.Query(), &params.TufRepositoryUrl)
 	if err != nil {
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "tufRepositoryUrl", Err: err})
 		return
@@ -748,16 +720,9 @@ func (siw *ServerInterfaceWrapper) GetApiV1TrustTargetsCertificates(w http.Respo
 	// Parameter object where we will unmarshal all parameters from the context
 	var params GetApiV1TrustTargetsCertificatesParams
 
-	// ------------- Required query parameter "tufRepositoryUrl" -------------
+	// ------------- Optional query parameter "tufRepositoryUrl" -------------
 
-	if paramValue := r.URL.Query().Get("tufRepositoryUrl"); paramValue != "" {
-
-	} else {
-		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "tufRepositoryUrl"})
-		return
-	}
-
-	err = runtime.BindQueryParameter("form", true, true, "tufRepositoryUrl", r.URL.Query(), &params.TufRepositoryUrl)
+	err = runtime.BindQueryParameter("form", true, false, "tufRepositoryUrl", r.URL.Query(), &params.TufRepositoryUrl)
 	if err != nil {
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "tufRepositoryUrl", Err: err})
 		return

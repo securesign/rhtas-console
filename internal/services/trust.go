@@ -7,11 +7,14 @@ import (
 	"encoding/pem"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/securesign/rhtas-console/internal/models"
@@ -31,10 +34,39 @@ type TrustService interface {
 	GetCertificatesInfo(ctx context.Context, tufRepoUrl string) (models.CertificateInfoList, error)
 }
 
-type trustService struct{}
+// trustService manages TUF repository metadata
+type trustService struct {
+	repoLock        sync.RWMutex
+	repo            *tufRepository
+	repoReady       bool
+	refreshInterval time.Duration
+	tufRepoUrl      string
+}
+
+// tufRepository holds the TUF updater and associated metadata for a single repository
+type tufRepository struct {
+	updater           *updater.Updater
+	opts              *tuf.Options
+	lock              sync.RWMutex
+	lastRefresh       time.Time
+	refreshInProgress bool
+	remoteMetadataURL string
+	url               string
+}
 
 func NewTrustService() TrustService {
-	return &trustService{}
+	refreshInterval := 5 * time.Minute
+	if envInterval := os.Getenv("TUF_REFRESH_INTERVAL"); envInterval != "" {
+		if parsed, err := time.ParseDuration(envInterval); err == nil && parsed > 0 {
+			refreshInterval = parsed
+		}
+	}
+
+	s := &trustService{
+		refreshInterval: refreshInterval,
+	}
+	go s.runBackgroundRefresh()
+	return s
 }
 
 func (s *trustService) GetTrustConfig(ctx context.Context, tufRepoUrl string) (models.TrustConfig, error) {
@@ -53,13 +85,58 @@ func (s *trustService) GetTrustConfig(ctx context.Context, tufRepoUrl string) (m
 }
 
 func (s *trustService) GetTrustRootMetadataInfo(tufRepoUrl string) (models.RootMetadataInfoList, error) {
-	opts := buildTufOptions(tufRepoUrl)
-	var results models.RootMetadataInfoList
-	rootBytesList, err := fetchAllTufRootMetadata(opts)
+	repo, err := s.getOrCreateUpdater(tufRepoUrl)
 	if err != nil {
-		return models.RootMetadataInfoList{}, fmt.Errorf("fetching TUF root metadata: %w", err)
+		return models.RootMetadataInfoList{}, err
 	}
-	for _, rootBytes := range rootBytesList {
+
+	repo.lock.RLock()
+	defer repo.lock.RUnlock()
+
+	// Fetch all root metadata versions
+	latestRootMeta := repo.updater.GetTrustedMetadataSet().Root
+	if latestRootMeta == nil {
+		return models.RootMetadataInfoList{}, fmt.Errorf("latest root metadata not available")
+	}
+
+	latestVersion := latestRootMeta.Signed.Version
+	var allRootBytes [][]byte
+	latestRootBytes, err := latestRootMeta.ToBytes(true)
+	if err != nil {
+		return models.RootMetadataInfoList{}, fmt.Errorf("failed to get signed latest root bytes: %w", err)
+	}
+	allRootBytes = append(allRootBytes, latestRootBytes)
+
+	// Fetch previous versions
+	for version := 1; version < int(latestVersion); version++ {
+		rootFilename := fmt.Sprintf("%d.root.json", version)
+		metadataURL, err := url.JoinPath(repo.remoteMetadataURL, rootFilename)
+		if err != nil {
+			continue
+		}
+		resp, err := http.Get(metadataURL)
+		if err != nil {
+			continue
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			continue
+		}
+
+		rootBytes, err := io.ReadAll(resp.Body)
+		if err != nil {
+			continue
+		}
+		var signedRoot data.Signed
+		if err := json.Unmarshal(rootBytes, &signedRoot); err != nil {
+			continue
+		}
+		allRootBytes = append(allRootBytes, rootBytes)
+	}
+
+	var results models.RootMetadataInfoList
+	for _, rootBytes := range allRootBytes {
 		rootInfo, err := extractRootMetadataInfo(rootBytes)
 		if err != nil {
 			return models.RootMetadataInfoList{}, fmt.Errorf("extracting root metadata info: %w", err)
@@ -71,23 +148,20 @@ func (s *trustService) GetTrustRootMetadataInfo(tufRepoUrl string) (models.RootM
 }
 
 func (s *trustService) GetTargetsList(ctx context.Context, tufRepoUrl string) (models.TargetsList, error) {
-	opts := buildTufOptions(tufRepoUrl)
-	tufCfg, err := buildTufConfig(opts)
+	repo, err := s.getOrCreateUpdater(tufRepoUrl)
 	if err != nil {
 		return models.TargetsList{}, err
 	}
+	repo.lock.RLock()
+	defer repo.lock.RUnlock()
 
-	up, err := updater.New(tufCfg)
-	if err != nil {
-		return models.TargetsList{}, fmt.Errorf("failed to create updater: %w", err)
-	}
-
-	if err := up.Refresh(); err != nil {
-		return models.TargetsList{}, fmt.Errorf("failed to refresh updater: %w", err)
+	// Check if context is cancelled
+	if ctx.Err() != nil {
+		return models.TargetsList{}, ctx.Err()
 	}
 
 	// Get Targets list
-	targetFiles := up.GetTopLevelTargets()
+	targetFiles := repo.updater.GetTopLevelTargets()
 	var targetList []string
 	for target := range targetFiles {
 		targetList = append(targetList, target)
@@ -97,28 +171,26 @@ func (s *trustService) GetTargetsList(ctx context.Context, tufRepoUrl string) (m
 }
 
 func (s *trustService) GetTarget(ctx context.Context, tufRepoUrl string, target string) (models.TargetContent, error) {
-	opts := buildTufOptions(tufRepoUrl)
-	tufCfg, err := buildTufConfig(opts)
+	repo, err := s.getOrCreateUpdater(tufRepoUrl)
 	if err != nil {
 		return models.TargetContent{}, err
 	}
 
-	up, err := updater.New(tufCfg)
-	if err != nil {
-		return models.TargetContent{}, fmt.Errorf("failed to create updater: %w", err)
-	}
+	repo.lock.RLock()
+	defer repo.lock.RUnlock()
 
-	if err := up.Refresh(); err != nil {
-		return models.TargetContent{}, fmt.Errorf("failed to refresh updater: %w", err)
+	// Check if context is cancelled
+	if ctx.Err() != nil {
+		return models.TargetContent{}, ctx.Err()
 	}
 
 	// Get Target content
 	const filePath = ""
-	ti, err := up.GetTargetInfo(target)
+	ti, err := repo.updater.GetTargetInfo(target)
 	if err != nil {
 		return models.TargetContent{}, fmt.Errorf("getting info for target \"%s\": %w", target, err)
 	}
-	path, tb, err := up.FindCachedTarget(ti, filePath)
+	path, tb, err := repo.updater.FindCachedTarget(ti, filePath)
 	if err != nil {
 		return models.TargetContent{}, fmt.Errorf("getting target cache: %w", err)
 	}
@@ -130,20 +202,38 @@ func (s *trustService) GetTarget(ctx context.Context, tufRepoUrl string, target 
 	// Download of target is needed
 	// Ignore targetsBaseURL, set to empty string
 	const targetsBaseURL = ""
-	_, tb, err = up.DownloadTarget(ti, filePath, targetsBaseURL)
+	_, tb, err = repo.updater.DownloadTarget(ti, filePath, targetsBaseURL)
 	if err != nil {
-		return models.TargetContent{}, fmt.Errorf("failed to download target file %s - %w", target, err)
+		return models.TargetContent{}, fmt.Errorf("failed to download target file %s: %w", target, err)
 	}
 
 	return models.TargetContent{Content: string(tb)}, nil
 }
 
 func (s *trustService) GetCertificatesInfo(ctx context.Context, tufRepoUrl string) (models.CertificateInfoList, error) {
-	opts := buildTufOptions(tufRepoUrl)
-	targetsBytes, err := fetchTufTargetsMetadata(opts)
+	repo, err := s.getOrCreateUpdater(tufRepoUrl)
 	if err != nil {
-		return models.CertificateInfoList{}, fmt.Errorf("fetching TUF target metadata: %w", err)
+		return models.CertificateInfoList{}, err
 	}
+
+	repo.lock.RLock()
+	defer repo.lock.RUnlock()
+
+	// Check if context is cancelled
+	if ctx.Err() != nil {
+		return models.CertificateInfoList{}, ctx.Err()
+	}
+
+	targetsMeta := repo.updater.GetTrustedMetadataSet().Targets["targets"]
+	if targetsMeta == nil {
+		return models.CertificateInfoList{}, fmt.Errorf("targets metadata not available")
+	}
+
+	targetsBytes, err := targetsMeta.ToBytes(true)
+	if err != nil {
+		return models.CertificateInfoList{}, fmt.Errorf("failed to get targets bytes: %w", err)
+	}
+
 	targetMetadataSpecs, err := extractTargetMetadataInfo(targetsBytes)
 	result := models.CertificateInfoList{}
 	if err != nil {
@@ -176,10 +266,119 @@ func (s *trustService) GetCertificatesInfo(ctx context.Context, tufRepoUrl strin
 	return result, nil
 }
 
+// getOrCreateUpdater retrieves or initializes a TUF updater for the given repository URL.
+func (s *trustService) getOrCreateUpdater(tufRepoUrl string) (*tufRepository, error) {
+	s.repoLock.RLock()
+	if s.repo != nil && s.tufRepoUrl == tufRepoUrl {
+		if !s.repoReady {
+			s.repoLock.RUnlock()
+			return nil, fmt.Errorf("repository %s not yet initialized, try again later", tufRepoUrl)
+		}
+		repo := s.repo
+		s.repoLock.RUnlock()
+		return repo, nil
+	}
+	s.repoLock.RUnlock()
+
+	s.repoLock.Lock()
+	defer s.repoLock.Unlock()
+
+	// Check to avoid race condition
+	if s.repo != nil && s.tufRepoUrl == tufRepoUrl {
+		if !s.repoReady {
+			return nil, fmt.Errorf("repository %s not yet initialized, try again later", tufRepoUrl)
+		}
+		return s.repo, nil
+	}
+
+	// Initialize new TUF repository
+	opts := buildTufOptions(tufRepoUrl)
+	tufCfg, err := buildTufConfig(opts)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create TUF config for %s: %w", tufRepoUrl, err)
+	}
+
+	up, err := updater.New(tufCfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create updater for %s: %w", tufRepoUrl, err)
+	}
+
+	// Perform initial refresh
+	if err := up.Refresh(); err != nil {
+		return nil, fmt.Errorf("initial refresh failed for %s: %w", tufRepoUrl, err)
+	}
+
+	repo := &tufRepository{
+		updater:           up,
+		opts:              opts,
+		lastRefresh:       time.Now().UTC(),
+		remoteMetadataURL: tufCfg.RemoteMetadataURL,
+		url:               tufRepoUrl,
+	}
+	s.repo = repo
+	s.tufRepoUrl = tufRepoUrl
+	s.repoReady = true
+	return repo, nil
+}
+
+// runBackgroundRefresh periodically refreshes the TUF repository.
+func (s *trustService) runBackgroundRefresh() {
+	ticker := time.NewTicker(s.refreshInterval)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		s.repoLock.RLock()
+		repo := s.repo
+		url := s.tufRepoUrl
+		s.repoLock.RUnlock()
+
+		if repo == nil {
+			continue
+		}
+
+		repo.lock.Lock()
+		if repo.refreshInProgress {
+			log.Printf("TUF: Refresh already in progress for %s, skipping", url)
+			repo.lock.Unlock()
+			continue
+		}
+		repo.refreshInProgress = true
+		repo.lock.Unlock()
+
+		// Perform refresh in a separate goroutine
+		go func(repo *tufRepository, url string) {
+			repo.lock.Lock()
+			defer repo.lock.Unlock()
+			defer func() { repo.refreshInProgress = false }()
+
+			// Create a new updater for each refresh cycle
+			tufCfg, err := buildTufConfig(repo.opts)
+			if err != nil {
+				log.Printf("TUF: Failed to create TUF config for %s: %v", url, err)
+				return
+			}
+			newUpdater, err := updater.New(tufCfg)
+			if err != nil {
+				log.Printf("TUF: Failed to create new updater for %s: %v", url, err)
+				return
+			}
+			if err := newUpdater.Refresh(); err != nil {
+				log.Printf("TUF: Refresh failed for %s: %v", url, err)
+				return
+			}
+			repo.updater = newUpdater
+			repo.lastRefresh = time.Now().UTC()
+			log.Printf("TUF: Successfully refreshed repository %s", url)
+		}(repo, url)
+	}
+}
+
 // buildTufOptions returns TUF options with the provided or default repository URL.
 func buildTufOptions(tufRepoUrl string) *tuf.Options {
 	opts := tuf.DefaultOptions()
-	if tufRepoUrl != "" {
+	if envRepoUrl := os.Getenv("TUF_REPO_URL"); envRepoUrl != "" {
+		opts.RepositoryBaseURL = envRepoUrl
+	} else if tufRepoUrl != "" {
 		opts.RepositoryBaseURL = tufRepoUrl
 	} else {
 		opts.RepositoryBaseURL = "https://tuf-repo-cdn.sigstore.dev"
@@ -210,88 +409,6 @@ func buildTufConfig(opts *tuf.Options) (*config.UpdaterConfig, error) {
 	return tufCfg, nil
 }
 
-// fetchAllTufRootMetadata retrieves all versions of the TUF root metadata as byte slices.
-func fetchAllTufRootMetadata(opts *tuf.Options) ([][]byte, error) {
-	tufCfg, err := buildTufConfig(opts)
-	if err != nil {
-		return nil, fmt.Errorf("failed to build TUF config: %w", err)
-	}
-
-	if tufCfg.RemoteMetadataURL == "" {
-		return nil, fmt.Errorf("RemoteMetadataURL is empty")
-	}
-	parsedURL, err := url.Parse(tufCfg.RemoteMetadataURL)
-	if err != nil {
-		return nil, fmt.Errorf("invalid RemoteMetadataURL %s: %w", tufCfg.RemoteMetadataURL, err)
-	}
-	if parsedURL.Scheme != "https" && parsedURL.Scheme != "http" {
-		return nil, fmt.Errorf("unsupported URL scheme in RemoteMetadataURL: %s", parsedURL.Scheme)
-	}
-	// Ensure trailing slash for consistent URL joining
-	if !strings.HasSuffix(parsedURL.Path, "/") {
-		parsedURL.Path += "/"
-	}
-	tufCfg.RemoteMetadataURL = parsedURL.String()
-
-	up, err := updater.New(tufCfg)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create updater: %w", err)
-	}
-
-	if err := up.Refresh(); err != nil {
-		return nil, fmt.Errorf("failed to refresh updater: %w", err)
-	}
-	// Get the latest root metadata
-	latestRootMeta := up.GetTrustedMetadataSet().Root
-	if latestRootMeta == nil {
-		return nil, fmt.Errorf("latest root metadata not available")
-	}
-	// Extract the version number from the latest root metadata
-	latestVersion := latestRootMeta.Signed.Version
-	if latestVersion < 1 {
-		return nil, fmt.Errorf("invalid latest root version: %d", latestVersion)
-	}
-
-	// Collect all root metadata versions
-	var allRootBytes [][]byte
-
-	// Add the latest root metadata
-	latestRootBytes, err := latestRootMeta.ToBytes(true)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get signed latest root bytes: %w", err)
-	}
-	allRootBytes = append(allRootBytes, latestRootBytes)
-
-	// Fetch previous versions (1.root.json, 2.root.json...N-1.root.json)
-	for version := 1; version < int(latestVersion); version++ {
-		rootFilename := fmt.Sprintf("%d.root.json", version)
-		metadataURL, err := url.JoinPath(tufCfg.RemoteMetadataURL, rootFilename)
-		if err != nil {
-			continue
-		}
-		resp, err := http.Get(metadataURL)
-		if err != nil {
-			continue
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusOK {
-			continue
-		}
-
-		rootBytes, err := io.ReadAll(resp.Body)
-		if err != nil {
-			continue
-		}
-		var signedRoot data.Signed
-		if err := json.Unmarshal(rootBytes, &signedRoot); err != nil {
-			continue
-		}
-		allRootBytes = append(allRootBytes, rootBytes)
-	}
-	return allRootBytes, nil
-}
-
 // extractRootMetadataInfo retrieves TUF root metadata info including version, expiration, and status.
 func extractRootMetadataInfo(rootMetadataBytes []byte) (models.RootMetadataInfo, error) {
 	var parsed struct {
@@ -302,7 +419,7 @@ func extractRootMetadataInfo(rootMetadataBytes []byte) (models.RootMetadataInfo,
 	}
 
 	if err := json.Unmarshal(rootMetadataBytes, &parsed); err != nil {
-		return models.RootMetadataInfo{}, fmt.Errorf("unmarshal targets metadata: %w", err)
+		return models.RootMetadataInfo{}, fmt.Errorf("unmarshal root metadata: %w", err)
 	}
 
 	expiresTime, err := time.Parse(time.RFC3339, parsed.Signed.Expired)
@@ -329,36 +446,6 @@ func extractRootMetadataInfo(rootMetadataBytes []byte) (models.RootMetadataInfo,
 	}
 
 	return rootMetadataInfo, nil
-}
-
-// fetchTufTargetsMetadata retrieves TUF target metadata as byte slices.
-func fetchTufTargetsMetadata(opts *tuf.Options) ([]byte, error) {
-	tufCfg, err := buildTufConfig(opts)
-	if err != nil {
-		return nil, err
-	}
-
-	up, err := updater.New(tufCfg)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create updater: %w", err)
-	}
-
-	if err := up.Refresh(); err != nil {
-		return nil, fmt.Errorf("failed to refresh updater: %w", err)
-	}
-
-	// Get raw targets metadata
-	targetsMeta := up.GetTrustedMetadataSet().Targets["targets"]
-	if targetsMeta == nil {
-		return nil, fmt.Errorf("targets metadata not available")
-	}
-
-	targetsBytes, err := targetsMeta.ToBytes(true)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get signed root bytes: %w", err)
-	}
-
-	return targetsBytes, nil
 }
 
 // extractTargetMetadataInfo extracts status & usage of targets
