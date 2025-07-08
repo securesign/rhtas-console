@@ -225,7 +225,7 @@ paths:
       parameters:
         - name: tufRepositoryUrl
           in: query
-          required: true
+          required: false
           schema:
             type: string
             description: URL of the TUF repository
@@ -260,7 +260,7 @@ paths:
       parameters:
         - name: tufRepositoryUrl
           in: query
-          required: true
+          required: false
           schema:
             type: string
             description: URL of the TUF repository
@@ -272,6 +272,115 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/RootMetadataInfoList'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/trust/targets:
+    get:
+      summary: Get TUF Targets List
+      description: |
+        Fetches and returns the list of TUF target files from the specified repository.
+      tags:
+        - Trust
+      parameters:
+        - name: tufRepositoryUrl
+          in: query
+          required: false
+          schema:
+            type: string
+            description: URL of the TUF repository
+            example: https://tuf-repo-cdn.sigstore.dev/
+      responses:
+        '200':
+          description: List of TUF target names
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TargetsList'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/trust/target:
+    get:
+      summary: Get TUF Target File Content
+      description: |
+        Fetches and returns the raw content of a specific TUF target file from the specified repository.
+      tags:
+        - Trust
+      parameters:
+        - name: tufRepositoryUrl
+          in: query
+          required: false
+          schema:
+            type: string
+            description: URL of the TUF repository
+            example: https://tuf-repo-cdn.sigstore.dev/
+        - name: target
+          in: query
+          required: true
+          schema:
+            type: string
+            description: Target filename
+            example: rekor.pub
+      responses:
+        '200':
+          description: Content of the requested TUF target file
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TargetContent'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/trust/targets/certificates:
+    get:
+      summary: Get Certificates Information
+      description: |
+        Fetches and returns the list information of all targets of type certificate.
+      tags:
+        - Trust
+      parameters:
+        - name: tufRepositoryUrl
+          in: query
+          required: false
+          schema:
+            type: string
+            description: URL of the TUF repository
+            example: https://tuf-repo-cdn.sigstore.dev/
+      responses:
+        '200':
+          description: List of TUF target names
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CertificateInfoList'
         '400':
           description: Invalid input
           content:
@@ -626,6 +735,59 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/RootMetadataInfo'
+      required:
+        - data
+    TargetsList:
+      type: object
+      properties:
+        targets:
+          type: array
+          items:
+            type: string
+      required:
+        - targets
+    TargetContent:
+      type: object
+      properties:
+        content:
+          type: string
+      required:
+        - content
+    CertificateInfo:
+      type: object
+      properties:
+        subject:
+          type: string
+          description: Certificate subject
+        issuer:
+          type: string
+          description: Certificate issuer
+        type:
+          type: string
+          description: Target type
+        status:
+          type: string
+          description: Status of the target to which the certificate is associated.
+        target:
+          type: string
+          description:  The TUF target to which the certificate is associated.
+        expiration:
+          type: string
+          description: Expiration date and time of the certificate (notAfter).
+      required:
+        - subject
+        - issuer
+        - type
+        - status
+        - target
+        - expiration
+    CertificateInfoList:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/CertificateInfo'
       required:
         - data
     Error:

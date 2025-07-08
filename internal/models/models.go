@@ -60,6 +60,32 @@ type ArtifactPolicies struct {
 	} `json:"policies"`
 }
 
+// CertificateInfo defines model for CertificateInfo.
+type CertificateInfo struct {
+	// Expiration Expiration date and time of the certificate (notAfter).
+	Expiration string `json:"expiration"`
+
+	// Issuer Certificate issuer
+	Issuer string `json:"issuer"`
+
+	// Status Status of the target to which the certificate is associated.
+	Status string `json:"status"`
+
+	// Subject Certificate subject
+	Subject string `json:"subject"`
+
+	// Target The TUF target to which the certificate is associated.
+	Target string `json:"target"`
+
+	// Type Target type
+	Type string `json:"type"`
+}
+
+// CertificateInfoList defines model for CertificateInfoList.
+type CertificateInfoList struct {
+	Data []CertificateInfo `json:"data"`
+}
+
 // Error defines model for Error.
 type Error struct {
 	// Error Error message
@@ -195,6 +221,16 @@ type SignArtifactResponse struct {
 	Success bool `json:"success"`
 }
 
+// TargetContent defines model for TargetContent.
+type TargetContent struct {
+	Content string `json:"content"`
+}
+
+// TargetsList defines model for TargetsList.
+type TargetsList struct {
+	Targets []string `json:"targets"`
+}
+
 // TrustConfig defines model for TrustConfig.
 type TrustConfig struct {
 	FulcioCertAuthorities []struct {
@@ -267,12 +303,28 @@ type GetApiV1ArtifactsImageParams struct {
 
 // GetApiV1TrustConfigParams defines parameters for GetApiV1TrustConfig.
 type GetApiV1TrustConfigParams struct {
-	TufRepositoryUrl string `form:"tufRepositoryUrl" json:"tufRepositoryUrl"`
+	TufRepositoryUrl *string `form:"tufRepositoryUrl,omitempty" json:"tufRepositoryUrl,omitempty"`
 }
 
 // GetApiV1TrustRootMetadataInfoParams defines parameters for GetApiV1TrustRootMetadataInfo.
 type GetApiV1TrustRootMetadataInfoParams struct {
-	TufRepositoryUrl string `form:"tufRepositoryUrl" json:"tufRepositoryUrl"`
+	TufRepositoryUrl *string `form:"tufRepositoryUrl,omitempty" json:"tufRepositoryUrl,omitempty"`
+}
+
+// GetApiV1TrustTargetParams defines parameters for GetApiV1TrustTarget.
+type GetApiV1TrustTargetParams struct {
+	TufRepositoryUrl *string `form:"tufRepositoryUrl,omitempty" json:"tufRepositoryUrl,omitempty"`
+	Target           string  `form:"target" json:"target"`
+}
+
+// GetApiV1TrustTargetsParams defines parameters for GetApiV1TrustTargets.
+type GetApiV1TrustTargetsParams struct {
+	TufRepositoryUrl *string `form:"tufRepositoryUrl,omitempty" json:"tufRepositoryUrl,omitempty"`
+}
+
+// GetApiV1TrustTargetsCertificatesParams defines parameters for GetApiV1TrustTargetsCertificates.
+type GetApiV1TrustTargetsCertificatesParams struct {
+	TufRepositoryUrl *string `form:"tufRepositoryUrl,omitempty" json:"tufRepositoryUrl,omitempty"`
 }
 
 // PostApiV1ArtifactsSignJSONRequestBody defines body for PostApiV1ArtifactsSign for application/json ContentType.
@@ -307,6 +359,15 @@ type ServerInterface interface {
 	// Get TUF Root Metadata
 	// (GET /api/v1/trust/root-metadata-info)
 	GetApiV1TrustRootMetadataInfo(w http.ResponseWriter, r *http.Request, params GetApiV1TrustRootMetadataInfoParams)
+	// Get TUF Target File Content
+	// (GET /api/v1/trust/target)
+	GetApiV1TrustTarget(w http.ResponseWriter, r *http.Request, params GetApiV1TrustTargetParams)
+	// Get TUF Targets List
+	// (GET /api/v1/trust/targets)
+	GetApiV1TrustTargets(w http.ResponseWriter, r *http.Request, params GetApiV1TrustTargetsParams)
+	// Get Certificates Information
+	// (GET /api/v1/trust/targets/certificates)
+	GetApiV1TrustTargetsCertificates(w http.ResponseWriter, r *http.Request, params GetApiV1TrustTargetsCertificatesParams)
 
 	// (GET /healthz)
 	GetHealthz(w http.ResponseWriter, r *http.Request)
@@ -361,6 +422,24 @@ func (_ Unimplemented) GetApiV1TrustConfig(w http.ResponseWriter, r *http.Reques
 // Get TUF Root Metadata
 // (GET /api/v1/trust/root-metadata-info)
 func (_ Unimplemented) GetApiV1TrustRootMetadataInfo(w http.ResponseWriter, r *http.Request, params GetApiV1TrustRootMetadataInfoParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Get TUF Target File Content
+// (GET /api/v1/trust/target)
+func (_ Unimplemented) GetApiV1TrustTarget(w http.ResponseWriter, r *http.Request, params GetApiV1TrustTargetParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Get TUF Targets List
+// (GET /api/v1/trust/targets)
+func (_ Unimplemented) GetApiV1TrustTargets(w http.ResponseWriter, r *http.Request, params GetApiV1TrustTargetsParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Get Certificates Information
+// (GET /api/v1/trust/targets/certificates)
+func (_ Unimplemented) GetApiV1TrustTargetsCertificates(w http.ResponseWriter, r *http.Request, params GetApiV1TrustTargetsCertificatesParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -518,16 +597,9 @@ func (siw *ServerInterfaceWrapper) GetApiV1TrustConfig(w http.ResponseWriter, r 
 	// Parameter object where we will unmarshal all parameters from the context
 	var params GetApiV1TrustConfigParams
 
-	// ------------- Required query parameter "tufRepositoryUrl" -------------
+	// ------------- Optional query parameter "tufRepositoryUrl" -------------
 
-	if paramValue := r.URL.Query().Get("tufRepositoryUrl"); paramValue != "" {
-
-	} else {
-		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "tufRepositoryUrl"})
-		return
-	}
-
-	err = runtime.BindQueryParameter("form", true, true, "tufRepositoryUrl", r.URL.Query(), &params.TufRepositoryUrl)
+	err = runtime.BindQueryParameter("form", true, false, "tufRepositoryUrl", r.URL.Query(), &params.TufRepositoryUrl)
 	if err != nil {
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "tufRepositoryUrl", Err: err})
 		return
@@ -552,16 +624,9 @@ func (siw *ServerInterfaceWrapper) GetApiV1TrustRootMetadataInfo(w http.Response
 	// Parameter object where we will unmarshal all parameters from the context
 	var params GetApiV1TrustRootMetadataInfoParams
 
-	// ------------- Required query parameter "tufRepositoryUrl" -------------
+	// ------------- Optional query parameter "tufRepositoryUrl" -------------
 
-	if paramValue := r.URL.Query().Get("tufRepositoryUrl"); paramValue != "" {
-
-	} else {
-		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "tufRepositoryUrl"})
-		return
-	}
-
-	err = runtime.BindQueryParameter("form", true, true, "tufRepositoryUrl", r.URL.Query(), &params.TufRepositoryUrl)
+	err = runtime.BindQueryParameter("form", true, false, "tufRepositoryUrl", r.URL.Query(), &params.TufRepositoryUrl)
 	if err != nil {
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "tufRepositoryUrl", Err: err})
 		return
@@ -569,6 +634,102 @@ func (siw *ServerInterfaceWrapper) GetApiV1TrustRootMetadataInfo(w http.Response
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetApiV1TrustRootMetadataInfo(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetApiV1TrustTarget operation middleware
+func (siw *ServerInterfaceWrapper) GetApiV1TrustTarget(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetApiV1TrustTargetParams
+
+	// ------------- Optional query parameter "tufRepositoryUrl" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "tufRepositoryUrl", r.URL.Query(), &params.TufRepositoryUrl)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "tufRepositoryUrl", Err: err})
+		return
+	}
+
+	// ------------- Required query parameter "target" -------------
+
+	if paramValue := r.URL.Query().Get("target"); paramValue != "" {
+
+	} else {
+		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "target"})
+		return
+	}
+
+	err = runtime.BindQueryParameter("form", true, true, "target", r.URL.Query(), &params.Target)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "target", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetApiV1TrustTarget(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetApiV1TrustTargets operation middleware
+func (siw *ServerInterfaceWrapper) GetApiV1TrustTargets(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetApiV1TrustTargetsParams
+
+	// ------------- Optional query parameter "tufRepositoryUrl" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "tufRepositoryUrl", r.URL.Query(), &params.TufRepositoryUrl)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "tufRepositoryUrl", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetApiV1TrustTargets(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetApiV1TrustTargetsCertificates operation middleware
+func (siw *ServerInterfaceWrapper) GetApiV1TrustTargetsCertificates(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetApiV1TrustTargetsCertificatesParams
+
+	// ------------- Optional query parameter "tufRepositoryUrl" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "tufRepositoryUrl", r.URL.Query(), &params.TufRepositoryUrl)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "tufRepositoryUrl", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetApiV1TrustTargetsCertificates(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -728,6 +889,15 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/trust/root-metadata-info", wrapper.GetApiV1TrustRootMetadataInfo)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/trust/target", wrapper.GetApiV1TrustTarget)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/trust/targets", wrapper.GetApiV1TrustTargets)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/trust/targets/certificates", wrapper.GetApiV1TrustTargetsCertificates)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/healthz", wrapper.GetHealthz)
