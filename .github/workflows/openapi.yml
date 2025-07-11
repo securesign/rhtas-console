@@ -1,0 +1,46 @@
+name: openapi
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - internal/api/openapi/rhtas-console.yaml
+  workflow_call:
+
+jobs:
+  ui-pr:
+    runs-on: ubuntu-latest
+    if: ${{ github.repository_owner == 'securesign' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: rhtas-console
+      - name: Checkout rhtas-console-ui
+        uses: actions/checkout@v4
+        with:
+          repository: securesign/rhtas-console-ui
+          path: rhtas-console-ui
+          ref: ${{ github.ref_name }}
+      - name: Update rhtas-console-ui
+        run: |
+          rm ./rhtas-console-ui/client/openapi/console.yaml
+          cp ./rhtas-console/internal/api/openapi/rhtas-console.yaml ./rhtas-console-ui/client/openapi/console.yaml
+          cd ./rhtas-console-ui
+          git diff
+      - name: Create Pull Request - rhtas-console-ui
+        uses: peter-evans/create-pull-request@v7
+        id: pr
+        with:
+          token: ${{ secrets.GH_PAT }}
+          path: ./rhtas-console-ui
+          commit-message: "update client/openapi/console.yaml"
+          signoff: true
+          branch-suffix: short-commit-hash
+          title: "[${{ github.ref_name }}] update client/openapi/console.yaml"
+          body: |
+            The openapi.yaml of rhtas-console has changed
+      - name: PR Notifications
+        shell: bash
+        run: |
+          echo "::notice:: Pull Request URL - ${{ steps.pr.outputs.pull-request-url }}"
