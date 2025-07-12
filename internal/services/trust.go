@@ -293,6 +293,10 @@ func (s *trustService) getOrCreateUpdater(tufRepoUrl string) (*tufRepository, er
 
 	// Initialize new TUF repository
 	opts := buildTufOptions(tufRepoUrl)
+	err := setOptsRoot(opts)
+	if err != nil {
+		return nil, fmt.Errorf("failed to set root in options for %s: %w", tufRepoUrl, err)
+	}
 	tufCfg, err := buildTufConfig(opts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create TUF config for %s: %w", tufRepoUrl, err)
@@ -384,6 +388,27 @@ func buildTufOptions(tufRepoUrl string) *tuf.Options {
 		opts.RepositoryBaseURL = "https://tuf-repo-cdn.sigstore.dev"
 	}
 	return opts
+}
+
+// setOptsRoot fetches the root.json from the repository and sets it in the options.
+func setOptsRoot(opts *tuf.Options) error {
+	rootURL := opts.RepositoryBaseURL + "/root.json"
+	resp, err := http.Get(rootURL)
+	if err != nil {
+		return fmt.Errorf("failed to fetch root.json: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to fetch root.json: received status %d", resp.StatusCode)
+	}
+
+	rootData, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read root.json: %w", err)
+	}
+	opts.Root = rootData
+	return nil
 }
 
 // buildTufConfig creates a TUF updater config based on the given options.
