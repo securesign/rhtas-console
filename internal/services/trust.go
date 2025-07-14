@@ -26,6 +26,10 @@ import (
 	"github.com/theupdateframework/go-tuf/v2/metadata/updater"
 )
 
+var (
+	publicGoodInstance = "https://tuf-repo-cdn.sigstore.dev"
+)
+
 type TrustService interface {
 	GetTrustConfig(ctx context.Context, tufRepoUrl string) (models.TrustConfig, error)
 	GetTrustRootMetadataInfo(tufRepoUrl string) (models.RootMetadataInfoList, error)
@@ -292,10 +296,9 @@ func (s *trustService) getOrCreateUpdater(tufRepoUrl string) (*tufRepository, er
 	}
 
 	// Initialize new TUF repository
-	opts := buildTufOptions(tufRepoUrl)
-	err := setOptsRoot(opts)
+	opts, err := buildTufOptions(tufRepoUrl)
 	if err != nil {
-		return nil, fmt.Errorf("failed to set root in options for %s: %w", tufRepoUrl, err)
+		return nil, fmt.Errorf("failed to build TUF options for %s: %w", tufRepoUrl, err)
 	}
 	tufCfg, err := buildTufConfig(opts)
 	if err != nil {
@@ -378,16 +381,22 @@ func (s *trustService) runBackgroundRefresh() {
 }
 
 // buildTufOptions returns TUF options with the provided or default repository URL.
-func buildTufOptions(tufRepoUrl string) *tuf.Options {
+func buildTufOptions(tufRepoUrl string) (*tuf.Options, error) {
 	opts := tuf.DefaultOptions()
 	if envRepoUrl := os.Getenv("TUF_REPO_URL"); envRepoUrl != "" {
 		opts.RepositoryBaseURL = envRepoUrl
 	} else if tufRepoUrl != "" {
 		opts.RepositoryBaseURL = tufRepoUrl
 	} else {
-		opts.RepositoryBaseURL = "https://tuf-repo-cdn.sigstore.dev"
+		opts.RepositoryBaseURL = publicGoodInstance
 	}
-	return opts
+
+	if !urlsEqual(opts.RepositoryBaseURL, publicGoodInstance) {
+		if err := setOptsRoot(opts); err != nil {
+			return nil, fmt.Errorf("failed to set root in options for %s: %w", tufRepoUrl, err)
+		}
+	}
+	return opts, nil
 }
 
 // setOptsRoot fetches the root.json from the repository and sets it in the options.
@@ -533,4 +542,11 @@ func extractCertDetails(certPEM string) (models.CertificateInfoList, error) {
 		return models.CertificateInfoList{}, fmt.Errorf("no valid certificates found")
 	}
 	return results, nil
+}
+
+// urlsEqual compares two URLs for logical equivalence, ignoring trailing slashes.
+func urlsEqual(a, b string) bool {
+	ua, err1 := url.Parse(strings.TrimRight(a, "/"))
+	ub, err2 := url.Parse(strings.TrimRight(b, "/"))
+	return err1 == nil && err2 == nil && ua.String() == ub.String()
 }
