@@ -731,6 +731,9 @@ components:
     RootMetadataInfoList:
       type: object
       properties:
+        repo-url:
+          type: string
+          description: URL of the TUF repository
         data:
           type: array
           items:
