@@ -148,6 +148,7 @@ func (s *trustService) GetTrustRootMetadataInfo(tufRepoUrl string) (models.RootM
 		results.Data = append(results.Data, rootInfo)
 	}
 
+	results.RepoUrl = &repo.opts.RepositoryBaseURL
 	return results, nil
 }
 
@@ -323,7 +324,7 @@ func (s *trustService) getOrCreateUpdater(tufRepoUrl string) (*tufRepository, er
 		url:               tufRepoUrl,
 	}
 	s.repo = repo
-	s.tufRepoUrl = tufRepoUrl
+	s.tufRepoUrl = s.repo.remoteMetadataURL
 	s.repoReady = true
 	return repo, nil
 }
