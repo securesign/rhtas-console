@@ -777,6 +777,9 @@ components:
         expiration:
           type: string
           description: Expiration date and time of the certificate (notAfter).
+        pem:
+          type: string
+          description: Certificate in PEM-encoded format.
       required:
         - subject
         - issuer
@@ -784,6 +787,7 @@ components:
         - status
         - target
         - expiration
+        - pem
     CertificateInfoList:
       type: object
       properties:
