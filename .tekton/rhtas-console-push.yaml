@@ -50,7 +50,8 @@ spec:
         value: 'main'
       - name: pathInRepo
         value: 'pipelines/docker-build-oci-ta.yaml'
-  taskRunTemplate: {}
+  taskRunTemplate:
+    serviceAccountName: build-pipeline-rhtas-console
   workspaces:
   - name: git-auth
     secret:
