@@ -263,6 +263,7 @@ func (s *trustService) GetCertificatesInfo(ctx context.Context, tufRepoUrl strin
 					Target:     target,
 					Status:     info["status"],
 					Type:       info["type"],
+					Pem:        cert_info.Pem,
 				})
 			}
 		}
@@ -531,10 +532,15 @@ func extractCertDetails(certPEM string) (models.CertificateInfoList, error) {
 		if err != nil {
 			return models.CertificateInfoList{}, fmt.Errorf("failed to parse certificate: %w", err)
 		}
+		pemBytes := pem.EncodeToMemory(&pem.Block{
+			Type:  "CERTIFICATE",
+			Bytes: cert.Raw,
+		})
 		entry := models.CertificateInfo{
 			Subject:    cert.Subject.String(),
 			Issuer:     cert.Issuer.String(),
 			Expiration: cert.NotAfter.String(),
+			Pem:        string(pemBytes),
 		}
 		results.Data = append(results.Data, entry)
 	}

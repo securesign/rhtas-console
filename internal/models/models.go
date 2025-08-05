@@ -68,6 +68,9 @@ type CertificateInfo struct {
 	// Issuer Certificate issuer
 	Issuer string `json:"issuer"`
 
+	// Pem Certificate in PEM-encoded format.
+	Pem string `json:"pem"`
+
 	// Status Status of the target to which the certificate is associated.
 	Status string `json:"status"`
 
