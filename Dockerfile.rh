@@ -1,0 +1,31 @@
+# Build stage
+FROM registry.redhat.io/ubi9/go-toolset:1.24@sha256:6fd64cd7f38a9b87440f963b6c04953d04de65c35b9672dbd7f1805b0ae20d09 AS builder
+
+WORKDIR /app
+
+COPY . .
+
+RUN go build -buildvcs=false -o rhtas_console ./cmd/rhtas_console
+
+# Final stage
+FROM registry.access.redhat.com/ubi9/ubi-minimal@sha256:67fee1a132e8e326434214b3c7ce90b2500b2ad02c9790cc61581feb58d281d5
+
+COPY --from=builder /app/rhtas_console /rhtas_console
+
+LABEL description="rhtas_console is the backend API server for the Red Hat Trusted Application Signer dashboard."
+LABEL io.k8s.description="Backend API for the Red Hat Trusted Application Signer Console."
+LABEL io.k8s.display-name="RHTAS Console Backend"
+LABEL io.openshift.tags="rhtas backend api trusted-signer"
+LABEL summary="Provides the backend service for RHTAS Console."
+LABEL com.redhat.component="rhtas-console"
+LABEL name="rhtas-console"
+
+COPY LICENSE /licenses/LICENSE
+
+USER 65532:65532
+
+# Expose API port
+EXPOSE 8080
+
+#ENTRYPOINT
+ENTRYPOINT ["/rhtas_console"]

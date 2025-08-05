@@ -1,0 +1,58 @@
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  annotations:
+    build.appstudio.openshift.io/repo: https://github.com/securesign/rhtas-console?rev={{revision}}
+    build.appstudio.redhat.com/commit_sha: '{{revision}}'
+    build.appstudio.redhat.com/target_branch: '{{target_branch}}'
+    pipelinesascode.tekton.dev/cancel-in-progress: "false"
+    pipelinesascode.tekton.dev/max-keep-runs: "3"
+    pipelinesascode.tekton.dev/on-cel-expression: event == "push" && target_branch == "main" &&
+      (".tekton/rhtas-console-push.yaml".pathChanged()
+      || "Dockerfile.rh".pathChanged()
+      || "internal/***".pathChanged() || "cmd/rhtas_console/***".pathChanged()
+      || "go.mod".pathChanged() || "go.sum".pathChanged())
+  creationTimestamp: null
+  labels:
+    appstudio.openshift.io/application: rhtas-console
+    appstudio.openshift.io/component: rhtas-console
+    pipelines.appstudio.openshift.io/type: build
+  name: rhtas-console-on-push
+  namespace: rhtas-tenant
+spec:
+  params:
+  - name: git-url
+    value: '{{source_url}}'
+  - name: revision
+    value: '{{revision}}'
+  - name: output-image
+    value: quay.io/securesign/rhtas-console:{{revision}}
+  - name: dockerfile
+    value: Dockerfile.rh
+  - name: path-context
+    value: .
+  - name: build-source-image
+    value: "true"
+  - name: hermetic
+    value: "true"
+  - name: prefetch-input
+    value: [{"path": ".", "type": "gomod"}]
+  - name: go_unit_test
+    value: true
+  - name: go_base_image
+    value: registry.redhat.io/ubi9/go-toolset:1.24@sha256:6fd64cd7f38a9b87440f963b6c04953d04de65c35b9672dbd7f1805b0ae20d09
+  pipelineRef:
+    resolver: git
+    params:
+      - name: url
+        value: 'https://github.com/securesign/pipelines.git'
+      - name: revision
+        value: 'main'
+      - name: pathInRepo
+        value: 'pipelines/docker-build-oci-ta.yaml'
+  taskRunTemplate: {}
+  workspaces:
+  - name: git-auth
+    secret:
+      secretName: '{{ git_auth_secret }}'
+status: {}
