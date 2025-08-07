@@ -28,12 +28,12 @@ build: generate-openapi deps
 	go build -v -o $(BUILD_DIR)/$(BINARY_NAME) ./$(CMD_DIR)
 
 .PHONY: run
-run: build #deploy-mariadb
-# 	@echo "Waiting for MariaDB to be ready..."
-# 	@until podman exec $(DB_CONTAINER) mysqladmin ping -h "127.0.0.1" -u$(DB_USER) -p$(DB_PASS) --silent; do \
-# 		echo "Waiting for database..."; \
-# 		sleep 1; \
-# 	done
+run: build deploy-mariadb
+	@echo "Waiting for MariaDB to be ready..."
+	@until podman exec $(DB_CONTAINER) mysqladmin ping -h "127.0.0.1" -u$(DB_USER) -p$(DB_PASS) --silent; do \
+		echo "Waiting for database..."; \
+		sleep 1; \
+	done
 	@echo "MariaDB is up."
 	@echo "Running $(BINARY_NAME)..."
 	@DB_DSN="$(DB_DSN)" ./$(BUILD_DIR)/$(BINARY_NAME)
