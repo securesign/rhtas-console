@@ -21,6 +21,9 @@ import (
 	"database/sql"
 
 	_ "github.com/go-sql-driver/mysql"
+	"github.com/golang-migrate/migrate/v4"
+	"github.com/golang-migrate/migrate/v4/database/mysql"
+	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/securesign/rhtas-console/internal/models"
 	"github.com/sigstore/sigstore-go/pkg/tuf"
 	"github.com/sigstore/sigstore-go/pkg/util"
@@ -75,13 +78,13 @@ func NewTrustService() TrustService {
 	// example: user:password@tcp(localhost:3306)/tuf_trust
 	DB_DSN := os.Getenv("DB_DSN")
 	if DB_DSN == "" {
-		log.Fatalf("DB_DSN env variable must be non-empty")
+		log.Fatal("DB_DSN env variable must be non-empty")
 	}
 
 	// TUF repository URL
 	tufRepoUrl := os.Getenv("TUF_REPO_URL")
 	if tufRepoUrl == "" {
-		log.Fatalf("TUF_REPO_URL env variable must be non-empty")
+		log.Fatal("TUF_REPO_URL env variable must be non-empty")
 	}
 
 	// Initialize MariaDB connection
@@ -98,19 +101,19 @@ func NewTrustService() TrustService {
 		db:              db,
 	}
 
-	// Initialize database schema
-	if err := s.initDatabase(); err != nil {
-		log.Fatalf("Failed to initialize database schema: %v", err)
+	// Initialize database: run migrations
+	if err := s.runMigrations(); err != nil {
+		log.Fatalf("failed to run migrations: %v", err)
 	}
 
 	// Perform initial targets population
 	repo, err := s.getOrCreateUpdater(tufRepoUrl)
 	if err != nil {
-		log.Fatalf("Failed to initialize default TUF repository %s: %v", tufRepoUrl, err)
+		log.Fatalf("failed to initialize default TUF repository %s: %v", tufRepoUrl, err)
 	}
 	ctx := context.Background()
 	if err := s.populateTargets(ctx, repo); err != nil {
-		log.Printf("Failed to perform initial targets population for %s: %v", tufRepoUrl, err)
+		log.Fatalf("failed to perform initial targets population for %s: %v", tufRepoUrl, err)
 	}
 
 	go s.runBackgroundRefresh()
@@ -680,28 +683,26 @@ func (s *trustService) syncDatabaseWithTargets(repo *tufRepository) error {
 	return nil
 }
 
-// initDatabase creates the targets table in the database if it does not already exist.
-func (s *trustService) initDatabase() error {
-	queries := []string{
-		`CREATE TABLE IF NOT EXISTS targets (
-            id BIGINT AUTO_INCREMENT PRIMARY KEY,
-            repo_url VARCHAR(255) NOT NULL,
-            target_name VARCHAR(255) NOT NULL,
-            type VARCHAR(50) NOT NULL,
-            status VARCHAR(50) NOT NULL,
-			content TEXT NOT NULL,
-            created_at DATETIME NOT NULL,
-            updated_at DATETIME NOT NULL,
-            UNIQUE KEY uk_repo_target (repo_url, target_name)
-        )`,
+// runMigrations applies database migrations using golang-migrate
+func (s *trustService) runMigrations() error {
+	driver, err := mysql.WithInstance(s.db, &mysql.Config{})
+	if err != nil {
+		return fmt.Errorf("failed to initialize migration driver: %w", err)
 	}
 
-	for _, query := range queries {
-		_, err := s.db.Exec(query)
-		if err != nil {
-			return fmt.Errorf("failed to create table: %w", err)
-		}
+	m, err := migrate.NewWithDatabaseInstance(
+		"file://internal/db/migrations",
+		"mysql",
+		driver,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to initialize migrations: %w", err)
 	}
+
+	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
+		return fmt.Errorf("failed to apply migrations: %w", err)
+	}
+
 	return nil
 }
 
