@@ -743,18 +743,38 @@ components:
     TargetsList:
       type: object
       properties:
-        targets:
+        data:
           type: array
           items:
-            type: string
+            $ref: '#/components/schemas/TargetInfo'
       required:
-        - targets
+        - data
     TargetContent:
       type: object
       properties:
         content:
           type: string
       required:
+        - content
+    TargetInfo:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Target name
+        type:
+          type: string
+          description: Target type
+        status:
+          type: string
+          description: Status of the target.
+        content:
+          type: string
+          description: Content of the target.
+      required:
+        - name
+        - type
+        - status
         - content
     CertificateInfo:
       type: object
