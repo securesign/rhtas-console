@@ -423,14 +423,6 @@ func (s *trustService) runBackgroundRefresh() {
 // buildTufOptions returns TUF options with the provided or default repository URL.
 func buildTufOptions(tufRepoUrl string) (*tuf.Options, error) {
 	opts := tuf.DefaultOptions()
-	// if envRepoUrl := os.Getenv("TUF_REPO_URL"); envRepoUrl != "" {
-	// 	opts.RepositoryBaseURL = envRepoUrl
-	// } else if tufRepoUrl != "" {
-	// 	opts.RepositoryBaseURL = tufRepoUrl
-	// } else {
-	// 	opts.RepositoryBaseURL = publicGoodInstance
-	// }
-
 	opts.RepositoryBaseURL = tufRepoUrl
 	if !urlsEqual(opts.RepositoryBaseURL, publicGoodInstance) {
 		if err := setOptsRoot(opts); err != nil {
