@@ -43,6 +43,7 @@ type TrustService interface {
 	GetTarget(ctx context.Context, tufRepoUrl string, target string) (models.TargetContent, error)
 	GetCertificatesInfo(ctx context.Context, tufRepoUrl string) (models.CertificateInfoList, error)
 	GetAllTargets(ctx context.Context, tufRepoUrl string) (models.TargetsList, error)
+	CloseDB() error
 }
 
 // trustService manages TUF repository metadata
@@ -53,6 +54,8 @@ type trustService struct {
 	refreshInterval time.Duration
 	tufRepoUrl      string
 	db              *sql.DB
+	ctx             context.Context
+	cancel          context.CancelFunc
 }
 
 // tufRepository holds the TUF updater and associated metadata for a single repository
@@ -96,9 +99,12 @@ func NewTrustService() TrustService {
 		log.Fatalf("failed to ping MariaDB: %v", err)
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
 	s := &trustService{
 		refreshInterval: refreshInterval,
 		db:              db,
+		ctx:             ctx,
+		cancel:          cancel,
 	}
 
 	// Initialize database: run migrations
@@ -111,7 +117,6 @@ func NewTrustService() TrustService {
 	if err != nil {
 		log.Fatalf("failed to initialize default TUF repository %s: %v", tufRepoUrl, err)
 	}
-	ctx := context.Background()
 	if err := s.populateTargets(ctx, repo); err != nil {
 		log.Fatalf("failed to perform initial targets population for %s: %v", tufRepoUrl, err)
 	}
@@ -363,61 +368,80 @@ func (s *trustService) runBackgroundRefresh() {
 	ticker := time.NewTicker(s.refreshInterval)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		s.repoLock.RLock()
-		repo := s.repo
-		url := s.tufRepoUrl
-		s.repoLock.RUnlock()
+	for {
+		select {
+		case <-s.ctx.Done():
+			log.Println("Stopping background refresh")
+			return
+		case <-ticker.C:
+			s.repoLock.RLock()
+			repo := s.repo
+			url := s.tufRepoUrl
+			s.repoLock.RUnlock()
 
-		if repo == nil {
-			continue
-		}
+			if repo == nil {
+				continue
+			}
 
-		repo.lock.Lock()
-		if repo.refreshInProgress {
-			log.Printf("TUF: Refresh already in progress for %s, skipping", url)
-			repo.lock.Unlock()
-			continue
-		}
-		repo.refreshInProgress = true
-		repo.lock.Unlock()
-
-		// Perform refresh in a separate goroutine
-		go func(repo *tufRepository, url string) {
 			repo.lock.Lock()
-			defer func() { repo.refreshInProgress = false }()
+			if repo.refreshInProgress {
+				log.Printf("TUF: Refresh already in progress for %s, skipping", url)
+				repo.lock.Unlock()
+				continue
+			}
+			repo.refreshInProgress = true
+			repo.lock.Unlock()
 
-			// Create a new updater for each refresh cycle
-			tufCfg, err := buildTufConfig(repo.opts)
-			if err != nil {
-				log.Printf("TUF: Failed to create TUF config for %s: %v", url, err)
-				return
-			}
-			newUpdater, err := updater.New(tufCfg)
-			if err != nil {
-				log.Printf("TUF: Failed to create new updater for %s: %v", url, err)
-				return
-			}
-			if err := newUpdater.Refresh(); err != nil {
-				log.Printf("TUF: Refresh failed for %s: %v", url, err)
-				return
-			}
-			repo.updater = newUpdater
-			repo.lastRefresh = time.Now().UTC()
-			repo.lock.Unlock() // Release the write lock before calling populateTargets
+			// Perform refresh in a separate goroutine
+			go func(repo *tufRepository, url string) {
+				repo.lock.Lock()
+				defer func() { repo.refreshInProgress = false }()
 
-			ctx := context.Background()
-			if err := s.populateTargets(ctx, repo); err != nil {
-				log.Printf("TUF: Failed to populate targets for %s: %v", url, err)
-				return
-			}
-			if err := s.syncDatabaseWithTargets(repo); err != nil {
-				log.Printf("TUF: Failed to sync database for %s: %v", url, err)
-				return
-			}
-			log.Printf("TUF: Successfully refreshed repository %s", url)
-		}(repo, url)
+				// Create a new updater for each refresh cycle
+				tufCfg, err := buildTufConfig(repo.opts)
+				if err != nil {
+					log.Printf("TUF: Failed to create TUF config for %s: %v", url, err)
+					repo.lock.Unlock()
+					return
+				}
+				newUpdater, err := updater.New(tufCfg)
+				if err != nil {
+					log.Printf("TUF: Failed to create new updater for %s: %v", url, err)
+					repo.lock.Unlock()
+					return
+				}
+				if err := newUpdater.Refresh(); err != nil {
+					log.Printf("TUF: Refresh failed for %s: %v", url, err)
+					repo.lock.Unlock()
+					return
+				}
+				repo.updater = newUpdater
+				repo.lastRefresh = time.Now().UTC()
+				repo.lock.Unlock() // Release the write lock before calling populateTargets
+
+				ctx, cancel := context.WithTimeout(s.ctx, 30*time.Second)
+				defer cancel()
+				if err := s.populateTargets(ctx, repo); err != nil {
+					log.Printf("TUF: Failed to populate targets for %s: %v", url, err)
+					return
+				}
+				if err := s.syncDatabaseWithTargets(repo); err != nil {
+					log.Printf("TUF: Failed to sync database for %s: %v", url, err)
+					return
+				}
+				log.Printf("TUF: Successfully refreshed repository %s", url)
+			}(repo, url)
+		}
 	}
+}
+
+// CloseDB cancels the periodic refreshes and closes the db connection
+func (s *trustService) CloseDB() error {
+	s.cancel() // Stop the background refresh
+	if s.db != nil {
+		return s.db.Close()
+	}
+	return nil
 }
 
 // buildTufOptions returns TUF options with the provided or default repository URL.
