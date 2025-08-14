@@ -31,16 +31,11 @@ The RHTAS Console is a Go-based RESTful API server, providing functionality for 
    cd rhtas-console
    ```
 
-2. **Build the application**:
+2. **Run the server**:
 
    ```bash
-   make build
-   ```
-
-3. **Run the server**:
-
-   ```bash
-   ./bin/rhtas_console
+   # Builds and runs the application, including deploying a MariaDB container.
+   make run
    ```
 
    The backend server runs on `localhost:8080` by default. Configure the port via `--port` flag.
@@ -53,12 +48,27 @@ The RHTAS Console is a Go-based RESTful API server, providing functionality for 
 
 ## Usage
 
+### Using the Makefile
+The project includes a Makefile to streamline common development tasks. Below are the key make targets available:
+
+| Target                          | Description                                      |
+|-----------------------------------|--------------------------------------------------|
+| `make generate-openapi`      | Generates Go code from the OpenAPI specification (`rhtas-console.yaml`). |
+| `make build`                 | Builds the `rhtas_console` binary, placing it in the `bin/` directory. |
+| `make run`                   | Builds and runs the application, including deploying a MariaDB container. |
+| `make deps`                  | Installs Go dependencies and the oapi-codegen tool.                  |
+| `make deploy-mariadb`        | Starts a MariaDB container for the database with configured settings.               |
+| `make stop-mariadb`          | Stops the running MariaDB container. |
+| `make clean-mariadb`         | Removes the MariaDB container. |
+| `make restart-mariadb`       | Restarts the MariaDB container by stopping and redeploying it. |
+| `make clean`                 | Removes build artifacts and the MariaDB container.     |
+
 ### Running the Backend server
 
 Start the server with:
 
 ```bash
-./bin/rhtas_console
+make run
 ```
 
 The API will be available at `http://localhost:8080` (or `https://api.rhtas.example.com` in production).
@@ -69,17 +79,20 @@ The backend exposes the following RESTful endpoints, as defined in the OpenAPI s
 
 | Method | Endpoint                          | Description                                      |
 |--------|-----------------------------------|--------------------------------------------------|
-| GET    | `/healthz`                           | Retrieves the current health status of the server. |
-| GET    | `/swagger-ui`                        | Serves the Swagger User Interface. |
-| GET    | `/rhtas-console.yaml`                | Returns the project OpenAPI spec file. |
-| POST   | `/api/v1/artifacts/sign`             | Signs an artifact using Cosign.                  |
-| POST   | `/api/v1/artifacts/verify`           | Verifies an artifact using Cosign.               |
-| GET    | `/api/v1/artifacts/{artifact}/policies` | Retrieves policies and attestations for an artifact. |
-| GET    | `/api/v1/artifacts/image`            | Retrieves metadata for a container image by full reference URI. |
-| GET    | `/api/v1/rekor/entries/{uuid}`       | Retrieves a Rekor transparency log entry by UUID. |
-| GET    | `/api/v1/rekor/public-key`           | Retrieves the Rekor public key in PEM format.     |
-| GET    | `/api/v1/trust/config`               | Retrieves Fulcio certificate authorities and Rekor transparency logs. |
-| GET    | `/api/v1/trust/root-metadata-info`        | Retrieves the full history of TUF root metadata versions, including version, expiration date, and status (valid, expiring, expired). |
+| GET    | `/healthz`                                  | Retrieves the current health status of the server. |
+| GET    | `/swagger-ui`                               | Serves the Swagger User Interface. |
+| GET    | `/rhtas-console.yaml`                       | Returns the project OpenAPI spec file. |
+| POST   | `/api/v1/artifacts/sign`                    | Signs an artifact using Cosign.                  |
+| POST   | `/api/v1/artifacts/verify`                  | Verifies an artifact using Cosign.               |
+| GET    | `/api/v1/artifacts/{artifact}/policies`     | Retrieves policies and attestations for an artifact. |
+| GET    | `/api/v1/artifacts/image`                   | Retrieves metadata for a container image by full reference URI. |
+| GET    | `/api/v1/rekor/entries/{uuid}`              | Retrieves a Rekor transparency log entry by UUID. |
+| GET    | `/api/v1/rekor/public-key`                  | Retrieves the Rekor public key in PEM format.     |
+| GET    | `/api/v1/trust/config`                      | Retrieves Fulcio certificate authorities and Rekor transparency logs. |
+| GET    | `/api/v1/trust/root-metadata-info`          | Retrieves the full history of TUF root metadata versions, including version, expiration date, and status (valid, expiring, expired). |
+| GET    | `/api/v1/trust/targets`                     | Retrieves all TUF targets. |
+| GET    | `/api/v1/trust/target`                      | Retrieves a specific TUF target. |
+| GET    | `/api/v1/trust/targets/certificates`        | Retrieves certificates for TUF targets. |
 
 #### Example: Sign an artifact
 

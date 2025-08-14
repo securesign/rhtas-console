@@ -232,9 +232,24 @@ type TargetContent struct {
 	Content string `json:"content"`
 }
 
+// TargetInfo defines model for TargetInfo.
+type TargetInfo struct {
+	// Content Content of the target.
+	Content string `json:"content"`
+
+	// Name Target name
+	Name string `json:"name"`
+
+	// Status Status of the target.
+	Status string `json:"status"`
+
+	// Type Target type
+	Type string `json:"type"`
+}
+
 // TargetsList defines model for TargetsList.
 type TargetsList struct {
-	Targets []string `json:"targets"`
+	Data []TargetInfo `json:"data"`
 }
 
 // TrustConfig defines model for TrustConfig.
