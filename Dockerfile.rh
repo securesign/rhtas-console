@@ -10,7 +10,12 @@ RUN go build -buildvcs=false -o rhtas_console ./cmd/rhtas_console
 # Final stage
 FROM registry.access.redhat.com/ubi9/ubi-minimal@sha256:67fee1a132e8e326434214b3c7ce90b2500b2ad02c9790cc61581feb58d281d5
 
-COPY --from=builder /app/rhtas_console /rhtas_console
+# Set a writable working directory
+WORKDIR /tmp
+ENV HOME=/tmp
+
+COPY --from=builder /app/rhtas_console /tmp/rhtas_console
+COPY internal/db/migrations /tmp/internal/db/migrations
 
 LABEL description="rhtas_console is the backend API server for the Red Hat Trusted Application Signer dashboard."
 LABEL io.k8s.description="Backend API for the Red Hat Trusted Application Signer Console."
@@ -28,4 +33,4 @@ USER 65532:65532
 EXPOSE 8080
 
 #ENTRYPOINT
-ENTRYPOINT ["/rhtas_console"]
+ENTRYPOINT ["/tmp/rhtas_console"]
