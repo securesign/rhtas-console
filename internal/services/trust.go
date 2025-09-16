@@ -38,11 +38,11 @@ var (
 )
 
 type TrustService interface {
-	GetTrustConfig(ctx context.Context, tufRepoUrl string) (models.TrustConfig, error, int)
-	GetTrustRootMetadataInfo(tufRepoUrl string) (models.RootMetadataInfoList, error, int)
-	GetTarget(ctx context.Context, tufRepoUrl string, target string) (models.TargetContent, error, int)
-	GetCertificatesInfo(ctx context.Context, tufRepoUrl string) (models.CertificateInfoList, error, int)
-	GetAllTargets(ctx context.Context, tufRepoUrl string) (models.TargetsList, error, int)
+	GetTrustConfig(ctx context.Context, tufRepoUrl string) (cfg models.TrustConfig, err error, statusCode int)
+	GetTrustRootMetadataInfo(tufRepoUrl string) (info models.RootMetadataInfoList, err error, statusCode int)
+	GetTarget(ctx context.Context, tufRepoUrl string, target string) (content models.TargetContent, err error, statusCode int)
+	GetCertificatesInfo(ctx context.Context, tufRepoUrl string) (certs models.CertificateInfoList, err error, statusCode int)
+	GetAllTargets(ctx context.Context, tufRepoUrl string) (targets models.TargetsList, err error, statusCode int)
 	CloseDB() error
 }
 

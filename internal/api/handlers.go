@@ -110,7 +110,7 @@ func (h *Handler) GetApiV1TrustConfig(w http.ResponseWriter, r *http.Request) {
 		writeError(w, statusCode, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, resp)
+	writeJSON(w, statusCode, resp)
 }
 
 func (h *Handler) GetApiV1TrustRootMetadata(w http.ResponseWriter, r *http.Request) {
@@ -120,7 +120,7 @@ func (h *Handler) GetApiV1TrustRootMetadata(w http.ResponseWriter, r *http.Reque
 		writeError(w, statusCode, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, resp)
+	writeJSON(w, statusCode, resp)
 }
 
 func (h *Handler) GetApiV1TrustTargets(w http.ResponseWriter, r *http.Request) {
@@ -130,7 +130,7 @@ func (h *Handler) GetApiV1TrustTargets(w http.ResponseWriter, r *http.Request) {
 		writeError(w, statusCode, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, resp)
+	writeJSON(w, statusCode, resp)
 }
 
 func (h *Handler) GetApiV1TrustTarget(w http.ResponseWriter, r *http.Request) {
@@ -141,7 +141,7 @@ func (h *Handler) GetApiV1TrustTarget(w http.ResponseWriter, r *http.Request) {
 		writeError(w, statusCode, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, resp)
+	writeJSON(w, statusCode, resp)
 }
 
 func (h *Handler) GetApiV1TrustTargetsCertificates(w http.ResponseWriter, r *http.Request) {
@@ -151,7 +151,7 @@ func (h *Handler) GetApiV1TrustTargetsCertificates(w http.ResponseWriter, r *htt
 		writeError(w, statusCode, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, resp)
+	writeJSON(w, statusCode, resp)
 }
 
 func (h *Handler) ServeSwaggerUI(w http.ResponseWriter, r *http.Request) {
