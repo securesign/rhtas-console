@@ -12,7 +12,7 @@ metadata:
       (".tekton/rhtas-console-pull-request.yaml".pathChanged()
       || "Dockerfile.rh".pathChanged()
       || "internal/***".pathChanged() || "cmd/rhtas_console/***".pathChanged()
-      || "go.mod".pathChanged() || "go.sum".pathChanged())
+      || "go.mod".pathChanged() || "go.sum".pathChanged() || "trigger-konflux-builds.txt".pathChanged())
   creationTimestamp: null
   labels:
     appstudio.openshift.io/application: rhtas-console
