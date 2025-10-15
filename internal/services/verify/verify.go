@@ -381,7 +381,6 @@ func getBundleVerificationMaterial(manifestLayer *v1.Descriptor, hasTlog, hasTim
 			// (which is already represented in TlogEntries)
 			fmt.Fprintf(os.Stderr, "No RFC3161 timestamp found, relying on Rekor integrated timestamp.\n")
 			timestampEntries = nil
-			err = nil
 		}
 	}
 	// 3. Construct the verification material

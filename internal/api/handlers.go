@@ -91,7 +91,7 @@ func (h *Handler) GetApiV1ArtifactsArtifactPolicies(w http.ResponseWriter, r *ht
 
 func (h *Handler) GetApiV1TrustConfig(w http.ResponseWriter, r *http.Request) {
 	tufRepoUrl := os.Getenv("TUF_REPO_URL")
-	resp, err, statusCode := h.trustService.GetTrustConfig(r.Context(), tufRepoUrl)
+	resp, statusCode, err := h.trustService.GetTrustConfig(r.Context(), tufRepoUrl)
 	if err != nil {
 		writeError(w, statusCode, err.Error())
 		return
@@ -101,7 +101,7 @@ func (h *Handler) GetApiV1TrustConfig(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) GetApiV1TrustRootMetadata(w http.ResponseWriter, r *http.Request) {
 	tufRepoUrl := os.Getenv("TUF_REPO_URL")
-	resp, err, statusCode := h.trustService.GetTrustRootMetadataInfo(tufRepoUrl)
+	resp, statusCode, err := h.trustService.GetTrustRootMetadataInfo(tufRepoUrl)
 	if err != nil {
 		writeError(w, statusCode, err.Error())
 		return
@@ -111,7 +111,7 @@ func (h *Handler) GetApiV1TrustRootMetadata(w http.ResponseWriter, r *http.Reque
 
 func (h *Handler) GetApiV1TrustTargets(w http.ResponseWriter, r *http.Request) {
 	tufRepoUrl := os.Getenv("TUF_REPO_URL")
-	resp, err, statusCode := h.trustService.GetAllTargets(r.Context(), tufRepoUrl)
+	resp, statusCode, err := h.trustService.GetAllTargets(r.Context(), tufRepoUrl)
 	if err != nil {
 		writeError(w, statusCode, err.Error())
 		return
@@ -122,7 +122,7 @@ func (h *Handler) GetApiV1TrustTargets(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) GetApiV1TrustTarget(w http.ResponseWriter, r *http.Request) {
 	tufRepoUrl := os.Getenv("TUF_REPO_URL")
 	target := r.URL.Query().Get("target")
-	resp, err, statusCode := h.trustService.GetTarget(r.Context(), tufRepoUrl, target)
+	resp, statusCode, err := h.trustService.GetTarget(r.Context(), tufRepoUrl, target)
 	if err != nil {
 		writeError(w, statusCode, err.Error())
 		return
@@ -132,7 +132,7 @@ func (h *Handler) GetApiV1TrustTarget(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) GetApiV1TrustTargetsCertificates(w http.ResponseWriter, r *http.Request) {
 	tufRepoUrl := os.Getenv("TUF_REPO_URL")
-	resp, err, statusCode := h.trustService.GetCertificatesInfo(r.Context(), tufRepoUrl)
+	resp, statusCode, err := h.trustService.GetCertificatesInfo(r.Context(), tufRepoUrl)
 	if err != nil {
 		writeError(w, statusCode, err.Error())
 		return
