@@ -34,7 +34,7 @@ import (
 )
 
 var (
-	publicGoodInstance = "https://tuf-repo-cdn.sigstore.dev"
+	TufPublicGoodInstance = "https://tuf-repo-cdn.sigstore.dev"
 )
 
 type TrustService interface {
@@ -456,7 +456,7 @@ func (s *trustService) CloseDB() error {
 func buildTufOptions(tufRepoUrl string) (*tuf.Options, error) {
 	opts := tuf.DefaultOptions()
 	opts.RepositoryBaseURL = tufRepoUrl
-	if !urlsEqual(opts.RepositoryBaseURL, publicGoodInstance) {
+	if !urlsEqual(opts.RepositoryBaseURL, TufPublicGoodInstance) {
 		if err := setOptsRoot(opts); err != nil {
 			return nil, fmt.Errorf("failed to set root in options for %s: %w", tufRepoUrl, err)
 		}

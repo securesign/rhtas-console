@@ -9,7 +9,6 @@ func RegisterRoutes(r *chi.Mux, as services.ArtifactService, rs services.RekorSe
 	handler := NewHandler(as, rs, ts)
 
 	r.Get("/healthz", handler.GetHealthz)
-	r.Post("/api/v1/artifacts/sign", handler.PostApiV1ArtifactsSign)
 	r.Post("/api/v1/artifacts/verify", handler.PostApiV1ArtifactsVerify)
 	r.Get("/api/v1/artifacts/{artifact}/policies", handler.GetApiV1ArtifactsArtifactPolicies)
 	r.Get("/api/v1/artifacts/image", handler.GetApiV1ArtifactsImage)

@@ -17,20 +17,6 @@ const (
 	BasicAuthScopes = "basicAuth.Scopes"
 )
 
-// Defines values for SignArtifactRequestArtifactType.
-const (
-	Blob           SignArtifactRequestArtifactType = "blob"
-	ContainerImage SignArtifactRequestArtifactType = "container-image"
-	File           SignArtifactRequestArtifactType = "file"
-	Sbom           SignArtifactRequestArtifactType = "sbom"
-)
-
-// Defines values for VerifyArtifactRequestOutput.
-const (
-	Json VerifyArtifactRequestOutput = "json"
-	Text VerifyArtifactRequestOutput = "text"
-)
-
 // ArtifactPolicies defines model for ArtifactPolicies.
 type ArtifactPolicies struct {
 	// Artifact The artifact URI
@@ -187,46 +173,6 @@ type RootMetadataInfoList struct {
 	RepoUrl *string `json:"repo-url,omitempty"`
 }
 
-// SignArtifactRequest defines model for SignArtifactRequest.
-type SignArtifactRequest struct {
-	// Annotations Optional key-value annotations to include in the signature
-	Annotations *map[string]string `json:"annotations,omitempty"`
-
-	// Artifact URI or identifier of the artifact to sign. This could be a container image (e.g., quay.io/example/app:latest), a file path, a blob digest, or another unique artifact reference.
-	Artifact string `json:"artifact"`
-
-	// ArtifactType Type of the artifact to sign. Common types include `container-image`, `file`, `blob`, `sbom`, etc.
-	ArtifactType SignArtifactRequestArtifactType `json:"artifactType"`
-
-	// IdentityToken OIDC token for Fulcio (if using keyless signing)
-	IdentityToken *string `json:"identityToken"`
-
-	// PrivateKeyRef Reference to a private key (KMS URI or file)
-	PrivateKeyRef *string `json:"privateKeyRef"`
-}
-
-// SignArtifactRequestArtifactType Type of the artifact to sign. Common types include `container-image`, `file`, `blob`, `sbom`, etc.
-type SignArtifactRequestArtifactType string
-
-// SignArtifactResponse defines model for SignArtifactResponse.
-type SignArtifactResponse struct {
-	// Certificate Fulcio-signed certificate (PEM), if keyless
-	Certificate *string `json:"certificate"`
-
-	// LogEntry Rekor transparency log entry
-	LogEntry *struct {
-		IntegratedTime *int    `json:"integratedTime,omitempty"`
-		LogIndex       *int    `json:"logIndex,omitempty"`
-		Uuid           *string `json:"uuid,omitempty"`
-	} `json:"logEntry,omitempty"`
-
-	// Signature The generated signature
-	Signature string `json:"signature"`
-
-	// Success Whether the signing was successful
-	Success bool `json:"success"`
-}
-
 // TargetContent defines model for TargetContent.
 type TargetContent struct {
 	Content string `json:"content"`
@@ -272,46 +218,52 @@ type Verification struct {
 	SignedEntryTimestamp string `json:"signedEntryTimestamp"`
 }
 
-// VerifyArtifactRequest defines model for VerifyArtifactRequest.
+// VerifyArtifactRequest Parameters for verifying a signed artifact or container image using Sigstore and related trust sources. Fields correspond to common verification inputs such as issuer expectations, trusted roots, and TUF configuration.
 type VerifyArtifactRequest struct {
-	// Annotations Optional key-value annotations to verify in the signature
-	Annotations *map[string]string `json:"annotations,omitempty"`
+	// ArtifactDigest Hex-encoded digest of the artifact to verify. Used when the artifact reference does not directly include a digest (e.g., separate file verification). Mandatory when using the bundle.
+	ArtifactDigest *string `json:"artifactDigest,omitempty"`
 
-	// Artifact URI or identifier of the artifact to verify. This could be a container image (e.g., quay.io/example/app:latest), a file path, a blob digest, or another unique artifact reference.
-	Artifact string `json:"artifact"`
+	// ArtifactDigestAlgorithm Digest algorithm used to compute the artifact's digest. Common values: sha256, sha512.
+	ArtifactDigestAlgorithm *string `json:"artifactDigestAlgorithm,omitempty"`
 
-	// Cert Path or content of certificate for Fulcio-based verification
-	Cert *string `json:"cert"`
+	// Bundle Optional full Sigstore verification bundle (json). If provided, the verifier will validate this bundle directly instead of fetching an OCI image.
+	Bundle *map[string]interface{} `json:"bundle"`
 
-	// CertChain Certificate chain in PEM format (if using keyless verification)
-	CertChain *string `json:"certChain"`
+	// ExpectedOIDIssuer Expected OIDC issuer for the signing certificate (Fulcio-based verification).
+	ExpectedOIDIssuer *string `json:"expectedOIDIssuer"`
 
-	// CertificateIdentity Expected identity from Fulcio certificate (OIDC subject)
-	CertificateIdentity *string `json:"certificateIdentity"`
+	// ExpectedOIDIssuerRegex Regular expression that the OIDC issuer must match, if exact match is not desired.
+	ExpectedOIDIssuerRegex *string `json:"expectedOIDIssuerRegex"`
 
-	// CertificateOidcIssuer OIDC issuer for Fulcio verification
-	CertificateOidcIssuer *string `json:"certificateOidcIssuer"`
+	// ExpectedSAN Expected identity in the signing certificate's Subject Alternative Name (SAN) extension.
+	ExpectedSAN *string `json:"expectedSAN"`
 
-	// Offline Whether to run Cosign in offline mode
-	Offline *bool `json:"offline,omitempty"`
+	// ExpectedSANRegex Regular expression that the SAN value must match, allowing pattern-based verification.
+	ExpectedSANRegex *string `json:"expectedSANRegex"`
 
-	// Output Output format
-	Output *VerifyArtifactRequestOutput `json:"output,omitempty"`
+	// MinBundleVersion Minimum acceptable bundle version (e.g., '0.1') for verified signatures.
+	MinBundleVersion *string `json:"minBundleVersion"`
 
-	// PublicKey Optional public key path, KMS URI, or URL (for key-based verification)
-	PublicKey *string `json:"publicKey"`
+	// OciImage The OCI image reference to verify.
+	OciImage *string `json:"ociImage,omitempty"`
+
+	// RequireCTLog Require that a Certificate Transparency (CT) log entry exists for the signing certificate.
+	RequireCTLog *bool `json:"requireCTLog,omitempty"`
+
+	// RequireTLog Require that an Artifact Transparency (Rekor) log entry exists for the verified artifact.
+	RequireTLog *bool `json:"requireTLog,omitempty"`
+
+	// RequireTimestamp Require that either an RFC3161 signed timestamp or a log entry integrated timestamp is present in the signature.
+	RequireTimestamp *bool `json:"requireTimestamp,omitempty"`
+
+	// TufRootURL URL of a TUF repository containing the trusted root JSON file.
+	TufRootURL *string `json:"tufRootURL"`
 }
-
-// VerifyArtifactRequestOutput Output format
-type VerifyArtifactRequestOutput string
 
 // VerifyArtifactResponse defines model for VerifyArtifactResponse.
 type VerifyArtifactResponse struct {
-	// Details Detailed output from Cosign
-	Details *map[string]interface{} `json:"details,omitempty"`
-
-	// Message Verification result message
-	Message string `json:"message"`
+	// Details The full verification result payload returned by the Sigstore verifier. This structure may evolve over time.
+	Details map[string]interface{} `json:"details"`
 
 	// Verified Whether verification was successful
 	Verified bool `json:"verified"`
@@ -348,9 +300,6 @@ type GetApiV1TrustTargetsCertificatesParams struct {
 	TufRepositoryUrl *string `form:"tufRepositoryUrl,omitempty" json:"tufRepositoryUrl,omitempty"`
 }
 
-// PostApiV1ArtifactsSignJSONRequestBody defines body for PostApiV1ArtifactsSign for application/json ContentType.
-type PostApiV1ArtifactsSignJSONRequestBody = SignArtifactRequest
-
 // PostApiV1ArtifactsVerifyJSONRequestBody defines body for PostApiV1ArtifactsVerify for application/json ContentType.
 type PostApiV1ArtifactsVerifyJSONRequestBody = VerifyArtifactRequest
 
@@ -359,10 +308,7 @@ type ServerInterface interface {
 	// Retrieve metadata and digest from an OCI-compliant registry
 	// (GET /api/v1/artifacts/image)
 	GetApiV1ArtifactsImage(w http.ResponseWriter, r *http.Request, params GetApiV1ArtifactsImageParams)
-	// Sign an artifact using Cosign
-	// (POST /api/v1/artifacts/sign)
-	PostApiV1ArtifactsSign(w http.ResponseWriter, r *http.Request)
-	// Verify an artifact using Cosign
+	// Verify an artifact
 	// (POST /api/v1/artifacts/verify)
 	PostApiV1ArtifactsVerify(w http.ResponseWriter, r *http.Request)
 	// Get policies and attestations for an artifact
@@ -404,13 +350,7 @@ func (_ Unimplemented) GetApiV1ArtifactsImage(w http.ResponseWriter, r *http.Req
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// Sign an artifact using Cosign
-// (POST /api/v1/artifacts/sign)
-func (_ Unimplemented) PostApiV1ArtifactsSign(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusNotImplemented)
-}
-
-// Verify an artifact using Cosign
+// Verify an artifact
 // (POST /api/v1/artifacts/verify)
 func (_ Unimplemented) PostApiV1ArtifactsVerify(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
@@ -509,20 +449,6 @@ func (siw *ServerInterfaceWrapper) GetApiV1ArtifactsImage(w http.ResponseWriter,
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetApiV1ArtifactsImage(w, r, params)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// PostApiV1ArtifactsSign operation middleware
-func (siw *ServerInterfaceWrapper) PostApiV1ArtifactsSign(w http.ResponseWriter, r *http.Request) {
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.PostApiV1ArtifactsSign(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -889,9 +815,6 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/artifacts/image", wrapper.GetApiV1ArtifactsImage)
-	})
-	r.Group(func(r chi.Router) {
-		r.Post(options.BaseURL+"/api/v1/artifacts/sign", wrapper.PostApiV1ArtifactsSign)
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/v1/artifacts/verify", wrapper.PostApiV1ArtifactsVerify)

@@ -1,10 +1,10 @@
 # RHTAS Console
 
-The RHTAS Console is a Go-based RESTful API server, providing functionality for signing and verifying software artifacts using Cosign, interacting with Sigstore's Rekor transparency log, and managing trust configurations with TUF and Fulcio. This repository serves as the backend for the RHTAS Console application, with plans to potentially add a frontend in the future.
+The RHTAS Console is a Go-based RESTful API server, providing functionality for verifying software artifacts, interacting with Sigstore's Rekor transparency log, and managing trust configurations with TUF and Fulcio. This repository serves as the backend for the RHTAS Console application, with plans to potentially add a frontend in the future.
 
 ## Features
 
-- **Artifact management**: Sign and verify artifacts (e.g., container images, files, SBOMs) using Cosign.
+- **Artifact management**: Verify artifacts (e.g., container images, files, SBOMs).
 - **Rekor integration**: Retrieve transparency log entries and public keys from Rekor.
 - **Trust configuration**: Get TUF targets and Fulcio certificate authorities for trust policies.
 - Built with [Chi](https://github.com/go-chi/chi), a lightweight Go router.
@@ -20,7 +20,6 @@ The RHTAS Console is a Go-based RESTful API server, providing functionality for 
    ```bash
    oapi-codegen -generate types,chi-server -package models openapi/rhtas-console.yaml > internal/models/models.go
    ```
-- Optional: [rekor-cli](https://docs.sigstore.dev/rekor/installation/) and [cosign](https://docs.sigstore.dev/cosign/installation/) for testing Rekor and Cosign interactions
 
 ### Steps
 
@@ -82,8 +81,7 @@ The backend exposes the following RESTful endpoints, as defined in the OpenAPI s
 | GET    | `/healthz`                                  | Retrieves the current health status of the server. |
 | GET    | `/swagger-ui`                               | Serves the Swagger User Interface. |
 | GET    | `/rhtas-console.yaml`                       | Returns the project OpenAPI spec file. |
-| POST   | `/api/v1/artifacts/sign`                    | Signs an artifact using Cosign.                  |
-| POST   | `/api/v1/artifacts/verify`                  | Verifies an artifact using Cosign.               |
+| POST   | `/api/v1/artifacts/verify`                  | Verifies an artifact.               |
 | GET    | `/api/v1/artifacts/{artifact}/policies`     | Retrieves policies and attestations for an artifact. |
 | GET    | `/api/v1/artifacts/image`                   | Retrieves metadata for a container image by full reference URI. |
 | GET    | `/api/v1/rekor/entries/{uuid}`              | Retrieves a Rekor transparency log entry by UUID. |
@@ -94,32 +92,69 @@ The backend exposes the following RESTful endpoints, as defined in the OpenAPI s
 | GET    | `/api/v1/trust/target`                      | Retrieves a specific TUF target. |
 | GET    | `/api/v1/trust/targets/certificates`        | Retrieves certificates for TUF targets. |
 
-#### Example: Sign an artifact
+#### Example: Verify an artifact
 
-To sign a container image using Cosign (keyless signing with OIDC token):
+To verify an OCI image:
 
+
+- Using `ociImage`:
 ```bash
-curl -X POST http://localhost:8080/api/v1/artifacts/sign \
+curl -X POST http://localhost:8080/api/v1/artifacts/verify \
   -H "Content-Type: application/json" \
   -d '{
-    "artifact": "quay.io/example/app:latest",
-    "artifactType": "container-image",
-    "identityToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-    "annotations": {"env": "prod"}
+    "ociImage": "ttl.sh/rhtas/test-image:1h",
+    "expectedOIDIssuer": "https://accounts.google.com",
+    "expectedSAN": "jdoe@redhat.com",
+    "tufRootURL": "https://tuf-repo-cdn.sigstore.dev"
+  }'
+```
+- Using `bundle`:
+```bash
+# bundle.json: the file which contains the bundle
+bundle_json=$(jq -c '.' bundle.json)
+curl -X POST http://localhost:8080/api/v1/artifacts/verify \
+  -H "Content-Type: application/json" \
+  -d '{
+  	"artifactDigest": "e128e0a064433c8d46f0467b149c70052fedbfa1f9e96ac22e3deefdc943e965",
+    "expectedOIDIssuer": "https://accounts.google.com",
+    "expectedSAN": "jdoe@redhat.com",
+    "tufRootURL": "https://tuf-repo-cdn.sigstore.dev",
+    "bundle": '"$bundle_json"'
   }'
 ```
 
 Response:
 ```json
 {
-  "success": true,
-  "signature": "MEUCIQC...",
-  "certificate": "-----BEGIN CERTIFICATE-----\nMIIBIjANBgkq...\n-----END CERTIFICATE-----",
-  "logEntry": {
-    "uuid": "108e9186e8c5677a249f2ad46ab96976656298b3feb5e031777b9e1fa5c55aaf7e0115bee955ccaa",
-    "integratedTime": 1747816420,
-    "logIndex": 216249784
-  }
+   "details":{
+      "mediaType":"application/vnd.dev.sigstore.verificationresult+json;version=0.1",
+      "signature":{
+         "certificate":{
+            "certificateIssuer":"CN=sigstore-intermediate,O=sigstore.dev",
+            "issuer":"https://accounts.google.com",
+            "subjectAlternativeName":"jdoe@redhat.com"
+         }
+      },
+      "statement":{
+         
+      },
+      "verifiedIdentity":{
+         "issuer":{
+            "issuer":"https://accounts.google.com"
+         },
+         "subjectAlternativeName":{
+            "subjectAlternativeName":"jdoe@redhat.com"
+         }
+      },
+      "verifiedTimestamps":[
+         {
+            "timestamp":"2025-10-14T09:05:19+02:00",
+            "type":"Tlog",
+            "uri":"https://rekor.sigstore.dev"
+         }
+      ]
+   },
+   "verified":true
 }
 ```
 
@@ -191,4 +226,4 @@ The `models` package is generated from the OpenAPI specification:
 make generate-openapi
 ```
 
-This generates Go types such as `RekorEntry`, `SignArtifactRequest`, `VerifyArtifactResponse`, and others.
+This generates Go types such as `RekorEntry`, `VerifyArtifactResponse`, and others.

@@ -28,39 +28,9 @@ paths:
                   status:
                     type: string
                     enum: [ok]
-  /api/v1/artifacts/sign:
-    post:
-      summary: Sign an artifact using Cosign
-      tags:
-        - Artifact
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/SignArtifactRequest'
-      responses:
-        '200':
-          description: Artifact signed successfully
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SignArtifactResponse'
-        '400':
-          description: Invalid input
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '500':
-          description: Internal server error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
   /api/v1/artifacts/verify:
     post:
-      summary: Verify an artifact using Cosign
+      summary: Verify an artifact
       tags:
         - Artifact
       requestBody:
@@ -399,130 +369,104 @@ components:
       type: http
       scheme: basic
   schemas:
-    SignArtifactRequest:
-      type: object
-      properties:
-        artifact:
-          type: string
-          description: >
-            URI or identifier of the artifact to sign. This could be a container image (e.g., quay.io/example/app:latest),
-            a file path, a blob digest, or another unique artifact reference.
-          example: quay.io/example/app:latest
-        artifactType:
-          type: string
-          description: >
-            Type of the artifact to sign. Common types include `container-image`, `file`, `blob`, `sbom`, etc.
-          enum:
-            - container-image
-            - file
-            - blob
-            - sbom
-          example: container-image
-        identityToken:
-          type: string
-          description: OIDC token for Fulcio (if using keyless signing)
-          nullable: true
-        privateKeyRef:
-          type: string
-          description: Reference to a private key (KMS URI or file)
-          nullable: true
-        annotations:
-          type: object
-          additionalProperties:
-            type: string
-          description: Optional key-value annotations to include in the signature
-          example:
-            env: prod
-      required:
-        - artifact
-        - artifactType
-    SignArtifactResponse:
-      type: object
-      properties:
-        success:
-          type: boolean
-          description: Whether the signing was successful
-        signature:
-          type: string
-          description: The generated signature
-        certificate:
-          type: string
-          description: Fulcio-signed certificate (PEM), if keyless
-          nullable: true
-        logEntry:
-          type: object
-          description: Rekor transparency log entry
-          properties:
-            uuid:
-              type: string
-            integratedTime:
-              type: integer
-            logIndex:
-              type: integer
-      required:
-        - success
-        - signature
     VerifyArtifactRequest:
       type: object
+      description: >
+        Parameters for verifying a signed artifact or container image using Sigstore and related trust sources.
+        Fields correspond to common verification inputs such as issuer expectations, trusted roots, and TUF configuration.
       properties:
-        artifact:
+        ociImage:
           type: string
           description: >
-            URI or identifier of the artifact to verify. This could be a container image (e.g., quay.io/example/app:latest),
-            a file path, a blob digest, or another unique artifact reference.
+            The OCI image reference to verify.
           example: quay.io/example/app:latest
-        publicKey:
-          type: string
-          description: Optional public key path, KMS URI, or URL (for key-based verification)
-          nullable: true
-          example: cosign.pub
-        cert:
-          type: string
-          description: Path or content of certificate for Fulcio-based verification
-          nullable: true
-        certChain:
-          type: string
-          description: Certificate chain in PEM format (if using keyless verification)
-          nullable: true
-        certificateIdentity:
-          type: string
-          description: Expected identity from Fulcio certificate (OIDC subject)
-          nullable: true
-        certificateOidcIssuer:
-          type: string
-          description: OIDC issuer for Fulcio verification
-          nullable: true
-        annotations:
+        bundle:
           type: object
-          additionalProperties:
-            type: string
-          description: Optional key-value annotations to verify in the signature
-        offline:
-          type: boolean
-          default: false
-          description: Whether to run Cosign in offline mode
-        output:
+          description: >
+            Optional full Sigstore verification bundle (json).
+            If provided, the verifier will validate this bundle directly instead of fetching an OCI image.
+          nullable: true
+          additionalProperties: true
+        artifactDigest:
           type: string
-          enum: [json, text]
-          default: json
-          description: Output format
+          description: >
+            Hex-encoded digest of the artifact to verify. Used when the artifact reference
+            does not directly include a digest (e.g., separate file verification).
+            Mandatory when using the bundle.
+        artifactDigestAlgorithm:
+          type: string
+          default: sha256
+          description: >
+            Digest algorithm used to compute the artifact's digest.
+            Common values: sha256, sha512.
+        expectedOIDIssuer:
+          type: string
+          description: >
+            Expected OIDC issuer for the signing certificate (Fulcio-based verification).
+          example: https://accounts.google.com
+          nullable: true
+        expectedOIDIssuerRegex:
+          type: string
+          description: >
+            Regular expression that the OIDC issuer must match, if exact match is not desired.
+          nullable: true
+        expectedSAN:
+          type: string
+          description: >
+            Expected identity in the signing certificate's Subject Alternative Name (SAN) extension.
+          example: user@example.com
+          nullable: true
+        expectedSANRegex:
+          type: string
+          description: >
+            Regular expression that the SAN value must match, allowing pattern-based verification.
+          nullable: true
+        requireTimestamp:
+          type: boolean
+          default: true
+          description: >
+            Require that either an RFC3161 signed timestamp or a log entry integrated timestamp
+            is present in the signature.
+        requireCTLog:
+          type: boolean
+          default: true
+          description: >
+            Require that a Certificate Transparency (CT) log entry exists for the signing certificate.
+        requireTLog:
+          type: boolean
+          default: true
+          description: >
+            Require that an Artifact Transparency (Rekor) log entry exists for the verified artifact.
+        minBundleVersion:
+          type: string
+          description: >
+            Minimum acceptable bundle version (e.g., '0.1') for verified signatures.
+          example: "0.1"
+          nullable: true
+        tufRootURL:
+          type: string
+          description: >
+            URL of a TUF repository containing the trusted root JSON file.
+          example: https://tuf-repo-cdn.sigstore.dev
+          nullable: true
       required:
-        - artifact
+        - expectedIssuer
+        - expectedSAN
     VerifyArtifactResponse:
       type: object
       properties:
         verified:
           type: boolean
           description: Whether verification was successful
-        message:
-          type: string
-          description: Verification result message
         details:
           type: object
-          description: Detailed output from Cosign
+          description: >
+            The full verification result payload returned by the Sigstore verifier.
+            This structure may evolve over time.
+          additionalProperties: true
       required:
         - verified
-        - message
+        - details
     InclusionProof:
       type: object
       description: Merkle tree inclusion proof for a Rekor entry

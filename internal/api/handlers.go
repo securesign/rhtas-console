@@ -38,20 +38,6 @@ func (h *Handler) GetHealthz(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, response)
 }
 
-func (h *Handler) PostApiV1ArtifactsSign(w http.ResponseWriter, r *http.Request) {
-	var req models.SignArtifactRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
-	resp, err := h.artifactService.SignArtifact(r.Context(), req)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, resp)
-}
-
 func (h *Handler) PostApiV1ArtifactsVerify(w http.ResponseWriter, r *http.Request) {
 	var req models.VerifyArtifactRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -60,7 +46,7 @@ func (h *Handler) PostApiV1ArtifactsVerify(w http.ResponseWriter, r *http.Reques
 	}
 	resp, err := h.artifactService.VerifyArtifact(r.Context(), req)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeJSON(w, http.StatusInternalServerError, resp)
 		return
 	}
 	writeJSON(w, http.StatusOK, resp)
@@ -202,7 +188,9 @@ func (h *Handler) ServeOpenAPIFile(w http.ResponseWriter, r *http.Request) {
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	if err := json.NewEncoder(w).Encode(v); err != nil {
+	enc := json.NewEncoder(w)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
 		http.Error(w, "failed to encode response", http.StatusInternalServerError)
 	}
 }
