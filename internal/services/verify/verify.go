@@ -12,6 +12,9 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io"
+	"log"
+	"net/http"
 	"os"
 	"time"
 
@@ -107,6 +110,18 @@ func VerifyArtifact(ctx context.Context, verifyOpts VerifyOptions) (details stri
 	if verifyOpts.OCIImage != "" {
 		// Build a bundle from OCI image reference and get its digest
 		b, verifyOpts.ArtifactDigest, err = bundleFromOCIImage(verifyOpts.OCIImage, verifyOpts.RequireTLog, verifyOpts.RequireTimestamp)
+		// Save the bundle to a JSON file
+		if b != nil {
+			outFile := "bundle.json" // or whatever path you want
+			data, err := b.MarshalJSON()
+			if err != nil {
+				fmt.Errorf("error marshaling bundle to JSON: %w", err)
+			}
+			if err := os.WriteFile(outFile, data, 0644); err != nil {
+				fmt.Errorf("error writing bundle JSON to file: %w", err)
+			}
+			fmt.Printf("Bundle written to %s\n", outFile)
+		}
 	} else if verifyOpts.Bundle != nil {
 		// Load the bundle from the provided paramters
 		b, err = LoadFromMap(verifyOpts.Bundle)
@@ -159,6 +174,9 @@ func VerifyArtifact(ctx context.Context, verifyOpts VerifyOptions) (details stri
 	if verifyOpts.TUFRootURL != "" {
 		opts := tuf.DefaultOptions()
 		opts.RepositoryBaseURL = verifyOpts.TUFRootURL
+		if err := setOptsRoot(opts); err != nil {
+			fmt.Errorf("failed to set root in options for %s: %w", verifyOpts.TUFRootURL, err)
+		}
 		fetcher := fetcher.NewDefaultFetcher()
 		fetcher.SetHTTPUserAgent(util.ConstructUserAgent())
 		opts.Fetcher = fetcher
@@ -541,4 +559,29 @@ func getBundleMsgSignature(simpleSigningLayer *v1.Descriptor) (*protobundle.Bund
 			Signature: sig,
 		},
 	}, nil
+}
+
+// setOptsRoot fetches the root.json from the repository and sets it in the options.
+func setOptsRoot(opts *tuf.Options) error {
+	rootURL := opts.RepositoryBaseURL + "/root.json"
+	resp, err := http.Get(rootURL)
+	if err != nil {
+		return fmt.Errorf("failed to fetch root.json: %w", err)
+	}
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil {
+			log.Printf("failed to close resp Body: %v", cerr)
+		}
+	}()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to fetch root.json: received status %d", resp.StatusCode)
+	}
+
+	rootData, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read root.json: %w", err)
+	}
+	opts.Root = rootData
+	return nil
 }
