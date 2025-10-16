@@ -110,18 +110,6 @@ func VerifyArtifact(ctx context.Context, verifyOpts VerifyOptions) (details stri
 	if verifyOpts.OCIImage != "" {
 		// Build a bundle from OCI image reference and get its digest
 		b, verifyOpts.ArtifactDigest, err = bundleFromOCIImage(verifyOpts.OCIImage, verifyOpts.RequireTLog, verifyOpts.RequireTimestamp)
-		// Save the bundle to a JSON file
-		if b != nil {
-			outFile := "bundle.json" // or whatever path you want
-			data, err := b.MarshalJSON()
-			if err != nil {
-				fmt.Errorf("error marshaling bundle to JSON: %w", err)
-			}
-			if err := os.WriteFile(outFile, data, 0644); err != nil {
-				fmt.Errorf("error writing bundle JSON to file: %w", err)
-			}
-			fmt.Printf("Bundle written to %s\n", outFile)
-		}
 	} else if verifyOpts.Bundle != nil {
 		// Load the bundle from the provided paramters
 		b, err = LoadFromMap(verifyOpts.Bundle)
@@ -175,7 +163,7 @@ func VerifyArtifact(ctx context.Context, verifyOpts VerifyOptions) (details stri
 		opts := tuf.DefaultOptions()
 		opts.RepositoryBaseURL = verifyOpts.TUFRootURL
 		if err := setOptsRoot(opts); err != nil {
-			fmt.Errorf("failed to set root in options for %s: %w", verifyOpts.TUFRootURL, err)
+			return "", fmt.Errorf("failed to set root in options for %s: %w", verifyOpts.TUFRootURL, err)
 		}
 		fetcher := fetcher.NewDefaultFetcher()
 		fetcher.SetHTTPUserAgent(util.ConstructUserAgent())
