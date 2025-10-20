@@ -15,7 +15,9 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/google/go-containerregistry/pkg/crane"
@@ -33,6 +35,10 @@ import (
 	"github.com/sigstore/sigstore-go/pkg/tuf"
 	"github.com/sigstore/sigstore-go/pkg/util"
 	"github.com/sigstore/sigstore-go/pkg/verify"
+)
+
+var (
+	TufPublicGoodInstance = "https://tuf-repo-cdn.sigstore.dev"
 )
 
 // VerifyOptions defines configuration parameters for artifact verification.
@@ -162,8 +168,10 @@ func VerifyArtifact(ctx context.Context, verifyOpts VerifyOptions) (details stri
 	if verifyOpts.TUFRootURL != "" {
 		opts := tuf.DefaultOptions()
 		opts.RepositoryBaseURL = verifyOpts.TUFRootURL
-		if err := setOptsRoot(opts); err != nil {
-			return "", fmt.Errorf("failed to set root in options for %s: %w", verifyOpts.TUFRootURL, err)
+		if !urlsEqual(opts.RepositoryBaseURL, TufPublicGoodInstance) {
+			if err := setOptsRoot(opts); err != nil {
+				return "", fmt.Errorf("failed to set root in options for %s: %w", verifyOpts.TUFRootURL, err)
+			}
 		}
 		fetcher := fetcher.NewDefaultFetcher()
 		fetcher.SetHTTPUserAgent(util.ConstructUserAgent())
@@ -277,7 +285,11 @@ func (*nonExpiringVerifier) ValidAtTime(_ time.Time) bool {
 
 func trustedPublicKeyMaterial(pk crypto.PublicKey) *root.TrustedPublicKeyMaterial {
 	return root.NewTrustedPublicKeyMaterial(func(string) (root.TimeConstrainedVerifier, error) {
-		verifier, err := signature.LoadECDSAVerifier(pk.(*ecdsa.PublicKey), crypto.SHA256)
+		pkECDSA, ok := pk.(*ecdsa.PublicKey)
+		if !ok {
+			return nil, fmt.Errorf("trustedPublicKeyMaterial: expected *ecdsa.PublicKey, got %T", pk)
+		}
+		verifier, err := signature.LoadECDSAVerifier(pkECDSA, crypto.SHA256)
 		if err != nil {
 			return nil, err
 		}
@@ -373,12 +385,6 @@ func getBundleVerificationMaterial(manifestLayer *v1.Descriptor, hasTlog, hasTim
 		}
 	}
 	var timestampEntries *protobundle.TimestampVerificationData
-	// if hasTimestamp {
-	// 	timestampEntries, err = getVerificationMaterialTimestampEntries(manifestLayer)
-	// 	if err != nil {
-	// 		return nil, fmt.Errorf("error getting timestamp entries: %w", err)
-	// 	}
-	// }
 	if hasTimestamp {
 		// Try RFC3161 timestamp first
 		timestampEntries, err = getVerificationMaterialTimestampEntries(manifestLayer)
@@ -400,7 +406,10 @@ func getBundleVerificationMaterial(manifestLayer *v1.Descriptor, hasTlog, hasTim
 // getVerificationMaterialTlogEntries returns the verification material transparency log entries from the simple signing layer
 func getVerificationMaterialTlogEntries(manifestLayer *v1.Descriptor) ([]*protorekor.TransparencyLogEntry, error) {
 	// 1. Get the bundle annotation
-	bun := manifestLayer.Annotations["dev.sigstore.cosign/bundle"]
+	bun, ok := manifestLayer.Annotations["dev.sigstore.cosign/bundle"]
+	if !ok || bun == "" {
+		return nil, fmt.Errorf("missing or empty bundle annotation")
+	}
 	var jsonData map[string]interface{}
 	err := json.Unmarshal([]byte(bun), &jsonData)
 	if err != nil {
@@ -408,11 +417,19 @@ func getVerificationMaterialTlogEntries(manifestLayer *v1.Descriptor) ([]*protor
 	}
 
 	// 2. Get the log index, log ID, integrated time, signed entry timestamp and body
-	logIndex, ok := jsonData["Payload"].(map[string]interface{})["logIndex"].(float64)
+	payloadVal, ok := jsonData["Payload"]
+	if !ok {
+		return nil, fmt.Errorf("missing Payload in bundle JSON")
+	}
+	payload, ok := payloadVal.(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("invalid type for Payload (expected object, got %T)", payloadVal)
+	}
+	logIndex, ok := payload["logIndex"].(float64)
 	if !ok {
 		return nil, fmt.Errorf("error getting logIndex")
 	}
-	li, ok := jsonData["Payload"].(map[string]interface{})["logID"].(string)
+	li, ok := payload["logID"].(string)
 	if !ok {
 		return nil, fmt.Errorf("error getting logID")
 	}
@@ -420,7 +437,7 @@ func getVerificationMaterialTlogEntries(manifestLayer *v1.Descriptor) ([]*protor
 	if err != nil {
 		return nil, fmt.Errorf("error decoding logID: %w", err)
 	}
-	integratedTime, ok := jsonData["Payload"].(map[string]interface{})["integratedTime"].(float64)
+	integratedTime, ok := payload["integratedTime"].(float64)
 	if !ok {
 		return nil, fmt.Errorf("error getting integratedTime")
 	}
@@ -433,7 +450,7 @@ func getVerificationMaterialTlogEntries(manifestLayer *v1.Descriptor) ([]*protor
 		return nil, fmt.Errorf("error decoding signedEntryTimestamp: %w", err)
 	}
 	// 3. Unmarshal the body and extract the rekor KindVersion details
-	body, ok := jsonData["Payload"].(map[string]interface{})["body"].(string)
+	body, ok := payload["body"].(string)
 	if !ok {
 		return nil, fmt.Errorf("error getting body")
 	}
@@ -572,4 +589,11 @@ func setOptsRoot(opts *tuf.Options) error {
 	}
 	opts.Root = rootData
 	return nil
+}
+
+// urlsEqual compares two URLs for logical equivalence, ignoring trailing slashes.
+func urlsEqual(a, b string) bool {
+	ua, err1 := url.Parse(strings.TrimRight(a, "/"))
+	ub, err2 := url.Parse(strings.TrimRight(b, "/"))
+	return err1 == nil && err2 == nil && ua.String() == ub.String()
 }
