@@ -449,6 +449,11 @@ components:
             URL of a TUF repository containing the trusted root JSON file.
           example: https://tuf-repo-cdn.sigstore.dev
           nullable: true
+        PredicateType:
+          type: string
+          description: >
+            The type of the predicate for the attestation.
+          example: https://example.com/attestations/build
       required:
         - expectedIssuer
         - expectedSAN

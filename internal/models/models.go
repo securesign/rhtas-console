@@ -220,6 +220,9 @@ type Verification struct {
 
 // VerifyArtifactRequest Parameters for verifying a signed artifact or container image using Sigstore and related trust sources. Fields correspond to common verification inputs such as issuer expectations, trusted roots, and TUF configuration.
 type VerifyArtifactRequest struct {
+	// PredicateType The type of the predicate for the attestation.
+	PredicateType *string `json:"PredicateType,omitempty"`
+
 	// ArtifactDigest Hex-encoded digest of the artifact to verify. Used when the artifact reference does not directly include a digest (e.g., separate file verification). Mandatory when using the bundle.
 	ArtifactDigest *string `json:"artifactDigest,omitempty"`
 

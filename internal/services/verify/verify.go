@@ -29,6 +29,7 @@ import (
 
 	protobundle "github.com/sigstore/protobuf-specs/gen/pb-go/bundle/v1"
 	protocommon "github.com/sigstore/protobuf-specs/gen/pb-go/common/v1"
+	protodsse "github.com/sigstore/protobuf-specs/gen/pb-go/dsse"
 	protorekor "github.com/sigstore/protobuf-specs/gen/pb-go/rekor/v1"
 	"github.com/sigstore/sigstore-go/pkg/bundle"
 	"github.com/sigstore/sigstore-go/pkg/root"
@@ -99,6 +100,9 @@ type VerifyOptions struct {
 	// TUFTrustedRoot is the path to the trusted TUF root.json file
 	// used to bootstrap trust in the remote TUF repository.
 	TUFTrustedRoot string
+
+	// PredicateType specifies the type of the predicate for the attestation.
+	PredicateType string
 }
 
 func NewVerifyOptions() VerifyOptions {
@@ -114,8 +118,11 @@ func VerifyArtifact(ctx context.Context, verifyOpts VerifyOptions) (details stri
 	var b *bundle.Bundle
 
 	if verifyOpts.OCIImage != "" {
-		// Build a bundle from OCI image reference and get its digest
-		b, verifyOpts.ArtifactDigest, err = bundleFromOCIImage(verifyOpts.OCIImage, verifyOpts.RequireTLog, verifyOpts.RequireTimestamp)
+		if verifyOpts.PredicateType != "" {
+			b, verifyOpts.ArtifactDigest, err = bundleFromOCIImageAttestation(verifyOpts.OCIImage, verifyOpts.RequireTLog, verifyOpts.RequireTimestamp, verifyOpts.PredicateType)
+		} else {
+			b, verifyOpts.ArtifactDigest, err = bundleFromOCIImage(verifyOpts.OCIImage, verifyOpts.RequireTLog, verifyOpts.RequireTimestamp)
+		}
 	} else if verifyOpts.Bundle != nil {
 		// Load the bundle from the provided paramters
 		b, err = LoadFromMap(verifyOpts.Bundle)
@@ -252,11 +259,23 @@ func VerifyArtifact(ctx context.Context, verifyOpts VerifyOptions) (details stri
 		return "", err
 	}
 
-	fmt.Fprintf(os.Stderr, "Verification successful!\n")
-	marshaled, err := json.MarshalIndent(res, "", "   ")
+	tlogEntries := b.VerificationMaterial.TlogEntries
+	resultMap := make(map[string]interface{})
+	resultBytes, err := json.Marshal(res)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal verifier result: %w", err)
+	}
+
+	if err := json.Unmarshal(resultBytes, &resultMap); err != nil {
+		return "", fmt.Errorf("failed to unmarshal verifier result: %w", err)
+	}
+
+	resultMap["tlogEntries"] = tlogEntries
+	marshaled, err := json.MarshalIndent(resultMap, "", "   ")
 	if err != nil {
 		return "", err
 	}
+	fmt.Fprintf(os.Stderr, "Verification successful!\n")
 	return string(marshaled), nil
 }
 
@@ -596,4 +615,200 @@ func urlsEqual(a, b string) bool {
 	ua, err1 := url.Parse(strings.TrimRight(a, "/"))
 	ub, err2 := url.Parse(strings.TrimRight(b, "/"))
 	return err1 == nil && err2 == nil && ua.String() == ub.String()
+}
+
+// bundleFromOCIImageAttestation returns a Bundle for attestation verification
+func bundleFromOCIImageAttestation(imageRef string, hasTlog, hasTimestamp bool, predicateType string) (*bundle.Bundle, string, error) {
+	attestationLayer, err := attestationLayerFromOCIImage(imageRef, predicateType)
+	if err != nil {
+		return nil, "", fmt.Errorf("error getting attestation layer: %w", err)
+	}
+
+	verificationMaterial, err := getBundleVerificationMaterial(attestationLayer, hasTlog, hasTimestamp)
+	if err != nil {
+		return nil, "", fmt.Errorf("error getting verification material: %w", err)
+	}
+
+	ref, err := name.ParseReference(imageRef)
+	if err != nil {
+		return nil, "", fmt.Errorf("error parsing reference: %w", err)
+	}
+
+	repoName := ref.Context().Name()
+	dsseEnvelope, err := getBundleDSSEEnvelope(repoName, attestationLayer)
+	if err != nil {
+		return nil, "", fmt.Errorf("error getting DSSE envelope: %w", err)
+	}
+
+	subjectDigest, err := getSubjectDigestFromDSSE(dsseEnvelope)
+	if err != nil {
+		return nil, "", fmt.Errorf("error getting subject digest: %w", err)
+	}
+
+	// Construct and verify the bundle
+	bundleMediaType, err := bundle.MediaTypeString("0.1")
+	if err != nil {
+		return nil, "", fmt.Errorf("error getting bundle media type: %w", err)
+	}
+
+	pb := protobundle.Bundle{
+		MediaType:            bundleMediaType,
+		VerificationMaterial: verificationMaterial,
+		Content:              dsseEnvelope,
+	}
+
+	bun, err := bundle.NewBundle(&pb)
+	if err != nil {
+		return nil, "", fmt.Errorf("error creating bundle: %w", err)
+	}
+
+	return bun, subjectDigest, nil
+}
+
+// attestationLayerFromOCIImage returns the attestation layer from the OCI image reference
+func attestationLayerFromOCIImage(imageRef string, predicateType string) (*v1.Descriptor, error) {
+	ref, err := name.ParseReference(imageRef)
+	if err != nil {
+		return nil, fmt.Errorf("error parsing image reference: %w", err)
+	}
+
+	desc, err := remote.Get(ref)
+	if err != nil {
+		return nil, fmt.Errorf("error getting image descriptor: %w", err)
+	}
+
+	digest := ref.Context().Digest(desc.Digest.String())
+	h, err := v1.NewHash(digest.Identifier())
+	if err != nil {
+		return nil, fmt.Errorf("error getting hash: %w", err)
+	}
+
+	// Construct the attestation reference - sha256-<hash>.att
+	attTag := digest.Context().Tag(fmt.Sprint(h.Algorithm, "-", h.Hex, ".att"))
+
+	// Get the manifest of the attestation
+	mf, err := crane.Manifest(attTag.Name())
+	if err != nil {
+		return nil, fmt.Errorf("error getting attestation manifest: %w", err)
+	}
+
+	attManifest, err := v1.ParseManifest(bytes.NewReader(mf))
+	if err != nil {
+		return nil, fmt.Errorf("error parsing attestation manifest: %w", err)
+	}
+
+	// Ensure there is at least one layer with DSSE media type
+	if len(attManifest.Layers) == 0 {
+		return nil, fmt.Errorf("no layers found in attestation manifest")
+	}
+
+	// Look for DSSE attestation layer with the specified predicate type
+	for _, layer := range attManifest.Layers {
+		if layer.MediaType == "application/vnd.dsse.envelope.v1+json" {
+			if layer.Annotations["predicateType"] == predicateType {
+				return &layer, nil
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("no DSSE attestation layer found in manifest")
+}
+
+// getBundleDSSEEnvelope returns the bundle DSSE envelope from the attestation layer
+func getBundleDSSEEnvelope(repoName string, attestationLayer *v1.Descriptor) (*protobundle.Bundle_DsseEnvelope, error) {
+	digestRef, err := name.NewDigest(fmt.Sprintf("%s@%s", repoName, attestationLayer.Digest.String()))
+	if err != nil {
+		return nil, fmt.Errorf("error parsing digest reference: %w", err)
+	}
+
+	// Fetch the attestation layer blob
+	layer, err := remote.Layer(digestRef)
+	if err != nil {
+		return nil, fmt.Errorf("error fetching attestation layer blob: %w", err)
+	}
+
+	reader, err := layer.Uncompressed()
+	if err != nil {
+		return nil, fmt.Errorf("error reading layer content: %w", err)
+	}
+	defer reader.Close()
+
+	payloadBytes, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, fmt.Errorf("error reading attestation payload: %w", err)
+	}
+
+	// Build DSSE envelope from payload
+	var envelope protodsse.Envelope
+	err = json.Unmarshal(payloadBytes, &envelope)
+	if err != nil {
+		return nil, fmt.Errorf("error unmarshaling DSSE envelope from payloadBytes: %w", err)
+	}
+
+	return &protobundle.Bundle_DsseEnvelope{DsseEnvelope: &envelope}, nil
+}
+
+// getSubjectDigestFromDSSE extracts the subject digest from the DSSE payload
+func getSubjectDigestFromDSSE(dsseEnvelope *protobundle.Bundle_DsseEnvelope) (string, error) {
+	if dsseEnvelope == nil || dsseEnvelope.DsseEnvelope == nil {
+		return "", errors.New("DSSE envelope is nil")
+	}
+
+	env := dsseEnvelope.DsseEnvelope
+
+	// Decode the outer DSSE payload
+	outerPayloadBytes, err := base64.StdEncoding.DecodeString(string(env.Payload))
+	if err != nil {
+		outerPayloadBytes = env.Payload
+	}
+
+	// Try parsing outer DSSE (which might contain inner payload)
+	var outer struct {
+		PayloadType string `json:"payloadType"`
+		Payload     string `json:"payload"`
+	}
+	if err := json.Unmarshal(outerPayloadBytes, &outer); err == nil && outer.PayloadType != "" {
+		innerPayloadBytes, err := base64.StdEncoding.DecodeString(outer.Payload)
+		if err == nil {
+			// Replace payloadBytes with inner payload for further parsing
+			outerPayloadBytes = innerPayloadBytes
+		}
+	}
+
+	// Try to parse the actual in-toto statement
+	var statement struct {
+		Type          string `json:"_type"`
+		PredicateType string `json:"predicateType"`
+		Subject       []struct {
+			Name   string            `json:"name"`
+			Digest map[string]string `json:"digest"`
+		} `json:"subject"`
+	}
+
+	if err := json.Unmarshal(outerPayloadBytes, &statement); err == nil && len(statement.Subject) > 0 {
+		if digest, ok := statement.Subject[0].Digest["sha256"]; ok {
+			return digest, nil
+		}
+		for _, digest := range statement.Subject[0].Digest {
+			return digest, nil
+		}
+	}
+
+	// Fallback: try parsing as Cosign DSSE metadata
+	var cosignDSSE struct {
+		Spec struct {
+			PayloadHash struct {
+				Algorithm string `json:"algorithm"`
+				Value     string `json:"value"`
+			} `json:"payloadHash"`
+		} `json:"spec"`
+	}
+
+	if err := json.Unmarshal(outerPayloadBytes, &cosignDSSE); err == nil {
+		if cosignDSSE.Spec.PayloadHash.Value != "" {
+			return cosignDSSE.Spec.PayloadHash.Value, nil
+		}
+	}
+
+	return "", fmt.Errorf("no subject found in DSSE payload (decoded inner payload: %s)", string(outerPayloadBytes))
 }

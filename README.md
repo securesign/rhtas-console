@@ -1,6 +1,6 @@
 # RHTAS Console
 
-The RHTAS Console is a Go-based RESTful API server, providing functionality for verifying software artifacts, interacting with Sigstore's Rekor transparency log, and managing trust configurations with TUF and Fulcio. This repository serves as the backend for the RHTAS Console application, with plans to potentially add a frontend in the future.
+The RHTAS Console is a Go-based RESTful API server, providing functionality for verifying software artifacts, interacting with Rekor transparency log, and managing trust configurations with TUF and Fulcio. This repository serves as the backend for the RHTAS Console application, which now includes a [frontend interface](https://github.com/securesign/rhtas-console-ui).
 
 ## Features
 
@@ -126,37 +126,140 @@ curl -X POST http://localhost:8080/api/v1/artifacts/verify \
 Response:
 ```json
 {
-   "details":{
-      "mediaType":"application/vnd.dev.sigstore.verificationresult+json;version=0.1",
-      "signature":{
-         "certificate":{
-            "certificateIssuer":"CN=sigstore-intermediate,O=sigstore.dev",
-            "issuer":"https://accounts.google.com",
-            "subjectAlternativeName":"jdoe@redhat.com"
-         }
+  "details": {
+    "mediaType": "application/vnd.dev.sigstore.verificationresult+json;version=0.1",
+    "signature": {
+      "certificate": {
+        "certificateIssuer": "CN=sigstore-intermediate,O=sigstore.dev",
+        "issuer": "https://accounts.google.com",
+        "subjectAlternativeName": "jdoe@redhat.com"
+      }
+    },
+    "statement": {},
+    "tlogEntries": [
+      {
+        "canonicalized_body": "***",
+        "inclusion_promise": {
+          "signed_entry_timestamp": "MEQCICBVaTJ7x0hcWCJToFGwyRuTvWL/Tx2ZCe/7C8J1odmAAiATWLgtclMY4TmrzKvdf2Nj9a7SQp9oZSvQauK1I/nqqg=="
+        },
+        "integrated_time": 1761133633,
+        "kind_version": {
+          "kind": "hashedrekord",
+          "version": "0.0.1"
+        },
+        "log_id": {
+          "key_id": "wNI9atQGlz+VWfO6LRygH4WSfY/8W4RFwiT5i5WRgB0="
+        },
+        "log_index": 630106028
+      }
+    ],
+    "verifiedIdentity": {
+      "issuer": {
+        "issuer": "https://accounts.google.com"
       },
-      "statement":{
-         
-      },
-      "verifiedIdentity":{
-         "issuer":{
-            "issuer":"https://accounts.google.com"
-         },
-         "subjectAlternativeName":{
-            "subjectAlternativeName":"jdoe@redhat.com"
-         }
-      },
-      "verifiedTimestamps":[
-         {
-            "timestamp":"2025-10-14T09:05:19+02:00",
-            "type":"Tlog",
-            "uri":"https://rekor.sigstore.dev"
-         }
-      ]
-   },
-   "verified":true
+      "subjectAlternativeName": {
+        "subjectAlternativeName": "jdoe@redhat.com"
+      }
+    },
+    "verifiedTimestamps": [
+      {
+        "timestamp": "2025-10-22T13:47:13+02:00",
+        "type": "Tlog",
+        "uri": "https://rekor.sigstore.dev"
+      }
+    ]
+  },
+  "verified": true
 }
 ```
+
+To verify an attestation:
+
+- Using `predicateType`:
+```bash
+curl -X POST http://localhost:8080/api/v1/artifacts/verify \
+  -H "Content-Type: application/json" \
+  -d '{
+    "ociImage": "ttl.sh/rhtas/test-image-1@sha256:1fd54200e48e100883366b0180add3400a74e8b912e7c87a98215d1d25a888f8",
+    "expectedOIDIssuer": "https://accounts.google.com",
+    "expectedSAN": "jdoe@redhat.com",
+    "tufRootURL": "https://tuf-repo-cdn.sigstore.dev",
+    "predicateType": "https://example.com/attestations/build"
+  }'
+```
+
+Response:
+```json
+{
+  "details": {
+    "mediaType": "application/vnd.dev.sigstore.verificationresult+json;version=0.1",
+    "signature": {
+      "certificate": {
+        "certificateIssuer": "CN=sigstore-intermediate,O=sigstore.dev",
+        "issuer": "https://accounts.google.com",
+        "subjectAlternativeName": "jdoe@redhat.com"
+      }
+    },
+    "statement": {
+      "_type": "https://in-toto.io/Statement/v0.1",
+      "predicate": {
+        "buildType": "manual-test",
+        "builder": {
+          "id": "example-builder"
+        },
+        "metadata": {
+          "buildFinishedOn": "2025-10-20T14:50:39+02:00",
+          "buildStartedOn": "2025-10-20T14:50:39+02:00"
+        },
+        "predicateType": "https://example.com/attestations/build"
+      },
+      "predicateType": "https://example.com/attestations/build",
+      "subject": [
+        {
+          "digest": {
+            "sha256": "b8e61023eb8a764eba2ebaea3a80049f046b213af3ca8729322e7ac33ba02bff"
+          },
+          "name": "ttl.sh/rhtas/test-image"
+        }
+      ]
+    },
+    "tlogEntries": [
+      {
+        "canonicalized_body": "***",
+        "inclusion_promise": {
+          "signed_entry_timestamp": "MEQCIE5HREiJyWlMW2cpn389w4pZz1uKNTuN/IkTvw4ARQytAiByIqNxle9Vi2JO8FCywTyFZzsetyht9bslNfAibsug0A=="
+        },
+        "integrated_time": 1761133726,
+        "kind_version": {
+          "kind": "dsse",
+          "version": "0.0.1"
+        },
+        "log_id": {
+          "key_id": "wNI9atQGlz+VWfO6LRygH4QUfY/8W5RFwiT5i5WRgB0="
+        },
+        "log_index": 630107152
+      }
+    ],
+    "verifiedIdentity": {
+      "issuer": {
+        "issuer": "https://accounts.google.com"
+      },
+      "subjectAlternativeName": {
+        "subjectAlternativeName": "jdoe@redhat.com"
+      }
+    },
+    "verifiedTimestamps": [
+      {
+        "timestamp": "2025-10-22T13:48:46+02:00",
+        "type": "Tlog",
+        "uri": "https://rekor.sigstore.dev"
+      }
+    ]
+  },
+  "verified": true
+}
+```
+
 
 #### Example: Retrieve a Rekor entry
 

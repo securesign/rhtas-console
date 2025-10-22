@@ -68,6 +68,9 @@ func (s *artifactService) VerifyArtifact(ctx context.Context, req models.VerifyA
 	if req.RequireTLog != nil {
 		verifyOpts.RequireTLog = *req.RequireTLog
 	}
+	if req.PredicateType != nil {
+		verifyOpts.PredicateType = *req.PredicateType
+	}
 
 	detailsJSON, err := verify.VerifyArtifact(ctx, verifyOpts)
 	if err != nil {
