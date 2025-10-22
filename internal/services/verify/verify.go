@@ -731,7 +731,11 @@ func getBundleDSSEEnvelope(repoName string, attestationLayer *v1.Descriptor) (*p
 	if err != nil {
 		return nil, fmt.Errorf("error reading layer content: %w", err)
 	}
-	defer reader.Close()
+	defer func() {
+		if cerr := reader.Close(); cerr != nil {
+			log.Printf("failed to close reader: %v", cerr)
+		}
+	}()
 
 	payloadBytes, err := io.ReadAll(reader)
 	if err != nil {
