@@ -21,7 +21,8 @@ jobs:
         with:
           repository: securesign/rhtas-console-ui
           path: rhtas-console-ui
-          ref: ${{ github.ref_name }}
+          ref: main
+          token: ${{ secrets.GH_PAT }}
       - name: Update rhtas-console-ui
         run: |
           rm ./rhtas-console-ui/client/openapi/console.yaml
