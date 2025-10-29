@@ -2,7 +2,6 @@ package verify
 
 import (
 	"bytes"
-	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/x509"
@@ -114,7 +113,7 @@ func NewVerifyOptions() VerifyOptions {
 	}
 }
 
-func VerifyArtifact(ctx context.Context, verifyOpts VerifyOptions) (details string, err error) {
+func VerifyArtifact(verifyOpts VerifyOptions) (details string, err error) {
 	var b *bundle.Bundle
 
 	if verifyOpts.OCIImage != "" {
@@ -481,8 +480,15 @@ func getVerificationMaterialTlogEntries(manifestLayer *v1.Descriptor) ([]*protor
 	if err != nil {
 		return nil, fmt.Errorf("error unmarshaling json: %w", err)
 	}
-	apiVersion := jsonData["apiVersion"].(string)
-	kind := jsonData["kind"].(string)
+	apiVersion, ok := jsonData["apiVersion"].(string)
+	if !ok {
+		return nil, fmt.Errorf("error getting apiVersion")
+	}
+
+	kind, ok := jsonData["kind"].(string)
+	if !ok {
+		return nil, fmt.Errorf("error getting kind")
+	}
 	// 4. Construct the transparency log entry list
 	return []*protorekor.TransparencyLogEntry{
 		{

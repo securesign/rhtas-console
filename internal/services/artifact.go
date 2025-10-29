@@ -16,7 +16,7 @@ import (
 )
 
 type ArtifactService interface {
-	VerifyArtifact(ctx context.Context, req models.VerifyArtifactRequest) (models.VerifyArtifactResponse, error)
+	VerifyArtifact(req models.VerifyArtifactRequest) (models.VerifyArtifactResponse, error)
 	GetArtifactPolicies(ctx context.Context, artifact string) (models.ArtifactPolicies, error)
 	GetImageMetadata(ctx context.Context, image string, username string, password string) (models.ImageMetadataResponse, error)
 }
@@ -27,7 +27,7 @@ func NewArtifactService() ArtifactService {
 	return &artifactService{}
 }
 
-func (s *artifactService) VerifyArtifact(ctx context.Context, req models.VerifyArtifactRequest) (models.VerifyArtifactResponse, error) {
+func (s *artifactService) VerifyArtifact(req models.VerifyArtifactRequest) (models.VerifyArtifactResponse, error) {
 	verifyOpts := verify.NewVerifyOptions()
 
 	if req.OciImage != nil {
@@ -72,7 +72,7 @@ func (s *artifactService) VerifyArtifact(ctx context.Context, req models.VerifyA
 		verifyOpts.PredicateType = *req.PredicateType
 	}
 
-	detailsJSON, err := verify.VerifyArtifact(ctx, verifyOpts)
+	detailsJSON, err := verify.VerifyArtifact(verifyOpts)
 	if err != nil {
 		return models.VerifyArtifactResponse{
 			Verified: false,
