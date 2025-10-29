@@ -38,29 +38,15 @@ func (h *Handler) GetHealthz(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, response)
 }
 
-func (h *Handler) PostApiV1ArtifactsSign(w http.ResponseWriter, r *http.Request) {
-	var req models.SignArtifactRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
-	resp, err := h.artifactService.SignArtifact(r.Context(), req)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, resp)
-}
-
 func (h *Handler) PostApiV1ArtifactsVerify(w http.ResponseWriter, r *http.Request) {
 	var req models.VerifyArtifactRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	resp, err := h.artifactService.VerifyArtifact(r.Context(), req)
+	resp, err := h.artifactService.VerifyArtifact(req)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeJSON(w, http.StatusInternalServerError, resp)
 		return
 	}
 	writeJSON(w, http.StatusOK, resp)
@@ -105,7 +91,7 @@ func (h *Handler) GetApiV1ArtifactsArtifactPolicies(w http.ResponseWriter, r *ht
 
 func (h *Handler) GetApiV1TrustConfig(w http.ResponseWriter, r *http.Request) {
 	tufRepoUrl := os.Getenv("TUF_REPO_URL")
-	resp, err, statusCode := h.trustService.GetTrustConfig(r.Context(), tufRepoUrl)
+	resp, statusCode, err := h.trustService.GetTrustConfig(r.Context(), tufRepoUrl)
 	if err != nil {
 		writeError(w, statusCode, err.Error())
 		return
@@ -115,7 +101,7 @@ func (h *Handler) GetApiV1TrustConfig(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) GetApiV1TrustRootMetadata(w http.ResponseWriter, r *http.Request) {
 	tufRepoUrl := os.Getenv("TUF_REPO_URL")
-	resp, err, statusCode := h.trustService.GetTrustRootMetadataInfo(tufRepoUrl)
+	resp, statusCode, err := h.trustService.GetTrustRootMetadataInfo(tufRepoUrl)
 	if err != nil {
 		writeError(w, statusCode, err.Error())
 		return
@@ -125,7 +111,7 @@ func (h *Handler) GetApiV1TrustRootMetadata(w http.ResponseWriter, r *http.Reque
 
 func (h *Handler) GetApiV1TrustTargets(w http.ResponseWriter, r *http.Request) {
 	tufRepoUrl := os.Getenv("TUF_REPO_URL")
-	resp, err, statusCode := h.trustService.GetAllTargets(r.Context(), tufRepoUrl)
+	resp, statusCode, err := h.trustService.GetAllTargets(r.Context(), tufRepoUrl)
 	if err != nil {
 		writeError(w, statusCode, err.Error())
 		return
@@ -136,7 +122,7 @@ func (h *Handler) GetApiV1TrustTargets(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) GetApiV1TrustTarget(w http.ResponseWriter, r *http.Request) {
 	tufRepoUrl := os.Getenv("TUF_REPO_URL")
 	target := r.URL.Query().Get("target")
-	resp, err, statusCode := h.trustService.GetTarget(r.Context(), tufRepoUrl, target)
+	resp, statusCode, err := h.trustService.GetTarget(r.Context(), tufRepoUrl, target)
 	if err != nil {
 		writeError(w, statusCode, err.Error())
 		return
@@ -146,7 +132,7 @@ func (h *Handler) GetApiV1TrustTarget(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) GetApiV1TrustTargetsCertificates(w http.ResponseWriter, r *http.Request) {
 	tufRepoUrl := os.Getenv("TUF_REPO_URL")
-	resp, err, statusCode := h.trustService.GetCertificatesInfo(r.Context(), tufRepoUrl)
+	resp, statusCode, err := h.trustService.GetCertificatesInfo(r.Context(), tufRepoUrl)
 	if err != nil {
 		writeError(w, statusCode, err.Error())
 		return
@@ -202,7 +188,9 @@ func (h *Handler) ServeOpenAPIFile(w http.ResponseWriter, r *http.Request) {
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	if err := json.NewEncoder(w).Encode(v); err != nil {
+	enc := json.NewEncoder(w)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
 		http.Error(w, "failed to encode response", http.StatusInternalServerError)
 	}
 }

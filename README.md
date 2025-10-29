@@ -1,10 +1,10 @@
 # RHTAS Console
 
-The RHTAS Console is a Go-based RESTful API server, providing functionality for signing and verifying software artifacts using Cosign, interacting with Sigstore's Rekor transparency log, and managing trust configurations with TUF and Fulcio. This repository serves as the backend for the RHTAS Console application, with plans to potentially add a frontend in the future.
+The RHTAS Console is a Go-based RESTful API server, providing functionality for verifying software artifacts, interacting with Rekor transparency log, and managing trust configurations with TUF and Fulcio. This repository serves as the backend for the RHTAS Console application, which now includes a [frontend interface](https://github.com/securesign/rhtas-console-ui).
 
 ## Features
 
-- **Artifact management**: Sign and verify artifacts (e.g., container images, files, SBOMs) using Cosign.
+- **Artifact management**: Verify artifacts (e.g., container images, files, SBOMs).
 - **Rekor integration**: Retrieve transparency log entries and public keys from Rekor.
 - **Trust configuration**: Get TUF targets and Fulcio certificate authorities for trust policies.
 - Built with [Chi](https://github.com/go-chi/chi), a lightweight Go router.
@@ -20,7 +20,6 @@ The RHTAS Console is a Go-based RESTful API server, providing functionality for 
    ```bash
    oapi-codegen -generate types,chi-server -package models openapi/rhtas-console.yaml > internal/models/models.go
    ```
-- Optional: [rekor-cli](https://docs.sigstore.dev/rekor/installation/) and [cosign](https://docs.sigstore.dev/cosign/installation/) for testing Rekor and Cosign interactions
 
 ### Steps
 
@@ -82,8 +81,7 @@ The backend exposes the following RESTful endpoints, as defined in the OpenAPI s
 | GET    | `/healthz`                                  | Retrieves the current health status of the server. |
 | GET    | `/swagger-ui`                               | Serves the Swagger User Interface. |
 | GET    | `/rhtas-console.yaml`                       | Returns the project OpenAPI spec file. |
-| POST   | `/api/v1/artifacts/sign`                    | Signs an artifact using Cosign.                  |
-| POST   | `/api/v1/artifacts/verify`                  | Verifies an artifact using Cosign.               |
+| POST   | `/api/v1/artifacts/verify`                  | Verifies an artifact.               |
 | GET    | `/api/v1/artifacts/{artifact}/policies`     | Retrieves policies and attestations for an artifact. |
 | GET    | `/api/v1/artifacts/image`                   | Retrieves metadata for a container image by full reference URI. |
 | GET    | `/api/v1/rekor/entries/{uuid}`              | Retrieves a Rekor transparency log entry by UUID. |
@@ -94,34 +92,174 @@ The backend exposes the following RESTful endpoints, as defined in the OpenAPI s
 | GET    | `/api/v1/trust/target`                      | Retrieves a specific TUF target. |
 | GET    | `/api/v1/trust/targets/certificates`        | Retrieves certificates for TUF targets. |
 
-#### Example: Sign an artifact
+#### Example: Verify an artifact
 
-To sign a container image using Cosign (keyless signing with OIDC token):
+To verify an OCI image:
 
+
+- Using `ociImage`:
 ```bash
-curl -X POST http://localhost:8080/api/v1/artifacts/sign \
+curl -X POST http://localhost:8080/api/v1/artifacts/verify \
   -H "Content-Type: application/json" \
   -d '{
-    "artifact": "quay.io/example/app:latest",
-    "artifactType": "container-image",
-    "identityToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-    "annotations": {"env": "prod"}
+    "ociImage": "ttl.sh/rhtas/test-image:1h",
+    "expectedOIDIssuer": "https://accounts.google.com",
+    "expectedSAN": "jdoe@redhat.com",
+    "tufRootURL": "https://tuf-repo-cdn.sigstore.dev"
+  }'
+```
+- Using `bundle`:
+```bash
+# bundle.json: the file which contains the bundle
+bundle_json=$(jq -c '.' bundle.json)
+curl -X POST http://localhost:8080/api/v1/artifacts/verify \
+  -H "Content-Type: application/json" \
+  -d '{
+  	"artifactDigest": "e128e0a064433c8d46f0467b149c70052fedbfa1f9e96ac22e3deefdc943e965",
+    "expectedOIDIssuer": "https://accounts.google.com",
+    "expectedSAN": "jdoe@redhat.com",
+    "tufRootURL": "https://tuf-repo-cdn.sigstore.dev",
+    "bundle": '"$bundle_json"'
   }'
 ```
 
 Response:
 ```json
 {
-  "success": true,
-  "signature": "MEUCIQC...",
-  "certificate": "-----BEGIN CERTIFICATE-----\nMIIBIjANBgkq...\n-----END CERTIFICATE-----",
-  "logEntry": {
-    "uuid": "108e9186e8c5677a249f2ad46ab96976656298b3feb5e031777b9e1fa5c55aaf7e0115bee955ccaa",
-    "integratedTime": 1747816420,
-    "logIndex": 216249784
-  }
+  "details": {
+    "mediaType": "application/vnd.dev.sigstore.verificationresult+json;version=0.1",
+    "signature": {
+      "certificate": {
+        "certificateIssuer": "CN=sigstore-intermediate,O=sigstore.dev",
+        "issuer": "https://accounts.google.com",
+        "subjectAlternativeName": "jdoe@redhat.com"
+      }
+    },
+    "statement": {},
+    "tlogEntries": [
+      {
+        "canonicalized_body": "***",
+        "inclusion_promise": {
+          "signed_entry_timestamp": "MEQCICBVaTJ7x0hcWCJToFGwyRuTvWL/Tx2ZCe/7C8J1odmAAiATWLgtclMY4TmrzKvdf2Nj9a7SQp9oZSvQauK1I/nqqg=="
+        },
+        "integrated_time": 1761133633,
+        "kind_version": {
+          "kind": "hashedrekord",
+          "version": "0.0.1"
+        },
+        "log_id": {
+          "key_id": "wNI9atQGlz+VWfO6LRygH4WSfY/8W4RFwiT5i5WRgB0="
+        },
+        "log_index": 630106028
+      }
+    ],
+    "verifiedIdentity": {
+      "issuer": {
+        "issuer": "https://accounts.google.com"
+      },
+      "subjectAlternativeName": {
+        "subjectAlternativeName": "jdoe@redhat.com"
+      }
+    },
+    "verifiedTimestamps": [
+      {
+        "timestamp": "2025-10-22T13:47:13+02:00",
+        "type": "Tlog",
+        "uri": "https://rekor.sigstore.dev"
+      }
+    ]
+  },
+  "verified": true
 }
 ```
+
+To verify an attestation:
+
+- Using `predicateType`:
+```bash
+curl -X POST http://localhost:8080/api/v1/artifacts/verify \
+  -H "Content-Type: application/json" \
+  -d '{
+    "ociImage": "ttl.sh/rhtas/test-image-1@sha256:1fd54200e48e100883366b0180add3400a74e8b912e7c87a98215d1d25a888f8",
+    "expectedOIDIssuer": "https://accounts.google.com",
+    "expectedSAN": "jdoe@redhat.com",
+    "tufRootURL": "https://tuf-repo-cdn.sigstore.dev",
+    "predicateType": "https://example.com/attestations/build"
+  }'
+```
+
+Response:
+```json
+{
+  "details": {
+    "mediaType": "application/vnd.dev.sigstore.verificationresult+json;version=0.1",
+    "signature": {
+      "certificate": {
+        "certificateIssuer": "CN=sigstore-intermediate,O=sigstore.dev",
+        "issuer": "https://accounts.google.com",
+        "subjectAlternativeName": "jdoe@redhat.com"
+      }
+    },
+    "statement": {
+      "_type": "https://in-toto.io/Statement/v0.1",
+      "predicate": {
+        "buildType": "manual-test",
+        "builder": {
+          "id": "example-builder"
+        },
+        "metadata": {
+          "buildFinishedOn": "2025-10-20T14:50:39+02:00",
+          "buildStartedOn": "2025-10-20T14:50:39+02:00"
+        },
+        "predicateType": "https://example.com/attestations/build"
+      },
+      "predicateType": "https://example.com/attestations/build",
+      "subject": [
+        {
+          "digest": {
+            "sha256": "b8e61023eb8a764eba2ebaea3a80049f046b213af3ca8729322e7ac33ba02bff"
+          },
+          "name": "ttl.sh/rhtas/test-image"
+        }
+      ]
+    },
+    "tlogEntries": [
+      {
+        "canonicalized_body": "***",
+        "inclusion_promise": {
+          "signed_entry_timestamp": "MEQCIE5HREiJyWlMW2cpn389w4pZz1uKNTuN/IkTvw4ARQytAiByIqNxle9Vi2JO8FCywTyFZzsetyht9bslNfAibsug0A=="
+        },
+        "integrated_time": 1761133726,
+        "kind_version": {
+          "kind": "dsse",
+          "version": "0.0.1"
+        },
+        "log_id": {
+          "key_id": "wNI9atQGlz+VWfO6LRygH4QUfY/8W5RFwiT5i5WRgB0="
+        },
+        "log_index": 630107152
+      }
+    ],
+    "verifiedIdentity": {
+      "issuer": {
+        "issuer": "https://accounts.google.com"
+      },
+      "subjectAlternativeName": {
+        "subjectAlternativeName": "jdoe@redhat.com"
+      }
+    },
+    "verifiedTimestamps": [
+      {
+        "timestamp": "2025-10-22T13:48:46+02:00",
+        "type": "Tlog",
+        "uri": "https://rekor.sigstore.dev"
+      }
+    ]
+  },
+  "verified": true
+}
+```
+
 
 #### Example: Retrieve a Rekor entry
 
@@ -191,4 +329,4 @@ The `models` package is generated from the OpenAPI specification:
 make generate-openapi
 ```
 
-This generates Go types such as `RekorEntry`, `SignArtifactRequest`, `VerifyArtifactResponse`, and others.
+This generates Go types such as `RekorEntry`, `VerifyArtifactResponse`, and others.

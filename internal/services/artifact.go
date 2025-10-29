@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -11,11 +12,11 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	console_errors "github.com/securesign/rhtas-console/internal/errors"
 	"github.com/securesign/rhtas-console/internal/models"
+	"github.com/securesign/rhtas-console/internal/services/verify"
 )
 
 type ArtifactService interface {
-	SignArtifact(ctx context.Context, req models.SignArtifactRequest) (models.SignArtifactResponse, error)
-	VerifyArtifact(ctx context.Context, req models.VerifyArtifactRequest) (models.VerifyArtifactResponse, error)
+	VerifyArtifact(req models.VerifyArtifactRequest) (models.VerifyArtifactResponse, error)
 	GetArtifactPolicies(ctx context.Context, artifact string) (models.ArtifactPolicies, error)
 	GetImageMetadata(ctx context.Context, image string, username string, password string) (models.ImageMetadataResponse, error)
 }
@@ -26,22 +27,67 @@ func NewArtifactService() ArtifactService {
 	return &artifactService{}
 }
 
-func (s *artifactService) SignArtifact(ctx context.Context, req models.SignArtifactRequest) (models.SignArtifactResponse, error) {
-	// TODO: complete logic
-	return models.SignArtifactResponse{
-		Certificate: nil,
-		LogEntry:    nil,
-		Signature:   "stub-signature",
-		Success:     true,
-	}, nil
-}
+func (s *artifactService) VerifyArtifact(req models.VerifyArtifactRequest) (models.VerifyArtifactResponse, error) {
+	verifyOpts := verify.NewVerifyOptions()
 
-func (s *artifactService) VerifyArtifact(ctx context.Context, req models.VerifyArtifactRequest) (models.VerifyArtifactResponse, error) {
-	// TODO: complete logic
+	if req.OciImage != nil {
+		verifyOpts.OCIImage = *req.OciImage
+	}
+	if req.Bundle != nil {
+		verifyOpts.Bundle = *req.Bundle
+	}
+	if req.ExpectedOIDIssuer != nil {
+		verifyOpts.ExpectedOIDIssuer = *req.ExpectedOIDIssuer
+	}
+	if req.ExpectedOIDIssuerRegex != nil {
+		verifyOpts.ExpectedOIDIssuerRegex = *req.ExpectedOIDIssuerRegex
+	}
+	if req.ExpectedSAN != nil {
+		verifyOpts.ExpectedSAN = *req.ExpectedSAN
+	}
+	if req.ExpectedSANRegex != nil {
+		verifyOpts.ExpectedSANRegex = *req.ExpectedSANRegex
+	}
+	if req.TufRootURL != nil {
+		verifyOpts.TUFRootURL = *req.TufRootURL
+	} else {
+		verifyOpts.TUFRootURL = TufPublicGoodInstance
+	}
+	if req.ArtifactDigest != nil {
+		verifyOpts.ArtifactDigest = *req.ArtifactDigest
+	}
+	if req.ArtifactDigestAlgorithm != nil {
+		verifyOpts.ArtifactDigestAlgorithm = *req.ArtifactDigestAlgorithm
+	}
+	if req.RequireTimestamp != nil {
+		verifyOpts.RequireTimestamp = *req.RequireTimestamp
+	}
+	if req.RequireCTLog != nil {
+		verifyOpts.RequireCTLog = *req.RequireCTLog
+	}
+	if req.RequireTLog != nil {
+		verifyOpts.RequireTLog = *req.RequireTLog
+	}
+	if req.PredicateType != nil {
+		verifyOpts.PredicateType = *req.PredicateType
+	}
+
+	detailsJSON, err := verify.VerifyArtifact(verifyOpts)
+	if err != nil {
+		return models.VerifyArtifactResponse{
+			Verified: false,
+			Details:  map[string]interface{}{"error": err.Error()},
+		}, err
+	}
+
+	var details map[string]interface{}
+	if unmarshalErr := json.Unmarshal([]byte(detailsJSON), &details); unmarshalErr != nil {
+		details = map[string]interface{}{"raw": detailsJSON}
+	}
+
 	return models.VerifyArtifactResponse{
-		Details:  nil,
-		Message:  "Successful verification",
 		Verified: true,
+		Details:  details,
 	}, nil
 }
 

@@ -34,15 +34,15 @@ import (
 )
 
 var (
-	publicGoodInstance = "https://tuf-repo-cdn.sigstore.dev"
+	TufPublicGoodInstance = "https://tuf-repo-cdn.sigstore.dev"
 )
 
 type TrustService interface {
-	GetTrustConfig(ctx context.Context, tufRepoUrl string) (cfg models.TrustConfig, err error, statusCode int)
-	GetTrustRootMetadataInfo(tufRepoUrl string) (info models.RootMetadataInfoList, err error, statusCode int)
-	GetTarget(ctx context.Context, tufRepoUrl string, target string) (content models.TargetContent, err error, statusCode int)
-	GetCertificatesInfo(ctx context.Context, tufRepoUrl string) (certs models.CertificateInfoList, err error, statusCode int)
-	GetAllTargets(ctx context.Context, tufRepoUrl string) (targets models.TargetsList, err error, statusCode int)
+	GetTrustConfig(ctx context.Context, tufRepoUrl string) (cfg models.TrustConfig, statusCode int, err error)
+	GetTrustRootMetadataInfo(tufRepoUrl string) (info models.RootMetadataInfoList, statusCode int, err error)
+	GetTarget(ctx context.Context, tufRepoUrl string, target string) (content models.TargetContent, statusCode int, err error)
+	GetCertificatesInfo(ctx context.Context, tufRepoUrl string) (certs models.CertificateInfoList, statusCode int, err error)
+	GetAllTargets(ctx context.Context, tufRepoUrl string) (targets models.TargetsList, statusCode int, err error)
 	CloseDB() error
 }
 
@@ -113,11 +113,11 @@ func NewTrustService() TrustService {
 	}
 
 	// Perform initial targets population
-	repo, err, statusCode := s.getOrCreateUpdater(tufRepoUrl)
+	repo, statusCode, err := s.getOrCreateUpdater(tufRepoUrl)
 	if err != nil {
 		log.Fatalf("failed to initialize default TUF repository %s (statusCode=%d): %v", tufRepoUrl, statusCode, err)
 	}
-	if err, _ := s.populateTargets(ctx, repo); err != nil {
+	if _, err := s.populateTargets(ctx, repo); err != nil {
 		log.Fatalf("failed to perform initial targets population for %s: %v", tufRepoUrl, err)
 	}
 
@@ -125,7 +125,7 @@ func NewTrustService() TrustService {
 	return s
 }
 
-func (s *trustService) GetTrustConfig(ctx context.Context, tufRepoUrl string) (models.TrustConfig, error, int) {
+func (s *trustService) GetTrustConfig(ctx context.Context, tufRepoUrl string) (models.TrustConfig, int, error) {
 	// TODO: complete logic
 	return models.TrustConfig{
 		FulcioCertAuthorities: []struct {
@@ -137,13 +137,13 @@ func (s *trustService) GetTrustConfig(ctx context.Context, tufRepoUrl string) (m
 				Subject: "stub-sub",
 			},
 		},
-	}, nil, http.StatusOK
+	}, http.StatusOK, nil
 }
 
-func (s *trustService) GetTrustRootMetadataInfo(tufRepoUrl string) (models.RootMetadataInfoList, error, int) {
-	repo, err, statusCode := s.getOrCreateUpdater(tufRepoUrl)
+func (s *trustService) GetTrustRootMetadataInfo(tufRepoUrl string) (models.RootMetadataInfoList, int, error) {
+	repo, statusCode, err := s.getOrCreateUpdater(tufRepoUrl)
 	if err != nil {
-		return models.RootMetadataInfoList{}, err, statusCode
+		return models.RootMetadataInfoList{}, statusCode, err
 	}
 
 	repo.lock.RLock()
@@ -152,14 +152,14 @@ func (s *trustService) GetTrustRootMetadataInfo(tufRepoUrl string) (models.RootM
 	// Fetch all root metadata versions
 	latestRootMeta := repo.updater.GetTrustedMetadataSet().Root
 	if latestRootMeta == nil {
-		return models.RootMetadataInfoList{}, fmt.Errorf("latest root metadata not available"), http.StatusServiceUnavailable
+		return models.RootMetadataInfoList{}, http.StatusServiceUnavailable, fmt.Errorf("latest root metadata not available")
 	}
 
 	latestVersion := latestRootMeta.Signed.Version
 	var allRootBytes [][]byte
 	latestRootBytes, err := latestRootMeta.ToBytes(true)
 	if err != nil {
-		return models.RootMetadataInfoList{}, fmt.Errorf("failed to get signed latest root bytes: %w", err), http.StatusInternalServerError
+		return models.RootMetadataInfoList{}, http.StatusInternalServerError, fmt.Errorf("failed to get signed latest root bytes: %w", err)
 	}
 	allRootBytes = append(allRootBytes, latestRootBytes)
 
@@ -174,7 +174,11 @@ func (s *trustService) GetTrustRootMetadataInfo(tufRepoUrl string) (models.RootM
 		if err != nil {
 			continue
 		}
-		defer resp.Body.Close()
+		defer func() {
+			if err := resp.Body.Close(); err != nil {
+				log.Println("failed to close response body:", err)
+			}
+		}()
 
 		if resp.StatusCode != http.StatusOK {
 			continue
@@ -195,16 +199,16 @@ func (s *trustService) GetTrustRootMetadataInfo(tufRepoUrl string) (models.RootM
 	for _, rootBytes := range allRootBytes {
 		rootInfo, err := extractRootMetadataInfo(rootBytes)
 		if err != nil {
-			return models.RootMetadataInfoList{}, fmt.Errorf("extracting root metadata info: %w", err), http.StatusInternalServerError
+			return models.RootMetadataInfoList{}, http.StatusInternalServerError, fmt.Errorf("extracting root metadata info: %w", err)
 		}
 		results.Data = append(results.Data, rootInfo)
 	}
 
 	results.RepoUrl = &repo.opts.RepositoryBaseURL
-	return results, nil, http.StatusOK
+	return results, http.StatusOK, nil
 }
 
-func (s *trustService) GetTarget(ctx context.Context, tufRepoUrl string, target string) (models.TargetContent, error, int) {
+func (s *trustService) GetTarget(ctx context.Context, tufRepoUrl string, target string) (models.TargetContent, int, error) {
 	// Get target content from database
 	query := `
 		SELECT content FROM targets WHERE target_name = ? AND repo_url = ?
@@ -212,25 +216,29 @@ func (s *trustService) GetTarget(ctx context.Context, tufRepoUrl string, target 
 	row, err := s.db.QueryContext(ctx, query, target, tufRepoUrl)
 	if err != nil {
 		log.Printf("Failed to query DB (repo=%s, target=%s): %v", tufRepoUrl, target, err)
-		return models.TargetContent{}, fmt.Errorf("could not query targets repository"), http.StatusInternalServerError
+		return models.TargetContent{}, http.StatusInternalServerError, fmt.Errorf("could not query targets repository")
 	}
-	defer row.Close()
+	defer func() {
+		if cerr := row.Close(); cerr != nil {
+			log.Printf("failed to close rows: %v", cerr)
+		}
+	}()
 
 	var content string
 	row.Next()
 	if err = row.Scan(&content); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			log.Printf("No target found (repo=%s, target=%s): %v", tufRepoUrl, target, err)
-			return models.TargetContent{}, fmt.Errorf("no target found"), http.StatusNotFound
+			return models.TargetContent{}, http.StatusNotFound, fmt.Errorf("no target found")
 		}
 		log.Printf("Failed to scan target (repo=%s, target=%s): %v", tufRepoUrl, target, err)
-		return models.TargetContent{}, fmt.Errorf("could not scan target"), http.StatusInternalServerError
+		return models.TargetContent{}, http.StatusInternalServerError, fmt.Errorf("could not scan target")
 	}
 
-	return models.TargetContent{Content: content}, nil, http.StatusOK
+	return models.TargetContent{Content: content}, http.StatusOK, nil
 }
 
-func (s *trustService) GetCertificatesInfo(ctx context.Context, tufRepoUrl string) (models.CertificateInfoList, error, int) {
+func (s *trustService) GetCertificatesInfo(ctx context.Context, tufRepoUrl string) (models.CertificateInfoList, int, error) {
 	// Get targets from database
 	query := `
 		SELECT target_name, type, status, content FROM targets WHERE repo_url = ?
@@ -238,15 +246,19 @@ func (s *trustService) GetCertificatesInfo(ctx context.Context, tufRepoUrl strin
 	rows, err := s.db.QueryContext(ctx, query, tufRepoUrl)
 	if err != nil {
 		log.Printf("Failed to query DB (repo=%s): %v", tufRepoUrl, err)
-		return models.CertificateInfoList{}, fmt.Errorf("could not query targets repository"), http.StatusInternalServerError
+		return models.CertificateInfoList{}, http.StatusInternalServerError, fmt.Errorf("could not query targets repository")
 	}
-	defer rows.Close()
+	defer func() {
+		if cerr := rows.Close(); cerr != nil {
+			log.Printf("failed to close rows: %v", cerr)
+		}
+	}()
 	targets := models.TargetsList{}
 	for rows.Next() {
 		var targetName, targetType, status, content string
 		if err := rows.Scan(&targetName, &targetType, &status, &content); err != nil {
 			log.Printf("Failed to scan target (repo=%s, target=%s): %v", tufRepoUrl, targetName, err)
-			return models.CertificateInfoList{}, fmt.Errorf("could not scan target"), http.StatusInternalServerError
+			return models.CertificateInfoList{}, http.StatusInternalServerError, fmt.Errorf("could not scan target")
 		}
 		targets.Data = append(targets.Data, models.TargetInfo{
 			Name:    targetName,
@@ -262,11 +274,11 @@ func (s *trustService) GetCertificatesInfo(ctx context.Context, tufRepoUrl strin
 		if strings.ToLower(target.Type) == "fulcio" || strings.ToLower(target.Type) == "tsa" {
 			if err != nil {
 				log.Printf("Failed to get target certificate content (repo=%s, target=%s): %v", tufRepoUrl, target, err)
-				return models.CertificateInfoList{}, fmt.Errorf("could not get target certificate content"), http.StatusInternalServerError
+				return models.CertificateInfoList{}, http.StatusInternalServerError, fmt.Errorf("could not get target certificate content")
 			}
 			cert_info_list, err := extractCertDetails(target.Content)
 			if err != nil {
-				return models.CertificateInfoList{}, fmt.Errorf("extracting subject and issuer: %w", err), http.StatusInternalServerError
+				return models.CertificateInfoList{}, http.StatusInternalServerError, fmt.Errorf("extracting subject and issuer: %w", err)
 			}
 			for _, cert_info := range cert_info_list.Data {
 				result.Data = append(result.Data, models.CertificateInfo{
@@ -282,10 +294,10 @@ func (s *trustService) GetCertificatesInfo(ctx context.Context, tufRepoUrl strin
 		}
 	}
 
-	return result, nil, http.StatusOK
+	return result, http.StatusOK, nil
 }
 
-func (s *trustService) GetAllTargets(ctx context.Context, tufRepoUrl string) (models.TargetsList, error, int) {
+func (s *trustService) GetAllTargets(ctx context.Context, tufRepoUrl string) (models.TargetsList, int, error) {
 	// Get targets from database
 	query := `
 		SELECT target_name, type, status, content FROM targets WHERE repo_url = ?
@@ -293,16 +305,20 @@ func (s *trustService) GetAllTargets(ctx context.Context, tufRepoUrl string) (mo
 	rows, err := s.db.QueryContext(ctx, query, tufRepoUrl)
 	if err != nil {
 		log.Printf("Failed to query DB (repo=%s): %v", tufRepoUrl, err)
-		return models.TargetsList{}, fmt.Errorf("could not query targets"), http.StatusInternalServerError
+		return models.TargetsList{}, http.StatusInternalServerError, fmt.Errorf("could not query targets")
 	}
-	defer rows.Close()
+	defer func() {
+		if cerr := rows.Close(); cerr != nil {
+			log.Printf("failed to close rows: %v", cerr)
+		}
+	}()
 
 	result := models.TargetsList{}
 	for rows.Next() {
 		var targetName, targetType, status, content string
 		if err := rows.Scan(&targetName, &targetType, &status, &content); err != nil {
 			log.Printf("Failed to scan target (repo=%s, target=%s): %v", tufRepoUrl, targetName, err)
-			return models.TargetsList{}, fmt.Errorf("could not scan target"), http.StatusInternalServerError
+			return models.TargetsList{}, http.StatusInternalServerError, fmt.Errorf("could not scan target")
 		}
 		result.Data = append(result.Data, models.TargetInfo{
 			Name:    targetName,
@@ -311,20 +327,20 @@ func (s *trustService) GetAllTargets(ctx context.Context, tufRepoUrl string) (mo
 			Content: content,
 		})
 	}
-	return result, nil, http.StatusOK
+	return result, http.StatusOK, nil
 }
 
 // getOrCreateUpdater retrieves or initializes a TUF updater for the given repository URL.
-func (s *trustService) getOrCreateUpdater(tufRepoUrl string) (*tufRepository, error, int) {
+func (s *trustService) getOrCreateUpdater(tufRepoUrl string) (*tufRepository, int, error) {
 	s.repoLock.RLock()
 	if s.repo != nil && s.tufRepoUrl == tufRepoUrl {
 		if !s.repoReady {
 			s.repoLock.RUnlock()
-			return nil, fmt.Errorf("repository %s not yet initialized, try again later", tufRepoUrl), http.StatusServiceUnavailable
+			return nil, http.StatusServiceUnavailable, fmt.Errorf("repository %s not yet initialized, try again later", tufRepoUrl)
 		}
 		repo := s.repo
 		s.repoLock.RUnlock()
-		return repo, nil, http.StatusOK
+		return repo, http.StatusOK, nil
 	}
 	s.repoLock.RUnlock()
 
@@ -334,29 +350,29 @@ func (s *trustService) getOrCreateUpdater(tufRepoUrl string) (*tufRepository, er
 	// Check to avoid race condition
 	if s.repo != nil && s.tufRepoUrl == tufRepoUrl {
 		if !s.repoReady {
-			return nil, fmt.Errorf("repository %s not yet initialized, try again later", tufRepoUrl), http.StatusServiceUnavailable
+			return nil, http.StatusServiceUnavailable, fmt.Errorf("repository %s not yet initialized, try again later", tufRepoUrl)
 		}
-		return s.repo, nil, http.StatusOK
+		return s.repo, http.StatusOK, nil
 	}
 
 	// Initialize new TUF repository
 	opts, err := buildTufOptions(tufRepoUrl)
 	if err != nil {
-		return nil, fmt.Errorf("failed to build TUF options for %s: %w", tufRepoUrl, err), http.StatusInternalServerError
+		return nil, http.StatusInternalServerError, fmt.Errorf("failed to build TUF options for %s: %w", tufRepoUrl, err)
 	}
 	tufCfg, err := buildTufConfig(opts)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create TUF config for %s: %w", tufRepoUrl, err), http.StatusInternalServerError
+		return nil, http.StatusInternalServerError, fmt.Errorf("failed to create TUF config for %s: %w", tufRepoUrl, err)
 	}
 
 	up, err := updater.New(tufCfg)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create updater for %s: %w", tufRepoUrl, err), http.StatusInternalServerError
+		return nil, http.StatusInternalServerError, fmt.Errorf("failed to create updater for %s: %w", tufRepoUrl, err)
 	}
 
 	// Perform initial refresh
 	if err := up.Refresh(); err != nil {
-		return nil, fmt.Errorf("initial refresh failed for %s: %w", tufRepoUrl, err), http.StatusServiceUnavailable
+		return nil, http.StatusServiceUnavailable, fmt.Errorf("initial refresh failed for %s: %w", tufRepoUrl, err)
 	}
 
 	repo := &tufRepository{
@@ -368,7 +384,7 @@ func (s *trustService) getOrCreateUpdater(tufRepoUrl string) (*tufRepository, er
 	s.repo = repo
 	s.tufRepoUrl = s.repo.remoteMetadataURL
 	s.repoReady = true
-	return repo, nil, http.StatusOK
+	return repo, http.StatusOK, nil
 }
 
 // runBackgroundRefresh periodically refreshes the TUF repository.
@@ -429,7 +445,7 @@ func (s *trustService) runBackgroundRefresh() {
 
 				ctx, cancel := context.WithTimeout(s.ctx, 30*time.Second)
 				defer cancel()
-				if err, statusCode := s.populateTargets(ctx, repo); err != nil {
+				if statusCode, err := s.populateTargets(ctx, repo); err != nil {
 					log.Printf("TUF: Failed to populate targets for %s (statusCode=%d): %v", url, statusCode, err)
 					return
 				}
@@ -456,7 +472,7 @@ func (s *trustService) CloseDB() error {
 func buildTufOptions(tufRepoUrl string) (*tuf.Options, error) {
 	opts := tuf.DefaultOptions()
 	opts.RepositoryBaseURL = tufRepoUrl
-	if !urlsEqual(opts.RepositoryBaseURL, publicGoodInstance) {
+	if !urlsEqual(opts.RepositoryBaseURL, TufPublicGoodInstance) {
 		if err := setOptsRoot(opts); err != nil {
 			return nil, fmt.Errorf("failed to set root in options for %s: %w", tufRepoUrl, err)
 		}
@@ -471,7 +487,11 @@ func setOptsRoot(opts *tuf.Options) error {
 	if err != nil {
 		return fmt.Errorf("failed to fetch root.json: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil {
+			log.Printf("failed to close resp Body: %v", cerr)
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("failed to fetch root.json: received status %d", resp.StatusCode)
@@ -622,10 +642,10 @@ func urlsEqual(a, b string) bool {
 }
 
 // GetTarget retrieves the target content from the remote TUF repository
-func (s *trustService) GetTargetFromTUFRepo(ctx context.Context, tufRepoUrl string, target string) (models.TargetContent, error, int) {
-	repo, err, statusCode := s.getOrCreateUpdater(tufRepoUrl)
+func (s *trustService) GetTargetFromTUFRepo(ctx context.Context, tufRepoUrl string, target string) (models.TargetContent, int, error) {
+	repo, statusCode, err := s.getOrCreateUpdater(tufRepoUrl)
 	if err != nil {
-		return models.TargetContent{}, err, statusCode
+		return models.TargetContent{}, statusCode, err
 	}
 
 	repo.lock.RLock()
@@ -642,22 +662,22 @@ func (s *trustService) GetTargetFromTUFRepo(ctx context.Context, tufRepoUrl stri
 		default:
 			statusCode = http.StatusInternalServerError
 		}
-		return models.TargetContent{}, err, statusCode
+		return models.TargetContent{}, statusCode, err
 	}
 
 	// Get Target content
 	const filePath = ""
 	ti, err := repo.updater.GetTargetInfo(target)
 	if err != nil {
-		return models.TargetContent{}, fmt.Errorf("getting info for target \"%s\": %w", target, err), http.StatusInternalServerError
+		return models.TargetContent{}, http.StatusInternalServerError, fmt.Errorf("getting info for target \"%s\": %w", target, err)
 	}
 	path, tb, err := repo.updater.FindCachedTarget(ti, filePath)
 	if err != nil {
-		return models.TargetContent{}, fmt.Errorf("getting target cache: %w", err), http.StatusInternalServerError
+		return models.TargetContent{}, http.StatusInternalServerError, fmt.Errorf("getting target cache: %w", err)
 	}
 	if path != "" {
 		// Cached version found
-		return models.TargetContent{Content: string(tb)}, nil, http.StatusOK
+		return models.TargetContent{Content: string(tb)}, http.StatusOK, nil
 	}
 
 	// Download of target is needed
@@ -665,10 +685,10 @@ func (s *trustService) GetTargetFromTUFRepo(ctx context.Context, tufRepoUrl stri
 	const targetsBaseURL = ""
 	_, tb, err = repo.updater.DownloadTarget(ti, filePath, targetsBaseURL)
 	if err != nil {
-		return models.TargetContent{}, fmt.Errorf("failed to download target file %s: %w", target, err), http.StatusInternalServerError
+		return models.TargetContent{}, http.StatusInternalServerError, fmt.Errorf("failed to download target file %s: %w", target, err)
 	}
 
-	return models.TargetContent{Content: string(tb)}, nil, http.StatusOK
+	return models.TargetContent{Content: string(tb)}, http.StatusOK, nil
 }
 
 // syncDatabaseWithTargets updates the database to reflect the current targets from the remote TUF repository.
@@ -693,7 +713,11 @@ func (s *trustService) syncDatabaseWithTargets(repo *tufRepository) error {
 		log.Printf("Failed to query database targets (repo=%s): %v", repo.remoteMetadataURL, err)
 		return fmt.Errorf("could not query database targets")
 	}
-	defer rows.Close()
+	defer func() {
+		if cerr := rows.Close(); cerr != nil {
+			log.Printf("failed to close rows: %v", cerr)
+		}
+	}()
 
 	// a given target exists (or not) in the DB
 	dbTargets := make(map[string]bool)
@@ -763,24 +787,24 @@ func (s *trustService) storeTarget(ctx context.Context, target models.TargetInfo
 }
 
 // populateTargets retrieves targets from the remote TUF repository and stores them in the database.
-func (s *trustService) populateTargets(ctx context.Context, repo *tufRepository) (error, int) {
+func (s *trustService) populateTargets(ctx context.Context, repo *tufRepository) (int, error) {
 	targetsMeta := repo.updater.GetTrustedMetadataSet().Targets["targets"]
 	if targetsMeta == nil {
-		return fmt.Errorf("targets metadata not available"), http.StatusServiceUnavailable
+		return http.StatusServiceUnavailable, fmt.Errorf("targets metadata not available")
 	}
 	targetsBytes, err := targetsMeta.ToBytes(true)
 	if err != nil {
-		return fmt.Errorf("failed to get targets bytes: %w", err), http.StatusInternalServerError
+		return http.StatusInternalServerError, fmt.Errorf("failed to get targets bytes: %w", err)
 	}
 	targetMetadataSpecs, err := extractTargetMetadataInfo(targetsBytes)
 	if err != nil {
-		return fmt.Errorf("extracting target metadata: %w", err), http.StatusInternalServerError
+		return http.StatusInternalServerError, fmt.Errorf("extracting target metadata: %w", err)
 	}
 
 	for target, info := range targetMetadataSpecs {
-		target_content, err, statusCode := s.GetTargetFromTUFRepo(ctx, repo.remoteMetadataURL, target)
+		target_content, statusCode, err := s.GetTargetFromTUFRepo(ctx, repo.remoteMetadataURL, target)
 		if err != nil {
-			return fmt.Errorf("failed to get content for target %s: %w", target, err), statusCode
+			return statusCode, fmt.Errorf("failed to get content for target %s: %w", target, err)
 		}
 		targetInfo := models.TargetInfo{
 			Name:    target,
@@ -790,8 +814,8 @@ func (s *trustService) populateTargets(ctx context.Context, repo *tufRepository)
 		}
 		if err := s.storeTarget(ctx, targetInfo, repo.remoteMetadataURL); err != nil {
 			log.Printf("Failed to store target (repo=%s, target=%s): %v", repo.remoteMetadataURL, target, err)
-			return fmt.Errorf("failed to store target %s", target), http.StatusInternalServerError
+			return http.StatusInternalServerError, fmt.Errorf("failed to store target %s", target)
 		}
 	}
-	return nil, http.StatusOK
+	return http.StatusOK, nil
 }
