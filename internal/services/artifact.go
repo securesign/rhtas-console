@@ -1,6 +1,7 @@
 package services
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -8,7 +9,9 @@ import (
 	"time"
 
 	"github.com/google/go-containerregistry/pkg/authn"
+	"github.com/google/go-containerregistry/pkg/crane"
 	"github.com/google/go-containerregistry/pkg/name"
+	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	console_errors "github.com/securesign/rhtas-console/internal/errors"
 	"github.com/securesign/rhtas-console/internal/models"
@@ -183,6 +186,16 @@ func (s *artifactService) GetImageMetadata(ctx context.Context, image string, us
 		labels = nil
 	}
 
+	signatureList, err := getImageSignatures(digest, ref)
+	if err != nil {
+		return models.ImageMetadataResponse{}, fmt.Errorf("%w: %v", console_errors.ErrArtifactFailedToFetchSignatures, err)
+	}
+
+	attestationList, err := getImageAttestations(digest, ref)
+	if err != nil {
+		return models.ImageMetadataResponse{}, fmt.Errorf("%w: %v", console_errors.ErrArtifactFailedToFetchSignatures, err)
+	}
+
 	response := models.ImageMetadataResponse{
 		Image: &image,
 		Metadata: models.Metadata{
@@ -191,9 +204,73 @@ func (s *artifactService) GetImageMetadata(ctx context.Context, image string, us
 			Created:   createdTime,
 			Labels:    &labels,
 		},
-		Digest: digest.String(),
+		Digest:       digest.String(),
+		Signatures:   &signatureList,
+		Attestations: &attestationList,
 	}
 	return response, nil
+}
+
+// getImageSignatures returns the list of unique cryptographic signatures associated to the imageDigest
+func getImageSignatures(imageDigest v1.Hash, ref name.Reference) ([]string, error) {
+	digest := ref.Context().Digest(imageDigest.String())
+	h, err := v1.NewHash(digest.Identifier())
+	if err != nil {
+		return nil, fmt.Errorf("error getting hash: %w", err)
+	}
+	// Construct the signature reference - sha256-<hash>.sig
+	sigTag := digest.Context().Tag(fmt.Sprint(h.Algorithm, "-", h.Hex, ".sig"))
+	// Get the manifest of the signature
+	mf, err := crane.Manifest(sigTag.Name())
+	if err != nil {
+		return nil, fmt.Errorf("error getting signature manifest: %w", err)
+	}
+	sigManifest, err := v1.ParseManifest(bytes.NewReader(mf))
+	if err != nil {
+		return nil, fmt.Errorf("error parsing signature manifest: %w", err)
+	}
+	signatureList := []string{}
+	seen := make(map[string]struct{}) // to track signature duplicates
+
+	for _, layer := range sigManifest.Layers {
+		digestStr := layer.Digest.String()
+		if _, exists := seen[digestStr]; !exists {
+			seen[digestStr] = struct{}{}
+			signatureList = append(signatureList, digestStr)
+		}
+	}
+	return signatureList, nil
+}
+
+// getImageAttestations returns the unique list of signed attestations associated with the imageDigest
+func getImageAttestations(imageDigest v1.Hash, ref name.Reference) ([]string, error) {
+	digest := ref.Context().Digest(imageDigest.String())
+	h, err := v1.NewHash(digest.Identifier())
+	if err != nil {
+		return nil, fmt.Errorf("error getting hash: %w", err)
+	}
+	// Construct the attestation reference - sha256-<hash>.att
+	attTag := digest.Context().Tag(fmt.Sprint(h.Algorithm, "-", h.Hex, ".att"))
+	// Get the manifest of the attestation
+	mf, err := crane.Manifest(attTag.Name())
+	if err != nil {
+		return nil, fmt.Errorf("error getting attestation manifest: %w", err)
+	}
+	sigManifest, err := v1.ParseManifest(bytes.NewReader(mf))
+	if err != nil {
+		return nil, fmt.Errorf("error parsing attestation manifest: %w", err)
+	}
+	attestationList := []string{}
+	seen := make(map[string]struct{}) // to track attestation duplicates
+
+	for _, layer := range sigManifest.Layers {
+		digestStr := layer.Digest.String()
+		if _, exists := seen[digestStr]; !exists {
+			seen[digestStr] = struct{}{}
+			attestationList = append(attestationList, digestStr)
+		}
+	}
+	return attestationList, nil
 }
 
 // isNotFound checks if the error indicates the image was not found
