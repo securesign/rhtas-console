@@ -193,7 +193,7 @@ func (s *artifactService) GetImageMetadata(ctx context.Context, image string, us
 
 	attestationList, err := getImageAttestations(digest, ref)
 	if err != nil {
-		return models.ImageMetadataResponse{}, fmt.Errorf("%w: %v", console_errors.ErrArtifactFailedToFetchSignatures, err)
+		return models.ImageMetadataResponse{}, fmt.Errorf("%w: %v", console_errors.ErrArtifactFailedToFetchAttestations, err)
 	}
 
 	response := models.ImageMetadataResponse{
