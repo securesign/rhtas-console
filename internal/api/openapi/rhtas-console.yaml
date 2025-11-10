@@ -669,6 +669,12 @@ components:
           items:
             type: string
             description: A single signed attestation payload or reference
+        certificateChain:
+          type: array
+          description: A list of X.509 certificate chains associated with the image's cryptographic signatures
+          items:
+            type: string
+            description: A single PEM-encoded certificate chain corresponding to a signature
       required:
         - artifact
         - metadata

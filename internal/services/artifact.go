@@ -186,7 +186,7 @@ func (s *artifactService) GetImageMetadata(ctx context.Context, image string, us
 		labels = nil
 	}
 
-	signatureList, err := getImageSignatures(digest, ref)
+	signatureList, certChainList, err := getImageSignaturesAndChains(digest, ref)
 	if err != nil {
 		return models.ImageMetadataResponse{}, fmt.Errorf("%w: %v", console_errors.ErrArtifactFailedToFetchSignatures, err)
 	}
@@ -204,42 +204,53 @@ func (s *artifactService) GetImageMetadata(ctx context.Context, image string, us
 			Created:   createdTime,
 			Labels:    &labels,
 		},
-		Digest:       digest.String(),
-		Signatures:   &signatureList,
-		Attestations: &attestationList,
+		Digest:           digest.String(),
+		Signatures:       &signatureList,
+		Attestations:     &attestationList,
+		CertificateChain: &certChainList,
 	}
 	return response, nil
 }
 
-// getImageSignatures returns the list of unique cryptographic signatures associated to the imageDigest
-func getImageSignatures(imageDigest v1.Hash, ref name.Reference) ([]string, error) {
+// getImageSignaturesAndChains retrieves the list of unique cryptographic signatures and their corresponding certificate chains associated with the provided image digest.
+func getImageSignaturesAndChains(imageDigest v1.Hash, ref name.Reference) ([]string, []string, error) {
 	digest := ref.Context().Digest(imageDigest.String())
 	h, err := v1.NewHash(digest.Identifier())
 	if err != nil {
-		return nil, fmt.Errorf("error getting hash: %w", err)
+		return nil, nil, fmt.Errorf("error getting hash: %w", err)
 	}
 	// Construct the signature reference - sha256-<hash>.sig
 	sigTag := digest.Context().Tag(fmt.Sprint(h.Algorithm, "-", h.Hex, ".sig"))
 	// Get the manifest of the signature
 	mf, err := crane.Manifest(sigTag.Name())
 	if err != nil {
-		return nil, fmt.Errorf("error getting signature manifest: %w", err)
+		return nil, nil, fmt.Errorf("error getting signature manifest: %w", err)
 	}
 	sigManifest, err := v1.ParseManifest(bytes.NewReader(mf))
 	if err != nil {
-		return nil, fmt.Errorf("error parsing signature manifest: %w", err)
+		return nil, nil, fmt.Errorf("error parsing signature manifest: %w", err)
 	}
 	signatureList := []string{}
-	seen := make(map[string]struct{}) // to track signature duplicates
+	certChainList := []string{}
+	// to track duplicates
+	seenSigs := make(map[string]struct{})
+	seenChains := make(map[string]struct{})
 
 	for _, layer := range sigManifest.Layers {
 		digestStr := layer.Digest.String()
-		if _, exists := seen[digestStr]; !exists {
-			seen[digestStr] = struct{}{}
+		if _, exists := seenSigs[digestStr]; !exists {
+			seenSigs[digestStr] = struct{}{}
 			signatureList = append(signatureList, digestStr)
 		}
+
+		if chain, ok := layer.Annotations["dev.sigstore.cosign/chain"]; ok && chain != "" {
+			if _, exists := seenChains[chain]; !exists {
+				seenChains[chain] = struct{}{}
+				certChainList = append(certChainList, chain)
+			}
+		}
 	}
-	return signatureList, nil
+	return signatureList, certChainList, nil
 }
 
 // getImageAttestations returns the unique list of signed attestations associated with the imageDigest

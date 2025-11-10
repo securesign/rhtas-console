@@ -86,6 +86,9 @@ type ImageMetadataResponse struct {
 	// Attestations A list of signed attestations associated with the image
 	Attestations *[]string `json:"attestations,omitempty"`
 
+	// CertificateChain A list of X.509 certificate chains associated with the image's cryptographic signatures
+	CertificateChain *[]string `json:"certificateChain,omitempty"`
+
 	// Digest The container image's digest (e.g., SHA256 hash)
 	Digest string `json:"digest"`
 
