@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"strings"
 	"time"
@@ -322,17 +323,20 @@ func isConnectionError(err error) bool {
 	return strings.Contains(strings.ToLower(err.Error()), "connection refused")
 }
 
-// chainStringToArray splits a PEM certificate chain string into a slice of individual certificates.
+// chainStringToArray parses a PEM certificate chain string and returns a slice of individual certificates in PEM format.
 func chainStringToArray(chain string) []string {
-	chainList := []string{}
-	parts := strings.SplitAfter(chain, "\n-----END CERTIFICATE-----")
-	for _, cert := range parts {
-		if strings.Contains(cert, "\n-----BEGIN") {
-			cert = strings.ReplaceAll(cert, "\n-----BEGIN", "-----BEGIN")
+	var chainList []string
+	data := []byte(chain)
+	for len(data) > 0 {
+		block, rest := pem.Decode(data)
+		if block == nil {
+			break
 		}
-		if cert != "" {
-			chainList = append(chainList, cert)
+		certPEM := pem.EncodeToMemory(block)
+		if certPEM != nil {
+			chainList = append(chainList, string(certPEM))
 		}
+		data = rest
 	}
 	return chainList
 }
