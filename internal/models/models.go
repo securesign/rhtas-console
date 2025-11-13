@@ -86,9 +86,6 @@ type ImageMetadataResponse struct {
 	// Attestations A list of signed attestations associated with the image
 	Attestations *[]string `json:"attestations,omitempty"`
 
-	// CertificateChain A list of X.509 certificate chains associated with the image's cryptographic signatures
-	CertificateChain *[]string `json:"certificateChain,omitempty"`
-
 	// Digest The container image's digest (e.g., SHA256 hash)
 	Digest string `json:"digest"`
 
@@ -96,10 +93,8 @@ type ImageMetadataResponse struct {
 	Image *string `json:"image,omitempty"`
 
 	// Metadata Metadata for a container image
-	Metadata Metadata `json:"metadata"`
-
-	// Signatures A list of cryptographic signatures that verify the integrity and authenticity of the image
-	Signatures *[]string `json:"signatures,omitempty"`
+	Metadata   Metadata    `json:"metadata"`
+	Signatures *Signatures `json:"signatures,omitempty"`
 }
 
 // InclusionProof Merkle tree inclusion proof for a Rekor entry
@@ -181,6 +176,18 @@ type RootMetadataInfoList struct {
 	// RepoUrl URL of the TUF repository
 	RepoUrl *string `json:"repo-url,omitempty"`
 }
+
+// Signature A cryptographic signature with its associated certificate chain
+type Signature struct {
+	// CertificateChain The X.509 certificate chain associated with this signature
+	CertificateChain []string `json:"certificateChain"`
+
+	// Signature A single cryptographic signature encoded as a string
+	Signature string `json:"signature"`
+}
+
+// Signatures defines model for Signatures.
+type Signatures = []Signature
 
 // TargetContent defines model for TargetContent.
 type TargetContent struct {
