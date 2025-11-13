@@ -8,12 +8,6 @@ on:
       - internal/api/openapi/rhtas-console.yaml
   workflow_call:
   workflow_dispatch:
-    inputs:
-      branch:
-        description: 'Branch the action will be run against'
-        required: true
-        type: string
-        default: main
 
 jobs:
   ui-pr:
