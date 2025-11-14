@@ -1,0 +1,25 @@
+{
+  "name": "rhtas-console",
+  "dockerComposeFile": "./docker-compose.yml",
+  "service": "rhtas-console",
+  "workspaceFolder": "/workspace",
+  "initializeCommand": "bash .devcontainer/initializeCommand.sh ${devcontainerId}",
+  "postCreateCommand": "bash .devcontainer/postCreateCommand.sh ${devcontainerId}",
+  "forwardPorts": [
+    8080
+  ],
+  "features": {
+    "ghcr.io/devcontainers/features/common-utils:2": {},
+    "ghcr.io/devcontainers/features/go:1": {}
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "golang.Go"
+      ],
+      "settings": {
+        "git.alwaysSignOff": true
+      }
+    }
+  }
+}

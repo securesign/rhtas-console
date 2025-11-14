@@ -1,0 +1,39 @@
+networks:
+  rhtas:
+    name: "rhtas"
+
+services:
+  rhtas-console:
+    image: localhost/devcontainer-rhtas-console:latest
+    build:
+      dockerfile: ./Dockerfile
+    security_opt:
+      - "label=disable"
+    userns_mode: "keep-id"
+    environment:
+      DB_DSN: rootuser:root@tcp(rhtas-console-db:3306)/tuf_trust
+      TUF_REPO_URL: https://tuf-repo-cdn.sigstore.dev
+    command: /bin/sh -c "while sleep 1000; do :; done"
+    volumes:
+      - ..:/workspace:cached
+    networks:
+      - rhtas
+    depends_on:
+      rhtas-console-db:
+        condition: service_started
+
+  rhtas-console-db:
+    image: mariadb:lts-ubi
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: tuf_trust
+      MYSQL_USER: rootuser
+      MYSQL_PASSWORD: root
+    networks:
+      - rhtas
+    healthcheck:
+      test: [ "CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-prootpassword" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
