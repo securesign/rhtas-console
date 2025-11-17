@@ -115,12 +115,40 @@ func NewVerifyOptions() VerifyOptions {
 
 func VerifyArtifact(verifyOpts VerifyOptions) (details string, err error) {
 	var b *bundle.Bundle
+	var san string
 
 	if verifyOpts.OCIImage != "" {
 		if verifyOpts.PredicateType != "" {
 			b, verifyOpts.ArtifactDigest, err = bundleFromOCIImageAttestation(verifyOpts.OCIImage, verifyOpts.RequireTLog, verifyOpts.RequireTimestamp, verifyOpts.PredicateType)
 		} else {
 			b, verifyOpts.ArtifactDigest, err = bundleFromOCIImage(verifyOpts.OCIImage, verifyOpts.RequireTLog, verifyOpts.RequireTimestamp)
+		}
+
+		var layer *v1.Descriptor
+		if verifyOpts.ExpectedSAN == "" {
+			if verifyOpts.PredicateType != "" {
+				layer, err = attestationLayerFromOCIImage(verifyOpts.OCIImage, verifyOpts.PredicateType)
+				if err != nil {
+					return "", fmt.Errorf("error getting attestation layer: %w", err)
+				}
+			} else {
+				layer, err = simpleSigningLayerFromOCIImage(verifyOpts.OCIImage)
+				if err != nil {
+					return "", fmt.Errorf("error getting simple signing layer: %w", err)
+				}
+			}
+
+			signingCertificate := ""
+			if certificate, ok := layer.Annotations["dev.sigstore.cosign/certificate"]; ok && certificate != "" {
+				signingCertificate = certificate
+			} else {
+				return "", errors.New("missing signing certificate annotation 'dev.sigstore.cosign/certificate'")
+			}
+			san, err = getSANFromCert(signingCertificate)
+			if err != nil {
+				return "", fmt.Errorf("error getting SAN from signing certificate: %w", err)
+			}
+			verifyOpts.ExpectedSAN = san
 		}
 	} else if verifyOpts.Bundle != nil {
 		// Load the bundle from the provided paramters
@@ -821,4 +849,33 @@ func getSubjectDigestFromDSSE(dsseEnvelope *protobundle.Bundle_DsseEnvelope) (st
 	}
 
 	return "", fmt.Errorf("no subject found in DSSE payload (decoded inner payload: %s)", string(outerPayloadBytes))
+}
+
+// getSANFromCert extracts the SAN from a certificate
+func getSANFromCert(cert string) (san string, err error) {
+	data := []byte(cert)
+	block, _ := pem.Decode(data)
+	if block == nil {
+		return "", errors.New("failed to decode PEM block containing certificate")
+	}
+	if block.Type != "CERTIFICATE" {
+		return "", fmt.Errorf("PEM block is not of type CERTIFICATE, but %s", block.Type)
+	}
+
+	certificate, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse certificate: %w", err)
+	}
+
+	// Prioritize URI SANs
+	if len(certificate.URIs) > 0 {
+		return certificate.URIs[0].String(), nil
+	}
+
+	// Fall back to email SANs
+	if len(certificate.EmailAddresses) > 0 {
+		return certificate.EmailAddresses[0], nil
+	}
+
+	return "", errors.New("certificate does not contain a supported SAN (URI or Email)")
 }
