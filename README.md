@@ -104,7 +104,6 @@ curl -X POST http://localhost:8080/api/v1/artifacts/verify \
   -d '{
     "ociImage": "ttl.sh/rhtas/test-image:1h",
     "expectedOIDIssuer": "https://accounts.google.com",
-    "expectedSAN": "jdoe@redhat.com",
     "tufRootURL": "https://tuf-repo-cdn.sigstore.dev"
   }'
 ```
@@ -117,7 +116,6 @@ curl -X POST http://localhost:8080/api/v1/artifacts/verify \
   -d '{
   	"artifactDigest": "e128e0a064433c8d46f0467b149c70052fedbfa1f9e96ac22e3deefdc943e965",
     "expectedOIDIssuer": "https://accounts.google.com",
-    "expectedSAN": "jdoe@redhat.com",
     "tufRootURL": "https://tuf-repo-cdn.sigstore.dev",
     "bundle": '"$bundle_json"'
   }'
@@ -182,7 +180,6 @@ curl -X POST http://localhost:8080/api/v1/artifacts/verify \
   -d '{
     "ociImage": "ttl.sh/rhtas/test-image-1@sha256:1fd54200e48e100883366b0180add3400a74e8b912e7c87a98215d1d25a888f8",
     "expectedOIDIssuer": "https://accounts.google.com",
-    "expectedSAN": "jdoe@redhat.com",
     "tufRootURL": "https://tuf-repo-cdn.sigstore.dev",
     "predicateType": "https://example.com/attestations/build"
   }'
