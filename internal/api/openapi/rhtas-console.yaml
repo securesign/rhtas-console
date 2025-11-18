@@ -644,6 +644,25 @@ components:
       required:
         - mediaType
         - size
+    Signatures:
+      type: array
+      items:
+        $ref: '#/components/schemas/Signature'
+    Signature:
+      type: object
+      description: A cryptographic signature with its associated certificate chain
+      properties:
+        signature:
+          type: string
+          description: A single cryptographic signature encoded as a string
+        certificateChain:
+          type: array
+          description: The X.509 certificate chain associated with this signature
+          items:
+            type: string
+      required:
+        - signature
+        - certificateChain
     ImageMetadataResponse:
       type: object
       properties:
@@ -657,6 +676,14 @@ components:
           type: string
           description: The container image's digest (e.g., SHA256 hash)
           example: sha256:abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890
+        signatures:
+          $ref: '#/components/schemas/Signatures'
+        attestations:
+          type: array
+          description: A list of signed attestations associated with the image
+          items:
+            type: string
+            description: A single signed attestation payload or reference
       required:
         - artifact
         - metadata
