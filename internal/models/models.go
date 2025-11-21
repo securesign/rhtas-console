@@ -17,6 +17,14 @@ const (
 	BasicAuthScopes = "basicAuth.Scopes"
 )
 
+// Defines values for CertificateRole.
+const (
+	Intermediate CertificateRole = "intermediate"
+	Leaf         CertificateRole = "leaf"
+	Root         CertificateRole = "root"
+	Unknown      CertificateRole = "unknown"
+)
+
 // ArtifactPolicies defines model for ArtifactPolicies.
 type ArtifactPolicies struct {
 	// Artifact The artifact URI
@@ -44,6 +52,37 @@ type ArtifactPolicies struct {
 		// Status Policy status
 		Status *string `json:"status,omitempty"`
 	} `json:"policies"`
+}
+
+// ArtifactSummaryView defines model for ArtifactSummaryView.
+type ArtifactSummaryView struct {
+	// AttestationCount Total number of attestations
+	AttestationCount int `json:"attestationCount"`
+
+	// RekorEntryCount Total number of Rekor entries
+	RekorEntryCount int `json:"rekorEntryCount"`
+
+	// SignatureCount Total number of signatures
+	SignatureCount int `json:"signatureCount"`
+}
+
+// AttestationView defines model for AttestationView.
+type AttestationView struct {
+	AttestationStatus string `json:"attestationStatus"`
+	Digest            string `json:"digest"`
+
+	// Id Unique identifier for the signature view
+	Id               int    `json:"id"`
+	PredicateType    string `json:"predicateType"`
+	RawBundleJson    string `json:"rawBundleJson"`
+	RawStatementJson string `json:"rawStatementJson"`
+
+	// Timestamp ISO-8601 timestamp
+	Timestamp *time.Time `json:"timestamp,omitempty"`
+
+	// TlogEntry Rekor transparency log entry
+	TlogEntry map[string]interface{} `json:"tlogEntry"`
+	Type      string                 `json:"type"`
 }
 
 // CertificateInfo defines model for CertificateInfo.
@@ -75,6 +114,9 @@ type CertificateInfoList struct {
 	Data []CertificateInfo `json:"data"`
 }
 
+// CertificateRole defines model for CertificateRole.
+type CertificateRole string
+
 // Error defines model for Error.
 type Error struct {
 	// Error Error message
@@ -83,9 +125,6 @@ type Error struct {
 
 // ImageMetadataResponse defines model for ImageMetadataResponse.
 type ImageMetadataResponse struct {
-	// Attestations A list of signed attestations associated with the image
-	Attestations *[]string `json:"attestations,omitempty"`
-
 	// Digest The container image's digest (e.g., SHA256 hash)
 	Digest string `json:"digest"`
 
@@ -93,8 +132,7 @@ type ImageMetadataResponse struct {
 	Image *string `json:"image,omitempty"`
 
 	// Metadata Metadata for a container image
-	Metadata   Metadata    `json:"metadata"`
-	Signatures *Signatures `json:"signatures,omitempty"`
+	Metadata Metadata `json:"metadata"`
 }
 
 // InclusionProof Merkle tree inclusion proof for a Rekor entry
@@ -128,6 +166,23 @@ type Metadata struct {
 
 	// Size Size of the container image in bytes
 	Size int64 `json:"size"`
+}
+
+// ParsedCertificate defines model for ParsedCertificate.
+type ParsedCertificate struct {
+	IsCa   bool   `json:"isCa"`
+	Issuer string `json:"issuer"`
+
+	// NotAfter ISO date string
+	NotAfter time.Time `json:"notAfter"`
+
+	// NotBefore ISO date string
+	NotBefore    time.Time       `json:"notBefore"`
+	Pem          string          `json:"pem"`
+	Role         CertificateRole `json:"role"`
+	Sans         []string        `json:"sans"`
+	SerialNumber *string         `json:"serialNumber"`
+	Subject      string          `json:"subject"`
 }
 
 // RekorEntry defines model for RekorEntry.
@@ -177,17 +232,23 @@ type RootMetadataInfoList struct {
 	RepoUrl *string `json:"repo-url,omitempty"`
 }
 
-// Signature A cryptographic signature with its associated certificate chain
-type Signature struct {
-	// CertificateChain The X.509 certificate chain associated with this signature
-	CertificateChain []string `json:"certificateChain"`
+// SignatureView defines model for SignatureView.
+type SignatureView struct {
+	CertificateChain []ParsedCertificate `json:"certificateChain"`
+	Digest           string              `json:"digest"`
 
-	// Signature A single cryptographic signature encoded as a string
-	Signature string `json:"signature"`
+	// Id Unique identifier for the signature view
+	Id                 int               `json:"id"`
+	RawBundleJson      string            `json:"rawBundleJson"`
+	SignatureStatus    string            `json:"signatureStatus"`
+	SigningCertificate ParsedCertificate `json:"signingCertificate"`
+
+	// Timestamp ISO-8601 timestamp
+	Timestamp *time.Time `json:"timestamp,omitempty"`
+
+	// TlogEntry Rekor transparency log entry
+	TlogEntry map[string]interface{} `json:"tlogEntry"`
 }
-
-// Signatures defines model for Signatures.
-type Signatures = []Signature
 
 // TargetContent defines model for TargetContent.
 type TargetContent struct {
@@ -281,11 +342,14 @@ type VerifyArtifactRequest struct {
 
 // VerifyArtifactResponse defines model for VerifyArtifactResponse.
 type VerifyArtifactResponse struct {
-	// Details The full verification result payload returned by the Sigstore verifier. This structure may evolve over time.
-	Details map[string]interface{} `json:"details"`
+	Artifact ImageMetadataResponse `json:"artifact"`
 
-	// Verified Whether verification was successful
-	Verified bool `json:"verified"`
+	// Attestations List of attestations for the artifact
+	Attestations []AttestationView `json:"attestations"`
+
+	// Signatures List of signature verification results
+	Signatures []SignatureView     `json:"signatures"`
+	Summary    ArtifactSummaryView `json:"summary"`
 }
 
 // GetApiV1ArtifactsImageParams defines parameters for GetApiV1ArtifactsImage.

@@ -460,18 +460,27 @@ components:
     VerifyArtifactResponse:
       type: object
       properties:
-        verified:
-          type: boolean
-          description: Whether verification was successful
-        details:
-          type: object
-          description: >
-            The full verification result payload returned by the Sigstore verifier.
-            This structure may evolve over time.
-          additionalProperties: true
+        signatures:
+          type: array
+          description: List of signature verification results
+          items:
+            $ref: '#/components/schemas/SignatureView'
+        attestations:
+          type: array
+          description: List of attestations for the artifact
+          items:
+            $ref: '#/components/schemas/AttestationView'
+        summary:
+          description: List of attestations for the artifact
+          $ref: '#/components/schemas/ArtifactSummaryView'
+        artifact:
+          description: Artifact metadata response
+          $ref: '#/components/schemas/ImageMetadataResponse'
       required:
-        - verified
-        - details
+        - signatures
+        - attestations
+        - summary
+        - artifact
     InclusionProof:
       type: object
       description: Merkle tree inclusion proof for a Rekor entry
@@ -644,25 +653,6 @@ components:
       required:
         - mediaType
         - size
-    Signatures:
-      type: array
-      items:
-        $ref: '#/components/schemas/Signature'
-    Signature:
-      type: object
-      description: A cryptographic signature with its associated certificate chain
-      properties:
-        signature:
-          type: string
-          description: A single cryptographic signature encoded as a string
-        certificateChain:
-          type: array
-          description: The X.509 certificate chain associated with this signature
-          items:
-            type: string
-      required:
-        - signature
-        - certificateChain
     ImageMetadataResponse:
       type: object
       properties:
@@ -676,14 +666,6 @@ components:
           type: string
           description: The container image's digest (e.g., SHA256 hash)
           example: sha256:abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890
-        signatures:
-          $ref: '#/components/schemas/Signatures'
-        attestations:
-          type: array
-          description: A list of signed attestations associated with the image
-          items:
-            type: string
-            description: A single signed attestation payload or reference
       required:
         - artifact
         - metadata
@@ -801,3 +783,132 @@ components:
           description: Error message
       required:
         - error
+    CertificateRole:
+      type: string
+      enum:
+        - leaf
+        - intermediate
+        - root
+        - unknown
+    ParsedCertificate:
+      type: object
+      properties:
+        role:
+          $ref: '#/components/schemas/CertificateRole'
+        subject:
+          type: string
+        issuer:
+          type: string
+        notBefore:
+          type: string
+          format: date-time
+          description: ISO date string
+        notAfter:
+          type: string
+          format: date-time
+          description: ISO date string
+        sans:
+          type: array
+          items:
+            type: string
+        serialNumber:
+          type: string
+          nullable: true
+        isCa:
+          type: boolean
+        pem:
+          type: string
+      required:
+        - role
+        - subject
+        - issuer
+        - notBefore
+        - notAfter
+        - sans
+        - isCa
+        - pem
+    SignatureView:
+      type: object
+      properties:
+        id:
+          type: integer
+          description: Unique identifier for the signature view
+        digest:
+          type: string
+        signingCertificate:
+          $ref: '#/components/schemas/ParsedCertificate'
+        certificateChain:
+          type: array
+          items:
+            $ref: '#/components/schemas/ParsedCertificate'
+        tlogEntry:
+          type: object
+          description: Rekor transparency log entry
+          additionalProperties: true
+        rawBundleJson:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+          description: ISO-8601 timestamp
+        signatureStatus:
+          type: string
+      required:
+        - id
+        - digest
+        - signingCertificate
+        - certificateChain
+        - tlogEntry
+        - rawBundleJson
+        - signatureStatus
+    AttestationView:
+      type: object
+      properties:
+        id:
+          type: integer
+          description: Unique identifier for the signature view
+        digest:
+          type: string
+        type:
+          type: string
+        tlogEntry:
+          type: object
+          description: Rekor transparency log entry
+          additionalProperties: true
+        rawBundleJson:
+          type: string
+        rawStatementJson:
+          type: string
+        predicateType:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+          description: ISO-8601 timestamp
+        attestationStatus:
+          type: string
+      required:
+        - id
+        - digest
+        - type
+        - rawBundleJson
+        - rawStatementJson
+        - predicateType
+        - attestationStatus
+        - tlogEntry
+    ArtifactSummaryView:
+      type: object
+      properties:
+        signatureCount:
+          type: integer
+          description: Total number of signatures
+        attestationCount:
+          type: integer
+          description: Total number of attestations
+        rekorEntryCount:
+          type: integer
+          description: Total number of Rekor entries
+      required:
+        - signatureCount
+        - attestationCount
+        - rekorEntryCount
