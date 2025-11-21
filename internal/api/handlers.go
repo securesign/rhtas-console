@@ -46,7 +46,7 @@ func (h *Handler) PostApiV1ArtifactsVerify(w http.ResponseWriter, r *http.Reques
 	}
 	resp, err := h.artifactService.VerifyArtifact(req)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, resp)
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, resp)

@@ -19,13 +19,17 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/crane"
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
+	"github.com/securesign/rhtas-console/internal/models"
 	"github.com/sigstore/sigstore/pkg/signature"
 	"github.com/theupdateframework/go-tuf/v2/metadata/fetcher"
 
+	console_errors "github.com/securesign/rhtas-console/internal/errors"
 	protobundle "github.com/sigstore/protobuf-specs/gen/pb-go/bundle/v1"
 	protocommon "github.com/sigstore/protobuf-specs/gen/pb-go/common/v1"
 	protodsse "github.com/sigstore/protobuf-specs/gen/pb-go/dsse"
@@ -110,63 +114,68 @@ func NewVerifyOptions() VerifyOptions {
 		RequireCTLog:            true,
 		RequireTLog:             true,
 		ArtifactDigestAlgorithm: "sha256",
+		ExpectedOIDIssuerRegex:  ".*",
 	}
 }
 
-func VerifyArtifact(verifyOpts VerifyOptions) (details string, err error) {
-	var b *bundle.Bundle
-	var san string
+func VerifyArtifact(verifyOpts VerifyOptions) (verifyArtifactResponse models.VerifyArtifactResponse, err error) {
 
-	if verifyOpts.OCIImage != "" {
-		if verifyOpts.PredicateType != "" {
-			b, verifyOpts.ArtifactDigest, err = bundleFromOCIImageAttestation(verifyOpts.OCIImage, verifyOpts.RequireTLog, verifyOpts.RequireTimestamp, verifyOpts.PredicateType)
-		} else {
-			b, verifyOpts.ArtifactDigest, err = bundleFromOCIImage(verifyOpts.OCIImage, verifyOpts.RequireTLog, verifyOpts.RequireTimestamp)
-		}
-
-		var layer *v1.Descriptor
-		if verifyOpts.ExpectedSAN == "" {
-			if verifyOpts.PredicateType != "" {
-				layer, err = attestationLayerFromOCIImage(verifyOpts.OCIImage, verifyOpts.PredicateType)
-				if err != nil {
-					return "", fmt.Errorf("error getting attestation layer: %w", err)
-				}
-			} else {
-				layer, err = simpleSigningLayerFromOCIImage(verifyOpts.OCIImage)
-				if err != nil {
-					return "", fmt.Errorf("error getting simple signing layer: %w", err)
-				}
-			}
-
-			signingCertificate := ""
-			if certificate, ok := layer.Annotations["dev.sigstore.cosign/certificate"]; ok && certificate != "" {
-				signingCertificate = certificate
-			} else {
-				return "", errors.New("missing signing certificate annotation 'dev.sigstore.cosign/certificate'")
-			}
-			san, err = getSANFromCert(signingCertificate)
-			if err != nil {
-				return "", fmt.Errorf("error getting SAN from signing certificate: %w", err)
-			}
-			verifyOpts.ExpectedSAN = san
-		}
-	} else if verifyOpts.Bundle != nil {
-		// Load the bundle from the provided paramters
-		b, err = LoadFromMap(verifyOpts.Bundle)
-		if err != nil {
-			return "", fmt.Errorf("failed to load bundle from map: %w", err)
-		}
-	} else {
-		return "", fmt.Errorf("either OCIImage or Bundle must be provided")
-	}
-
+	// SignatureViews
+	// loop over all signing layers
+	verifyArtifactResponse = models.VerifyArtifactResponse{}
+	signingLayers, err := signingLayersFromOCIImage(verifyOpts.OCIImage)
 	if err != nil {
-		return "", err
+		return models.VerifyArtifactResponse{}, fmt.Errorf("error getting signing layers: %w", err)
 	}
 
+	signingLayerId := 0
+	for _, layer := range signingLayers {
+		details, err := VerifyAndGetSignatureView(verifyOpts, layer)
+		details.Id = signingLayerId
+		signingLayerId++
+		if err != nil {
+			return models.VerifyArtifactResponse{}, fmt.Errorf("error verifying signing layer: %w", err)
+		}
+		verifyArtifactResponse.Signatures = append(verifyArtifactResponse.Signatures, details)
+	}
+
+	// AttestationViews
+	// loop over all attestation layers
+	attestationLayers, err := attestationLayersFromOCIImage(verifyOpts.OCIImage)
+	if err != nil {
+		return models.VerifyArtifactResponse{}, fmt.Errorf("error getting attestation layers: %w", err)
+	}
+	attestationLayerId := 0
+	for _, layer := range attestationLayers {
+		details, err := VerifyAndGetAttestationView(verifyOpts, layer)
+		details.Id = attestationLayerId
+		attestationLayerId++
+		if err != nil {
+			return models.VerifyArtifactResponse{}, fmt.Errorf("error verifying signing layer: %w", err)
+		}
+		verifyArtifactResponse.Attestations = append(verifyArtifactResponse.Attestations, details)
+	}
+
+	// Summary
+	verifyArtifactResponse.Summary.SignatureCount = len(verifyArtifactResponse.Signatures)
+	verifyArtifactResponse.Summary.AttestationCount = len(verifyArtifactResponse.Attestations)
+	verifyArtifactResponse.Summary.RekorEntryCount = verifyArtifactResponse.Summary.SignatureCount + verifyArtifactResponse.Summary.AttestationCount
+
+	// ImageMetadataResponse
+	// Add artifact metadata
+	artifactMetadata, err := GetImageMetadata(verifyOpts.OCIImage, "", "")
+	if err != nil {
+		return models.VerifyArtifactResponse{}, fmt.Errorf("error getting artifact metadata: %w", err)
+	}
+	verifyArtifactResponse.Artifact = artifactMetadata
+
+	return verifyArtifactResponse, nil
+}
+
+func VerifyLayer(verifyOpts VerifyOptions, b *bundle.Bundle) (verified bool, verificationResult *verify.VerificationResult, err error) {
 	if verifyOpts.MinBundleVersion != "" {
 		if !b.MinVersion(verifyOpts.MinBundleVersion) {
-			return "", fmt.Errorf("bundle is not of minimum version %s", verifyOpts.MinBundleVersion)
+			return false, nil, fmt.Errorf("bundle is not of minimum version %s", verifyOpts.MinBundleVersion)
 		}
 	}
 
@@ -189,7 +198,7 @@ func VerifyArtifact(verifyOpts VerifyOptions) (details string, err error) {
 	if verifyOpts.TrustedPublicKey == "" {
 		certID, err := verify.NewShortCertificateIdentity(verifyOpts.ExpectedOIDIssuer, verifyOpts.ExpectedOIDIssuerRegex, verifyOpts.ExpectedSAN, verifyOpts.ExpectedSANRegex)
 		if err != nil {
-			return "", err
+			return false, nil, err
 		}
 		identityPolicies = append(identityPolicies, verify.WithCertificateIdentity(certID))
 	} else {
@@ -204,7 +213,7 @@ func VerifyArtifact(verifyOpts VerifyOptions) (details string, err error) {
 		opts.RepositoryBaseURL = verifyOpts.TUFRootURL
 		if !urlsEqual(opts.RepositoryBaseURL, TufPublicGoodInstance) {
 			if err := setOptsRoot(opts); err != nil {
-				return "", fmt.Errorf("failed to set root in options for %s: %w", verifyOpts.TUFRootURL, err)
+				return false, nil, fmt.Errorf("failed to set root in options for %s: %w", verifyOpts.TUFRootURL, err)
 			}
 		}
 		fetcher := fetcher.NewDefaultFetcher()
@@ -215,7 +224,7 @@ func VerifyArtifact(verifyOpts VerifyOptions) (details string, err error) {
 		if verifyOpts.TUFTrustedRoot != "" {
 			rb, err := os.ReadFile(verifyOpts.TUFTrustedRoot)
 			if err != nil {
-				return "", fmt.Errorf("failed to read %s: %w",
+				return false, nil, fmt.Errorf("failed to read %s: %w",
 					verifyOpts.TUFTrustedRoot, err)
 			}
 			opts.Root = rb
@@ -223,16 +232,16 @@ func VerifyArtifact(verifyOpts VerifyOptions) (details string, err error) {
 
 		client, err := tuf.New(opts)
 		if err != nil {
-			return "", err
+			return false, nil, err
 		}
 		trustedRootJSON, err = client.GetTarget("trusted_root.json")
 		if err != nil {
-			return "", err
+			return false, nil, err
 		}
 	} else if verifyOpts.TrustedRootJSONPath != "" {
 		trustedRootJSON, err = os.ReadFile(verifyOpts.TrustedRootJSONPath)
 		if err != nil {
-			return "", fmt.Errorf("failed to read %s: %w",
+			return false, nil, fmt.Errorf("failed to read %s: %w",
 				verifyOpts.TrustedRootJSONPath, err)
 		}
 	}
@@ -241,39 +250,39 @@ func VerifyArtifact(verifyOpts VerifyOptions) (details string, err error) {
 		var trustedRoot *root.TrustedRoot
 		trustedRoot, err = root.NewTrustedRootFromJSON(trustedRootJSON)
 		if err != nil {
-			return "", err
+			return false, nil, err
 		}
 		trustedMaterial = append(trustedMaterial, trustedRoot)
 	}
 	if verifyOpts.TrustedPublicKey != "" {
 		pemBytes, err := os.ReadFile(verifyOpts.TrustedPublicKey)
 		if err != nil {
-			return "", err
+			return false, nil, err
 		}
 		pemBlock, _ := pem.Decode(pemBytes)
 		if pemBlock == nil {
-			return "", errors.New("failed to decode pem block")
+			return false, nil, errors.New("failed to decode pem block")
 		}
 		pubKey, err := x509.ParsePKIXPublicKey(pemBlock.Bytes)
 		if err != nil {
-			return "", err
+			return false, nil, err
 		}
 		trustedMaterial = append(trustedMaterial, trustedPublicKeyMaterial(pubKey))
 	}
 
 	if len(trustedMaterial) == 0 {
-		return "", errors.New("no trusted material provided")
+		return false, nil, errors.New("no trusted material provided")
 	}
 
 	sev, err := verify.NewVerifier(trustedMaterial, verifierConfig...)
 	if err != nil {
-		return "", err
+		return false, nil, err
 	}
 
 	if verifyOpts.ArtifactDigest != "" { //nolint:gocritic
 		artifactDigestBytes, err := hex.DecodeString(verifyOpts.ArtifactDigest)
 		if err != nil {
-			return "", err
+			return false, nil, err
 		}
 		artifactPolicy = verify.WithArtifactDigest(verifyOpts.ArtifactDigestAlgorithm, artifactDigestBytes)
 	} else {
@@ -281,44 +290,310 @@ func VerifyArtifact(verifyOpts VerifyOptions) (details string, err error) {
 		fmt.Fprintf(os.Stderr, "No artifact provided, skipping artifact verification. This is unsafe!\n")
 	}
 
-	res, err := sev.Verify(b, verify.NewPolicy(artifactPolicy, identityPolicies...))
+	verificationResult, err = sev.Verify(b, verify.NewPolicy(artifactPolicy, identityPolicies...))
 	if err != nil {
-		return "", err
+		return false, nil, err
 	}
-
-	tlogEntries := b.VerificationMaterial.TlogEntries
-	resultMap := make(map[string]interface{})
-	resultBytes, err := json.Marshal(res)
-	if err != nil {
-		return "", fmt.Errorf("failed to marshal verifier result: %w", err)
-	}
-
-	if err := json.Unmarshal(resultBytes, &resultMap); err != nil {
-		return "", fmt.Errorf("failed to unmarshal verifier result: %w", err)
-	}
-
-	resultMap["tlogEntries"] = tlogEntries
-	marshaled, err := json.MarshalIndent(resultMap, "", "   ")
-	if err != nil {
-		return "", err
-	}
-	fmt.Fprintf(os.Stderr, "Verification successful!\n")
-	return string(marshaled), nil
+	return true, verificationResult, nil
 }
 
-func LoadFromMap(m map[string]interface{}) (*bundle.Bundle, error) {
-	data, err := json.Marshal(m)
+func VerifyAndGetSignatureView(verifyOpts VerifyOptions, layer *v1.Descriptor) (signatureView models.SignatureView, err error) {
+	var b *bundle.Bundle
+	invalidSignatureView := models.SignatureView{SignatureStatus: "invalid"}
+
+	b, verifyOpts.ArtifactDigest, err = bundleFromSigningLayer(layer, verifyOpts.RequireTLog, verifyOpts.RequireTimestamp)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal map to JSON: %w", err)
+		return invalidSignatureView, fmt.Errorf("failed to extract bundle from signing layer %w", err)
 	}
 
-	var b bundle.Bundle
-	b.Bundle = new(protobundle.Bundle)
-	if err := b.UnmarshalJSON(data); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal JSON into bundle: %w", err)
+	signatureView, err = extractSignatureViewFromLayer(layer, b)
+	if err != nil {
+		return invalidSignatureView, fmt.Errorf("failed to extract SignatureView from layer %w", err)
 	}
 
-	return &b, nil
+	if len(signatureView.SigningCertificate.Sans) == 0 {
+		return invalidSignatureView, fmt.Errorf("signing certificate contains no SANs")
+	}
+	verifyOpts.ExpectedSAN = signatureView.SigningCertificate.Sans[0]
+
+	verified, _, err := VerifyLayer(verifyOpts, b)
+	if err != nil && !verified {
+		return invalidSignatureView, fmt.Errorf("failed to verify signing layer: %w", err)
+	}
+
+	signatureView.SignatureStatus = "Verified"
+	return signatureView, nil
+}
+
+func VerifyAndGetAttestationView(verifyOpts VerifyOptions, layer *v1.Descriptor) (attestationView models.AttestationView, err error) {
+	var b *bundle.Bundle
+	invalidAttestationView := models.AttestationView{AttestationStatus: "invalid"}
+
+	b, verifyOpts.ArtifactDigest, err = bundleFromAttestationLayer(verifyOpts.OCIImage, layer, verifyOpts.RequireTLog, verifyOpts.RequireTimestamp)
+	if err != nil {
+		return invalidAttestationView, fmt.Errorf("failed to get bundle from attestation layer: %w", err)
+	}
+
+	attestationView, err = extractAttestationViewFromLayer(layer, b)
+	if err != nil {
+		return invalidAttestationView, fmt.Errorf("failed to extract AttestationView from layer: %w", err)
+	}
+	// Get SAN from attestation signing certificate
+	signingCertificate := ""
+	if certificate, ok := layer.Annotations["dev.sigstore.cosign/certificate"]; ok && certificate != "" {
+		signingCertificate = certificate
+	} else {
+		return invalidAttestationView, errors.New("missing signing certificate annotation 'dev.sigstore.cosign/certificate'")
+	}
+	san, err := getSANFromCert(signingCertificate)
+	if err != nil {
+		return invalidAttestationView, fmt.Errorf("error getting SAN from signing certificate: %w", err)
+	}
+	verifyOpts.ExpectedSAN = san
+
+	verified, verificationResult, err := VerifyLayer(verifyOpts, b)
+	if err != nil && !verified {
+		return invalidAttestationView, fmt.Errorf("failed to verify attestation layer: %w", err)
+	}
+
+	// Add remaining fields
+	attestationView.PredicateType = verificationResult.Statement.PredicateType
+	attestationView.Type = verificationResult.Statement.Type
+	statementBytes, err := json.MarshalIndent(verificationResult.Statement, "", "  ")
+	if err != nil {
+		return models.AttestationView{}, fmt.Errorf("failed to marshal statement: %w", err)
+	}
+
+	attestationView.RawStatementJson = string(statementBytes)
+	attestationView.AttestationStatus = "Verified"
+
+	return attestationView, nil
+}
+
+// GetImageMetadata return the OCI image metadata
+func GetImageMetadata(image string, username string, password string) (models.ImageMetadataResponse, error) {
+	ref, err := name.ParseReference(image)
+	if err != nil {
+		return models.ImageMetadataResponse{}, fmt.Errorf("invalid image URI: %w", err)
+	}
+
+	auth := authn.Anonymous
+	if username != "" && password != "" {
+		auth = &authn.Basic{Username: username, Password: password}
+	}
+
+	opts := []remote.Option{remote.WithAuth(auth)}
+
+	descriptor, err := remote.Get(ref, opts...)
+	if err != nil {
+		if isNotFound(err) {
+			return models.ImageMetadataResponse{}, fmt.Errorf("%w: %v", console_errors.ErrImageNotFound, err)
+
+		} else if isAuthError(err) {
+			return models.ImageMetadataResponse{}, fmt.Errorf("%w: %v", console_errors.ErrArtifactAuthFailed, err)
+
+		} else if isConnectionError(err) {
+			return models.ImageMetadataResponse{}, fmt.Errorf("%w: %v", console_errors.ErrArtifactConnectionRefused, err)
+
+		} else {
+			return models.ImageMetadataResponse{}, fmt.Errorf("%w: %v", console_errors.ErrFetchImageMetadataFailed, err)
+		}
+	}
+
+	// Fetch digest
+	img, err := remote.Image(ref, opts...)
+	if err != nil {
+		return models.ImageMetadataResponse{}, fmt.Errorf("%w: %v", console_errors.ErrArtifactFailedToFetchImage, err)
+	}
+	digest, err := img.Digest()
+	if err != nil {
+		return models.ImageMetadataResponse{}, fmt.Errorf("%w: %v", console_errors.ErrArtifactFailedToComputeDigest, err)
+	}
+
+	// Extract config metadata
+	configFile, err := img.ConfigFile()
+	if err != nil {
+		return models.ImageMetadataResponse{}, fmt.Errorf("%w: %v", console_errors.ErrArtifactFailedToFetchConfig, err)
+	}
+
+	var createdTime *time.Time
+	if !configFile.Created.IsZero() {
+		createdTime = &configFile.Created.Time
+	}
+
+	labels := configFile.Config.Labels
+	if len(labels) == 0 {
+		labels = nil
+	}
+
+	response := models.ImageMetadataResponse{
+		Image: &image,
+		Metadata: models.Metadata{
+			MediaType: string(descriptor.MediaType),
+			Size:      descriptor.Size,
+			Created:   createdTime,
+			Labels:    &labels,
+		},
+		Digest: digest.String(),
+	}
+	return response, nil
+}
+
+// extractSignatureViewFromLayer extracts the SignatureView from signing layer
+func extractSignatureViewFromLayer(layer *v1.Descriptor, b *bundle.Bundle) (signatureView models.SignatureView, err error) {
+
+	if b == nil {
+		return models.SignatureView{}, fmt.Errorf("empty bundle")
+	}
+
+	certChain := ""
+	if chain, ok := layer.Annotations["dev.sigstore.cosign/chain"]; ok && chain != "" {
+		certChain = chain
+	}
+
+	var parsedCerts []models.ParsedCertificate
+
+	if certChain != "" {
+		chainCerts, err := parsePEMCertificates(certChain)
+		if err != nil {
+			return models.SignatureView{}, fmt.Errorf("failed parsing certificate chain: %w", err)
+		}
+
+		for _, c := range chainCerts {
+			sn := c.Cert.SerialNumber.String()
+			role := identifyCertRole(c.Cert)
+			sanList := mergeSANs(c.Cert)
+			pc := models.ParsedCertificate{
+				Role:         role,
+				Subject:      c.Cert.Subject.String(),
+				Issuer:       c.Cert.Issuer.String(),
+				NotBefore:    c.Cert.NotBefore.UTC(),
+				NotAfter:     c.Cert.NotAfter.UTC(),
+				Sans:         sanList,
+				SerialNumber: &sn,
+				IsCa:         c.Cert.IsCA,
+				Pem:          c.PEM,
+			}
+
+			parsedCerts = append(parsedCerts, pc)
+		}
+	}
+
+	// SigningCertificate
+	var signingCertStr string
+	if cert, ok := layer.Annotations["dev.sigstore.cosign/certificate"]; ok && cert != "" {
+		signingCertStr = cert
+	}
+
+	certs, err := parsePEMCertificates(signingCertStr)
+	if err != nil {
+		return models.SignatureView{}, fmt.Errorf("failed parsing signing certificate: %w", err)
+	}
+	if len(certs) == 0 {
+		return models.SignatureView{}, fmt.Errorf("no signing certificate found in annotations")
+	}
+	c := certs[0]
+	sanList := mergeSANs(c.Cert)
+	sn := c.Cert.SerialNumber.String()
+	parsedSigningCert := models.ParsedCertificate{
+		Role:         "leaf",
+		Subject:      c.Cert.Subject.String(),
+		Issuer:       c.Cert.Issuer.String(),
+		NotBefore:    c.Cert.NotBefore.UTC(),
+		NotAfter:     c.Cert.NotAfter.UTC(),
+		Sans:         sanList,
+		SerialNumber: &sn,
+		IsCa:         c.Cert.IsCA,
+		Pem:          c.PEM,
+	}
+
+	// Rekor entries
+	tlogEntries := b.VerificationMaterial.TlogEntries
+	var tlogMap map[string]interface{}
+	if len(tlogEntries) > 0 && tlogEntries[0] != nil {
+		raw, err := json.Marshal(tlogEntries[0])
+		if err != nil {
+			return models.SignatureView{}, fmt.Errorf("failed to marshal tlog entry: %w", err)
+		}
+		if err := json.Unmarshal(raw, &tlogMap); err != nil {
+			return models.SignatureView{}, fmt.Errorf("failed to unmarshal tlog entry: %w", err)
+		}
+	} else {
+		return models.SignatureView{}, fmt.Errorf("bundle contains no Rekor entries")
+	}
+
+	var rawBundle string
+	if b != nil {
+		jb, err := json.MarshalIndent(b, "", "  ")
+		if err != nil {
+			return models.SignatureView{}, fmt.Errorf("failed to marshal bundle: %w", err)
+		}
+		rawBundle = string(jb)
+	}
+
+	var isoTime *time.Time
+	t := time.Unix(tlogEntries[0].IntegratedTime, 0).UTC()
+	isoTime = &t
+
+	digestStr := layer.Digest.String()
+	signatureView = models.SignatureView{
+		Digest:             digestStr,
+		CertificateChain:   parsedCerts,
+		SigningCertificate: parsedSigningCert,
+		TlogEntry:          tlogMap,
+		RawBundleJson:      rawBundle,
+		Timestamp:          isoTime,
+	}
+
+	return signatureView, nil
+}
+
+// extractAttestationViewFromLayer extracts the AttestationView from attestation layer
+func extractAttestationViewFromLayer(layer *v1.Descriptor, b *bundle.Bundle) (attestationView models.AttestationView, err error) {
+
+	if b == nil {
+		return models.AttestationView{}, fmt.Errorf("empty bundle")
+	}
+
+	// Tlog entry
+	tlogEntries := b.VerificationMaterial.TlogEntries
+	var tlogMap map[string]interface{}
+	if len(tlogEntries) > 0 && tlogEntries[0] != nil {
+		raw, err := json.Marshal(tlogEntries[0])
+		if err != nil {
+			return models.AttestationView{}, fmt.Errorf("failed to marshal tlog entry: %w", err)
+		}
+		if err := json.Unmarshal(raw, &tlogMap); err != nil {
+			return models.AttestationView{}, fmt.Errorf("failed to unmarshal tlog entry: %w", err)
+		}
+	} else {
+		return models.AttestationView{}, fmt.Errorf("bundle contains no Rekor entries")
+	}
+
+	// Raw bunle
+	var rawBundle string
+	if b != nil {
+		jb, err := json.MarshalIndent(b, "", "  ")
+		if err != nil {
+			return models.AttestationView{}, fmt.Errorf("failed to marshal bundle: %w", err)
+		}
+		rawBundle = string(jb)
+	}
+
+	// Timestamp
+	var isoTime *time.Time
+	t := time.Unix(tlogEntries[0].IntegratedTime, 0).UTC()
+	isoTime = &t
+
+	digestStr := layer.Digest.String()
+	attestationView = models.AttestationView{
+		Digest:        digestStr,
+		TlogEntry:     tlogMap,
+		RawBundleJson: rawBundle,
+		Timestamp:     isoTime,
+	}
+
+	return attestationView, nil
 }
 
 type nonExpiringVerifier struct {
@@ -343,24 +618,19 @@ func trustedPublicKeyMaterial(pk crypto.PublicKey) *root.TrustedPublicKeyMateria
 	})
 }
 
-// bundleFromOCIImage returns a Bundle based on OCI image reference.
-func bundleFromOCIImage(imageRef string, hasTlog, hasTimestamp bool) (*bundle.Bundle, string, error) {
-	// 1. Get the simple signing layer
-	simpleSigning, err := simpleSigningLayerFromOCIImage(imageRef)
-	if err != nil {
-		return nil, "", fmt.Errorf("error getting simple signing layer: %w", err)
-	}
-	// 2. Build the verification material for the bundle
-	verificationMaterial, err := getBundleVerificationMaterial(simpleSigning, hasTlog, hasTimestamp)
+// bundleFromSigningLayer returns a Bundle based on signing layer (based on OCI image reference)
+func bundleFromSigningLayer(layer *v1.Descriptor, hasTlog, hasTimestamp bool) (*bundle.Bundle, string, error) {
+	// 1. Build the verification material for the bundle
+	verificationMaterial, err := getBundleVerificationMaterial(layer, hasTlog, hasTimestamp)
 	if err != nil {
 		return nil, "", fmt.Errorf("error getting verification material: %w", err)
 	}
-	// 3. Build the message signature for the bundle
-	msgSignature, err := getBundleMsgSignature(simpleSigning)
+	// 2. Build the message signature for the bundle
+	msgSignature, err := getBundleMsgSignature(layer)
 	if err != nil {
 		return nil, "", fmt.Errorf("error getting message signature: %w", err)
 	}
-	// 4. Construct and verify the bundle
+	// 3. Construct and verify the bundle
 	bundleMediaType, err := bundle.MediaTypeString("0.1")
 	if err != nil {
 		return nil, "", fmt.Errorf("error getting bundle media type: %w", err)
@@ -374,12 +644,12 @@ func bundleFromOCIImage(imageRef string, hasTlog, hasTimestamp bool) (*bundle.Bu
 	if err != nil {
 		return nil, "", fmt.Errorf("error creating bundle: %w", err)
 	}
-	// 5. Return the bundle and the digest of the simple signing layer (this is what is signed)
-	return bun, simpleSigning.Digest.Hex, nil
+	// 4. Return the bundle and the digest of the simple signing layer (this is what is signed)
+	return bun, layer.Digest.Hex, nil
 }
 
-// simpleSigningLayerFromOCIImage returns the simple signing layer from the OCI image reference
-func simpleSigningLayerFromOCIImage(imageRef string) (*v1.Descriptor, error) {
+// signingLayersFromOCIImage returns the signing layers from the OCI image reference
+func signingLayersFromOCIImage(imageRef string) ([]*v1.Descriptor, error) {
 	// 1. Get the image reference
 	ref, err := name.ParseReference(imageRef)
 	if err != nil {
@@ -401,8 +671,18 @@ func simpleSigningLayerFromOCIImage(imageRef string) (*v1.Descriptor, error) {
 	// 5. Get the manifest of the signature
 	mf, err := crane.Manifest(sigTag.Name())
 	if err != nil {
+		// --- Detect "manifest unknown" and return empty signatures ---
+		var terr *transport.Error
+		if errors.As(err, &terr) {
+			if terr.StatusCode == 404 || terr.Errors[0].Code == transport.ManifestUnknownErrorCode {
+				// No signature exists: not an error
+				return []*v1.Descriptor{}, nil
+			}
+		}
+
 		return nil, fmt.Errorf("error getting signature manifest: %w", err)
 	}
+
 	sigManifest, err := v1.ParseManifest(bytes.NewReader(mf))
 	if err != nil {
 		return nil, fmt.Errorf("error parsing signature manifest: %w", err)
@@ -411,8 +691,14 @@ func simpleSigningLayerFromOCIImage(imageRef string) (*v1.Descriptor, error) {
 	if len(sigManifest.Layers) == 0 || sigManifest.Layers[0].MediaType != "application/vnd.dev.cosign.simplesigning.v1+json" {
 		return nil, fmt.Errorf("no suitable layers found in signature manifest")
 	}
-	// 7. Return the layer - most probably there are more layers (one for each signature) but verifying one is enough
-	return &sigManifest.Layers[0], nil
+	// 7. Convert []Descriptor to []*Descriptor
+	layers := make([]*v1.Descriptor, 0, len(sigManifest.Layers))
+	for i := range sigManifest.Layers {
+		d := sigManifest.Layers[i]
+		layers = append(layers, &d)
+	}
+	// 8. Return the layers
+	return layers, nil
 }
 
 // getBundleVerificationMaterial returns the bundle verification material from the simple signing layer
@@ -651,12 +937,8 @@ func urlsEqual(a, b string) bool {
 	return err1 == nil && err2 == nil && ua.String() == ub.String()
 }
 
-// bundleFromOCIImageAttestation returns a Bundle for attestation verification
-func bundleFromOCIImageAttestation(imageRef string, hasTlog, hasTimestamp bool, predicateType string) (*bundle.Bundle, string, error) {
-	attestationLayer, err := attestationLayerFromOCIImage(imageRef, predicateType)
-	if err != nil {
-		return nil, "", fmt.Errorf("error getting attestation layer: %w", err)
-	}
+// bundleFromAttestationLayer returns a Bundle for attestation layer
+func bundleFromAttestationLayer(imageRef string, attestationLayer *v1.Descriptor, hasTlog, hasTimestamp bool) (*bundle.Bundle, string, error) {
 
 	verificationMaterial, err := getBundleVerificationMaterial(attestationLayer, hasTlog, hasTimestamp)
 	if err != nil {
@@ -699,8 +981,8 @@ func bundleFromOCIImageAttestation(imageRef string, hasTlog, hasTimestamp bool, 
 	return bun, subjectDigest, nil
 }
 
-// attestationLayerFromOCIImage returns the attestation layer from the OCI image reference
-func attestationLayerFromOCIImage(imageRef string, predicateType string) (*v1.Descriptor, error) {
+// attestationLayersFromOCIImage returns the attestation layer from signing layer
+func attestationLayersFromOCIImage(imageRef string) ([]*v1.Descriptor, error) {
 	ref, err := name.ParseReference(imageRef)
 	if err != nil {
 		return nil, fmt.Errorf("error parsing image reference: %w", err)
@@ -723,6 +1005,15 @@ func attestationLayerFromOCIImage(imageRef string, predicateType string) (*v1.De
 	// Get the manifest of the attestation
 	mf, err := crane.Manifest(attTag.Name())
 	if err != nil {
+		// --- Detect "manifest unknown" and return empty list ---
+		var terr *transport.Error
+		if errors.As(err, &terr) {
+			if terr.StatusCode == 404 || terr.Errors[0].Code == transport.ManifestUnknownErrorCode {
+				// No attestation exists: not an error
+				return []*v1.Descriptor{}, nil
+			}
+		}
+
 		return nil, fmt.Errorf("error getting attestation manifest: %w", err)
 	}
 
@@ -736,16 +1027,20 @@ func attestationLayerFromOCIImage(imageRef string, predicateType string) (*v1.De
 		return nil, fmt.Errorf("no layers found in attestation manifest")
 	}
 
-	// Look for DSSE attestation layer with the specified predicate type
-	for _, layer := range attManifest.Layers {
+	// Look for only DSSE attestation layer (only supported layers)
+	layers := []*v1.Descriptor{}
+	for i := range attManifest.Layers {
+		layer := &attManifest.Layers[i]
 		if layer.MediaType == "application/vnd.dsse.envelope.v1+json" {
-			if layer.Annotations["predicateType"] == predicateType {
-				return &layer, nil
-			}
+			layers = append(layers, layer)
 		}
 	}
 
-	return nil, fmt.Errorf("no DSSE attestation layer found in manifest")
+	if len(layers) == 0 {
+		return nil, fmt.Errorf("no DSSE attestation layers found")
+	}
+
+	return layers, nil
 }
 
 // getBundleDSSEEnvelope returns the bundle DSSE envelope from the attestation layer
@@ -878,4 +1173,115 @@ func getSANFromCert(cert string) (san string, err error) {
 	}
 
 	return "", errors.New("certificate does not contain a supported SAN (URI or Email)")
+}
+
+// isNotFound checks if the error indicates the image was not found
+func isNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "not found") ||
+		strings.Contains(strings.ToLower(err.Error()), "404") ||
+		strings.Contains(strings.ToLower(err.Error()), "name unknown")
+}
+
+// isAuthError checks if the error indicates an authentication failure
+func isAuthError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "unauthorized") ||
+		strings.Contains(strings.ToLower(err.Error()), "401") ||
+		strings.Contains(strings.ToLower(err.Error()), "authentication required")
+}
+
+// isConnectionError checks if the connection failed
+func isConnectionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "connection refused")
+}
+
+// CertWithPEM holds a parsed certificate and the original PEM block.
+type CertWithPEM struct {
+	Cert *x509.Certificate
+	PEM  string
+}
+
+// parsePEMCertificates parses one or more PEM certificates from a string and returns a slice of parsed certificates along with their PEMs.
+func parsePEMCertificates(pemData string) ([]CertWithPEM, error) {
+	var result []CertWithPEM
+	data := []byte(pemData)
+	for len(data) > 0 {
+		block, rest := pem.Decode(data)
+		if block == nil {
+			break
+		}
+		certPEM := pem.EncodeToMemory(block)
+		if certPEM == nil {
+			data = rest
+			continue
+		}
+		cert, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse certificate: %w", err)
+		}
+		result = append(result, CertWithPEM{
+			Cert: cert,
+			PEM:  string(certPEM),
+		})
+		data = rest
+	}
+	return result, nil
+}
+
+// identifyCertRole classifies a certificate as leaf, intermediate, root, or unknown.
+func identifyCertRole(cert *x509.Certificate) models.CertificateRole {
+	if cert == nil {
+		return models.Unknown
+	}
+
+	// Leaf certificate: not a CA
+	if !cert.IsCA {
+		return models.Leaf
+	}
+
+	// Check for self-signed: subject == issuer
+	isSelfSigned := bytes.Equal(cert.RawSubject, cert.RawIssuer)
+
+	// Verify signature with its own public key
+	if isSelfSigned {
+		if err := cert.CheckSignatureFrom(cert); err != nil {
+			isSelfSigned = false
+		}
+	}
+
+	if isSelfSigned {
+		return models.Root
+	}
+
+	// CA but not self-signed
+	return models.Intermediate
+}
+
+// mergeSANs returns a combined list of all SAN entries from the certificate.
+func mergeSANs(cert *x509.Certificate) []string {
+	var out []string
+	// DNS Names
+	out = append(out, cert.DNSNames...)
+	// Email Addresses
+	out = append(out, cert.EmailAddresses...)
+	// IP Addresses
+	for _, ip := range cert.IPAddresses {
+		out = append(out, ip.String())
+	}
+	// URIs
+	for _, uri := range cert.URIs {
+		out = append(out, uri.String())
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
