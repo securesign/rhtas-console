@@ -336,7 +336,7 @@ func VerifyAndGetSignatureView(verifyOpts VerifyOptions, layer *v1.Descriptor) (
 		return invalidSignatureView, []models.ArtifactIdentity{}, fmt.Errorf("failed to verify signing layer: %w", err)
 	}
 
-	signatureView.SignatureStatus = "Verified"
+	signatureView.SignatureStatus = "verified"
 	return signatureView, identities, nil
 }
 
@@ -380,7 +380,7 @@ func VerifyAndGetAttestationView(verifyOpts VerifyOptions, layer *v1.Descriptor)
 	}
 
 	attestationView.RawStatementJson = string(statementBytes)
-	attestationView.AttestationStatus = "Verified"
+	attestationView.AttestationStatus = "verified"
 
 	return attestationView, identities, nil
 }
