@@ -899,6 +899,10 @@ components:
     ArtifactSummaryView:
       type: object
       properties:
+        identities:
+          type: array
+          items:
+            $ref: '#/components/schemas/ArtifactIdentity'
         signatureCount:
           type: integer
           description: Total number of signatures
@@ -908,7 +912,51 @@ components:
         rekorEntryCount:
           type: integer
           description: Total number of Rekor entries
+        timeCoherence:
+          $ref: '#/components/schemas/TimeCoherenceSummary'
       required:
+        - identities
         - signatureCount
         - attestationCount
         - rekorEntryCount
+    ArtifactIdentitySource:
+      type: string
+      enum:
+        - san
+        - issuer
+        - other
+    ArtifactIdentity:
+      type: object
+      properties:
+        id:
+          type: integer
+          description: Unique identifier for the signature view
+        type:
+          type: string
+        value:
+          type: string
+        issuer:
+          type: string
+        source:
+          $ref: '#/components/schemas/ArtifactIdentitySource'
+      required:
+        - id
+        - type
+        - value
+        - source
+    TimeCoherenceSummary:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: ["ok", "warning", "error", "unknown"]
+        minIntegratedTime:
+          type: string
+          format: date-time
+          nullable: true
+        maxIntegratedTime:
+          type: string
+          format: date-time
+          nullable: true
+      required:
+        - status

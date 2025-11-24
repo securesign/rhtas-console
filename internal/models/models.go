@@ -17,13 +17,41 @@ const (
 	BasicAuthScopes = "basicAuth.Scopes"
 )
 
+// Defines values for ArtifactIdentitySource.
+const (
+	Issuer ArtifactIdentitySource = "issuer"
+	Other  ArtifactIdentitySource = "other"
+	San    ArtifactIdentitySource = "san"
+)
+
 // Defines values for CertificateRole.
 const (
-	Intermediate CertificateRole = "intermediate"
-	Leaf         CertificateRole = "leaf"
-	Root         CertificateRole = "root"
-	Unknown      CertificateRole = "unknown"
+	CertificateRoleIntermediate CertificateRole = "intermediate"
+	CertificateRoleLeaf         CertificateRole = "leaf"
+	CertificateRoleRoot         CertificateRole = "root"
+	CertificateRoleUnknown      CertificateRole = "unknown"
 )
+
+// Defines values for TimeCoherenceSummaryStatus.
+const (
+	TimeCoherenceSummaryStatusError   TimeCoherenceSummaryStatus = "error"
+	TimeCoherenceSummaryStatusOk      TimeCoherenceSummaryStatus = "ok"
+	TimeCoherenceSummaryStatusUnknown TimeCoherenceSummaryStatus = "unknown"
+	TimeCoherenceSummaryStatusWarning TimeCoherenceSummaryStatus = "warning"
+)
+
+// ArtifactIdentity defines model for ArtifactIdentity.
+type ArtifactIdentity struct {
+	// Id Unique identifier for the signature view
+	Id     int                    `json:"id"`
+	Issuer *string                `json:"issuer,omitempty"`
+	Source ArtifactIdentitySource `json:"source"`
+	Type   string                 `json:"type"`
+	Value  string                 `json:"value"`
+}
+
+// ArtifactIdentitySource defines model for ArtifactIdentitySource.
+type ArtifactIdentitySource string
 
 // ArtifactPolicies defines model for ArtifactPolicies.
 type ArtifactPolicies struct {
@@ -57,13 +85,15 @@ type ArtifactPolicies struct {
 // ArtifactSummaryView defines model for ArtifactSummaryView.
 type ArtifactSummaryView struct {
 	// AttestationCount Total number of attestations
-	AttestationCount int `json:"attestationCount"`
+	AttestationCount int                `json:"attestationCount"`
+	Identities       []ArtifactIdentity `json:"identities"`
 
 	// RekorEntryCount Total number of Rekor entries
 	RekorEntryCount int `json:"rekorEntryCount"`
 
 	// SignatureCount Total number of signatures
-	SignatureCount int `json:"signatureCount"`
+	SignatureCount int                   `json:"signatureCount"`
+	TimeCoherence  *TimeCoherenceSummary `json:"timeCoherence,omitempty"`
 }
 
 // AttestationView defines model for AttestationView.
@@ -274,6 +304,16 @@ type TargetInfo struct {
 type TargetsList struct {
 	Data []TargetInfo `json:"data"`
 }
+
+// TimeCoherenceSummary defines model for TimeCoherenceSummary.
+type TimeCoherenceSummary struct {
+	MaxIntegratedTime *time.Time                 `json:"maxIntegratedTime"`
+	MinIntegratedTime *time.Time                 `json:"minIntegratedTime"`
+	Status            TimeCoherenceSummaryStatus `json:"status"`
+}
+
+// TimeCoherenceSummaryStatus defines model for TimeCoherenceSummary.Status.
+type TimeCoherenceSummaryStatus string
 
 // TrustConfig defines model for TrustConfig.
 type TrustConfig struct {

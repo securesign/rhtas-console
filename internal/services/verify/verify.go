@@ -13,9 +13,12 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -129,14 +132,16 @@ func VerifyArtifact(verifyOpts VerifyOptions) (verifyArtifactResponse models.Ver
 	}
 
 	signingLayerId := 0
+	var signingIdentities []models.ArtifactIdentity
+	var sigDetails models.SignatureView
 	for _, layer := range signingLayers {
-		details, err := VerifyAndGetSignatureView(verifyOpts, layer)
-		details.Id = signingLayerId
+		sigDetails, signingIdentities, err = VerifyAndGetSignatureView(verifyOpts, layer)
+		sigDetails.Id = signingLayerId
 		signingLayerId++
 		if err != nil {
 			return models.VerifyArtifactResponse{}, fmt.Errorf("error verifying signing layer: %w", err)
 		}
-		verifyArtifactResponse.Signatures = append(verifyArtifactResponse.Signatures, details)
+		verifyArtifactResponse.Signatures = append(verifyArtifactResponse.Signatures, sigDetails)
 	}
 
 	// AttestationViews
@@ -146,14 +151,16 @@ func VerifyArtifact(verifyOpts VerifyOptions) (verifyArtifactResponse models.Ver
 		return models.VerifyArtifactResponse{}, fmt.Errorf("error getting attestation layers: %w", err)
 	}
 	attestationLayerId := 0
+	var attestationIdentities []models.ArtifactIdentity
+	var attDetails models.AttestationView
 	for _, layer := range attestationLayers {
-		details, err := VerifyAndGetAttestationView(verifyOpts, layer)
-		details.Id = attestationLayerId
+		attDetails, attestationIdentities, err = VerifyAndGetAttestationView(verifyOpts, layer)
+		attDetails.Id = attestationLayerId
 		attestationLayerId++
 		if err != nil {
 			return models.VerifyArtifactResponse{}, fmt.Errorf("error verifying signing layer: %w", err)
 		}
-		verifyArtifactResponse.Attestations = append(verifyArtifactResponse.Attestations, details)
+		verifyArtifactResponse.Attestations = append(verifyArtifactResponse.Attestations, attDetails)
 	}
 
 	// Summary
@@ -168,6 +175,14 @@ func VerifyArtifact(verifyOpts VerifyOptions) (verifyArtifactResponse models.Ver
 		return models.VerifyArtifactResponse{}, fmt.Errorf("error getting artifact metadata: %w", err)
 	}
 	verifyArtifactResponse.Artifact = artifactMetadata
+
+	// Identities
+	identities := append(signingIdentities, attestationIdentities...)
+	verifyArtifactResponse.Summary.Identities = dedupeIdentities(identities)
+
+	// TimeCoherenceSummary
+	timeCoherenceSummary := ComputeTimeCoherenceSummary(verifyArtifactResponse)
+	verifyArtifactResponse.Summary.TimeCoherence = &timeCoherenceSummary
 
 	return verifyArtifactResponse, nil
 }
@@ -297,63 +312,63 @@ func VerifyLayer(verifyOpts VerifyOptions, b *bundle.Bundle) (verified bool, ver
 	return true, verificationResult, nil
 }
 
-func VerifyAndGetSignatureView(verifyOpts VerifyOptions, layer *v1.Descriptor) (signatureView models.SignatureView, err error) {
+func VerifyAndGetSignatureView(verifyOpts VerifyOptions, layer *v1.Descriptor) (signatureView models.SignatureView, identities []models.ArtifactIdentity, err error) {
 	var b *bundle.Bundle
 	invalidSignatureView := models.SignatureView{SignatureStatus: "invalid"}
 
 	b, verifyOpts.ArtifactDigest, err = bundleFromSigningLayer(layer, verifyOpts.RequireTLog, verifyOpts.RequireTimestamp)
 	if err != nil {
-		return invalidSignatureView, fmt.Errorf("failed to extract bundle from signing layer %w", err)
+		return invalidSignatureView, []models.ArtifactIdentity{}, fmt.Errorf("failed to extract bundle from signing layer %w", err)
 	}
 
-	signatureView, err = extractSignatureViewFromLayer(layer, b)
+	signatureView, identities, err = extractSignatureViewFromLayer(layer, b)
 	if err != nil {
-		return invalidSignatureView, fmt.Errorf("failed to extract SignatureView from layer %w", err)
+		return invalidSignatureView, []models.ArtifactIdentity{}, fmt.Errorf("failed to extract SignatureView from layer %w", err)
 	}
 
 	if len(signatureView.SigningCertificate.Sans) == 0 {
-		return invalidSignatureView, fmt.Errorf("signing certificate contains no SANs")
+		return invalidSignatureView, []models.ArtifactIdentity{}, fmt.Errorf("signing certificate contains no SANs")
 	}
 	verifyOpts.ExpectedSAN = signatureView.SigningCertificate.Sans[0]
 
 	verified, _, err := VerifyLayer(verifyOpts, b)
 	if err != nil && !verified {
-		return invalidSignatureView, fmt.Errorf("failed to verify signing layer: %w", err)
+		return invalidSignatureView, []models.ArtifactIdentity{}, fmt.Errorf("failed to verify signing layer: %w", err)
 	}
 
 	signatureView.SignatureStatus = "Verified"
-	return signatureView, nil
+	return signatureView, identities, nil
 }
 
-func VerifyAndGetAttestationView(verifyOpts VerifyOptions, layer *v1.Descriptor) (attestationView models.AttestationView, err error) {
+func VerifyAndGetAttestationView(verifyOpts VerifyOptions, layer *v1.Descriptor) (attestationView models.AttestationView, identities []models.ArtifactIdentity, err error) {
 	var b *bundle.Bundle
 	invalidAttestationView := models.AttestationView{AttestationStatus: "invalid"}
 
 	b, verifyOpts.ArtifactDigest, err = bundleFromAttestationLayer(verifyOpts.OCIImage, layer, verifyOpts.RequireTLog, verifyOpts.RequireTimestamp)
 	if err != nil {
-		return invalidAttestationView, fmt.Errorf("failed to get bundle from attestation layer: %w", err)
+		return invalidAttestationView, []models.ArtifactIdentity{}, fmt.Errorf("failed to get bundle from attestation layer: %w", err)
 	}
 
-	attestationView, err = extractAttestationViewFromLayer(layer, b)
+	attestationView, identities, err = extractAttestationViewFromLayer(layer, b)
 	if err != nil {
-		return invalidAttestationView, fmt.Errorf("failed to extract AttestationView from layer: %w", err)
+		return invalidAttestationView, []models.ArtifactIdentity{}, fmt.Errorf("failed to extract AttestationView from layer: %w", err)
 	}
 	// Get SAN from attestation signing certificate
 	signingCertificate := ""
 	if certificate, ok := layer.Annotations["dev.sigstore.cosign/certificate"]; ok && certificate != "" {
 		signingCertificate = certificate
 	} else {
-		return invalidAttestationView, errors.New("missing signing certificate annotation 'dev.sigstore.cosign/certificate'")
+		return invalidAttestationView, []models.ArtifactIdentity{}, errors.New("missing signing certificate annotation 'dev.sigstore.cosign/certificate'")
 	}
 	san, err := getSANFromCert(signingCertificate)
 	if err != nil {
-		return invalidAttestationView, fmt.Errorf("error getting SAN from signing certificate: %w", err)
+		return invalidAttestationView, []models.ArtifactIdentity{}, fmt.Errorf("error getting SAN from signing certificate: %w", err)
 	}
 	verifyOpts.ExpectedSAN = san
 
 	verified, verificationResult, err := VerifyLayer(verifyOpts, b)
 	if err != nil && !verified {
-		return invalidAttestationView, fmt.Errorf("failed to verify attestation layer: %w", err)
+		return invalidAttestationView, []models.ArtifactIdentity{}, fmt.Errorf("failed to verify attestation layer: %w", err)
 	}
 
 	// Add remaining fields
@@ -361,13 +376,13 @@ func VerifyAndGetAttestationView(verifyOpts VerifyOptions, layer *v1.Descriptor)
 	attestationView.Type = verificationResult.Statement.Type
 	statementBytes, err := json.MarshalIndent(verificationResult.Statement, "", "  ")
 	if err != nil {
-		return models.AttestationView{}, fmt.Errorf("failed to marshal statement: %w", err)
+		return models.AttestationView{}, []models.ArtifactIdentity{}, fmt.Errorf("failed to marshal statement: %w", err)
 	}
 
 	attestationView.RawStatementJson = string(statementBytes)
 	attestationView.AttestationStatus = "Verified"
 
-	return attestationView, nil
+	return attestationView, identities, nil
 }
 
 // GetImageMetadata return the OCI image metadata
@@ -440,10 +455,10 @@ func GetImageMetadata(image string, username string, password string) (models.Im
 }
 
 // extractSignatureViewFromLayer extracts the SignatureView from signing layer
-func extractSignatureViewFromLayer(layer *v1.Descriptor, b *bundle.Bundle) (signatureView models.SignatureView, err error) {
+func extractSignatureViewFromLayer(layer *v1.Descriptor, b *bundle.Bundle) (signatureView models.SignatureView, identities []models.ArtifactIdentity, err error) {
 
 	if b == nil {
-		return models.SignatureView{}, fmt.Errorf("empty bundle")
+		return models.SignatureView{}, []models.ArtifactIdentity{}, fmt.Errorf("empty bundle")
 	}
 
 	certChain := ""
@@ -456,7 +471,7 @@ func extractSignatureViewFromLayer(layer *v1.Descriptor, b *bundle.Bundle) (sign
 	if certChain != "" {
 		chainCerts, err := parsePEMCertificates(certChain)
 		if err != nil {
-			return models.SignatureView{}, fmt.Errorf("failed parsing certificate chain: %w", err)
+			return models.SignatureView{}, []models.ArtifactIdentity{}, fmt.Errorf("failed parsing certificate chain: %w", err)
 		}
 
 		for _, c := range chainCerts {
@@ -487,16 +502,16 @@ func extractSignatureViewFromLayer(layer *v1.Descriptor, b *bundle.Bundle) (sign
 
 	certs, err := parsePEMCertificates(signingCertStr)
 	if err != nil {
-		return models.SignatureView{}, fmt.Errorf("failed parsing signing certificate: %w", err)
+		return models.SignatureView{}, []models.ArtifactIdentity{}, fmt.Errorf("failed parsing signing certificate: %w", err)
 	}
 	if len(certs) == 0 {
-		return models.SignatureView{}, fmt.Errorf("no signing certificate found in annotations")
+		return models.SignatureView{}, []models.ArtifactIdentity{}, fmt.Errorf("no signing certificate found in annotations")
 	}
 	c := certs[0]
 	sanList := mergeSANs(c.Cert)
 	sn := c.Cert.SerialNumber.String()
 	parsedSigningCert := models.ParsedCertificate{
-		Role:         "leaf",
+		Role:         models.CertificateRoleLeaf,
 		Subject:      c.Cert.Subject.String(),
 		Issuer:       c.Cert.Issuer.String(),
 		NotBefore:    c.Cert.NotBefore.UTC(),
@@ -513,20 +528,20 @@ func extractSignatureViewFromLayer(layer *v1.Descriptor, b *bundle.Bundle) (sign
 	if len(tlogEntries) > 0 && tlogEntries[0] != nil {
 		raw, err := json.Marshal(tlogEntries[0])
 		if err != nil {
-			return models.SignatureView{}, fmt.Errorf("failed to marshal tlog entry: %w", err)
+			return models.SignatureView{}, []models.ArtifactIdentity{}, fmt.Errorf("failed to marshal tlog entry: %w", err)
 		}
 		if err := json.Unmarshal(raw, &tlogMap); err != nil {
-			return models.SignatureView{}, fmt.Errorf("failed to unmarshal tlog entry: %w", err)
+			return models.SignatureView{}, []models.ArtifactIdentity{}, fmt.Errorf("failed to unmarshal tlog entry: %w", err)
 		}
 	} else {
-		return models.SignatureView{}, fmt.Errorf("bundle contains no Rekor entries")
+		return models.SignatureView{}, []models.ArtifactIdentity{}, fmt.Errorf("bundle contains no Rekor entries")
 	}
 
 	var rawBundle string
 	if b != nil {
 		jb, err := json.MarshalIndent(b, "", "  ")
 		if err != nil {
-			return models.SignatureView{}, fmt.Errorf("failed to marshal bundle: %w", err)
+			return models.SignatureView{}, []models.ArtifactIdentity{}, fmt.Errorf("failed to marshal bundle: %w", err)
 		}
 		rawBundle = string(jb)
 	}
@@ -545,14 +560,25 @@ func extractSignatureViewFromLayer(layer *v1.Descriptor, b *bundle.Bundle) (sign
 		Timestamp:          isoTime,
 	}
 
-	return signatureView, nil
+	// SAN identities with correct type classification
+	issuer := c.Cert.Issuer.String()
+	for _, san := range sanList {
+		identities = append(identities, models.ArtifactIdentity{
+			Source: models.San,
+			Type:   classifyIdentity(san),
+			Value:  san,
+			Issuer: &issuer,
+		})
+	}
+
+	return signatureView, identities, nil
 }
 
 // extractAttestationViewFromLayer extracts the AttestationView from attestation layer
-func extractAttestationViewFromLayer(layer *v1.Descriptor, b *bundle.Bundle) (attestationView models.AttestationView, err error) {
+func extractAttestationViewFromLayer(layer *v1.Descriptor, b *bundle.Bundle) (attestationView models.AttestationView, identities []models.ArtifactIdentity, err error) {
 
 	if b == nil {
-		return models.AttestationView{}, fmt.Errorf("empty bundle")
+		return models.AttestationView{}, []models.ArtifactIdentity{}, fmt.Errorf("empty bundle")
 	}
 
 	// Tlog entry
@@ -561,13 +587,13 @@ func extractAttestationViewFromLayer(layer *v1.Descriptor, b *bundle.Bundle) (at
 	if len(tlogEntries) > 0 && tlogEntries[0] != nil {
 		raw, err := json.Marshal(tlogEntries[0])
 		if err != nil {
-			return models.AttestationView{}, fmt.Errorf("failed to marshal tlog entry: %w", err)
+			return models.AttestationView{}, []models.ArtifactIdentity{}, fmt.Errorf("failed to marshal tlog entry: %w", err)
 		}
 		if err := json.Unmarshal(raw, &tlogMap); err != nil {
-			return models.AttestationView{}, fmt.Errorf("failed to unmarshal tlog entry: %w", err)
+			return models.AttestationView{}, []models.ArtifactIdentity{}, fmt.Errorf("failed to unmarshal tlog entry: %w", err)
 		}
 	} else {
-		return models.AttestationView{}, fmt.Errorf("bundle contains no Rekor entries")
+		return models.AttestationView{}, []models.ArtifactIdentity{}, fmt.Errorf("bundle contains no Rekor entries")
 	}
 
 	// Raw bunle
@@ -575,7 +601,7 @@ func extractAttestationViewFromLayer(layer *v1.Descriptor, b *bundle.Bundle) (at
 	if b != nil {
 		jb, err := json.MarshalIndent(b, "", "  ")
 		if err != nil {
-			return models.AttestationView{}, fmt.Errorf("failed to marshal bundle: %w", err)
+			return models.AttestationView{}, []models.ArtifactIdentity{}, fmt.Errorf("failed to marshal bundle: %w", err)
 		}
 		rawBundle = string(jb)
 	}
@@ -593,7 +619,33 @@ func extractAttestationViewFromLayer(layer *v1.Descriptor, b *bundle.Bundle) (at
 		Timestamp:     isoTime,
 	}
 
-	return attestationView, nil
+	// Extract identities from signing certificate
+	signingCertificate := ""
+	if certStr, ok := layer.Annotations["dev.sigstore.cosign/certificate"]; ok && certStr != "" {
+		signingCertificate = certStr
+	}
+
+	certs, err := parsePEMCertificates(signingCertificate)
+	if err != nil {
+		return attestationView, []models.ArtifactIdentity{}, fmt.Errorf("failed parsing signing certificate: %w", err)
+	}
+	if len(certs) > 0 {
+		c := certs[0]
+		issuer := c.Cert.Issuer.String()
+		sanList := mergeSANs(c.Cert)
+
+		// SAN identities
+		for _, san := range sanList {
+			identities = append(identities, models.ArtifactIdentity{
+				Source: models.San,
+				Type:   classifyIdentity(san),
+				Value:  san,
+				Issuer: &issuer,
+			})
+		}
+	}
+
+	return attestationView, identities, nil
 }
 
 type nonExpiringVerifier struct {
@@ -1239,12 +1291,12 @@ func parsePEMCertificates(pemData string) ([]CertWithPEM, error) {
 // identifyCertRole classifies a certificate as leaf, intermediate, root, or unknown.
 func identifyCertRole(cert *x509.Certificate) models.CertificateRole {
 	if cert == nil {
-		return models.Unknown
+		return models.CertificateRoleUnknown
 	}
 
 	// Leaf certificate: not a CA
 	if !cert.IsCA {
-		return models.Leaf
+		return models.CertificateRoleLeaf
 	}
 
 	// Check for self-signed: subject == issuer
@@ -1258,11 +1310,11 @@ func identifyCertRole(cert *x509.Certificate) models.CertificateRole {
 	}
 
 	if isSelfSigned {
-		return models.Root
+		return models.CertificateRoleRoot
 	}
 
 	// CA but not self-signed
-	return models.Intermediate
+	return models.CertificateRoleIntermediate
 }
 
 // mergeSANs returns a combined list of all SAN entries from the certificate.
@@ -1284,4 +1336,115 @@ func mergeSANs(cert *x509.Certificate) []string {
 		return nil
 	}
 	return out
+}
+
+var oidRegex = regexp.MustCompile(`^\d+(\.\d+)+$`)
+
+// classifyIdentity infers the identity type (ip, email, uri, oid, subject, dns, other) from its string value.
+func classifyIdentity(s string) string {
+	// IP address
+	if net.ParseIP(s) != nil {
+		return "ip"
+	}
+
+	// Email
+	if strings.Contains(s, "@") {
+		return "email"
+	}
+
+	// URI
+	if strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://") {
+		return "uri"
+	}
+
+	// OID (1.2.3.4.5)
+	if oidRegex.MatchString(s) {
+		return "oid"
+	}
+
+	// Subject-DN or Issuer-DN (CN=…, O=…, etc)
+	if strings.Contains(s, "=") {
+		return "subject"
+	}
+
+	// DNS heuristic
+	if strings.Contains(s, ".") {
+		return "dns"
+	}
+
+	return "other"
+}
+
+// dedupeIdentities removes duplicate identities (by source/type/value) and assigns sequential IDs.
+func dedupeIdentities(all []models.ArtifactIdentity) []models.ArtifactIdentity {
+	seen := make(map[string]bool)
+	deduped := make([]models.ArtifactIdentity, 0, len(all))
+
+	for _, id := range all {
+		// uniqueness key = source|type|value
+		key := fmt.Sprintf("%s|%s|%s", id.Source, id.Type, id.Value)
+
+		if !seen[key] {
+			seen[key] = true
+			deduped = append(deduped, id)
+		}
+	}
+
+	for i := range deduped {
+		deduped[i].Id = i
+	}
+
+	return deduped
+}
+
+// ComputeTimeCoherenceSummary returns the time coherence summary
+func ComputeTimeCoherenceSummary(verifyArtifactResponse models.VerifyArtifactResponse) models.TimeCoherenceSummary {
+
+	var times []time.Time
+	signatures := verifyArtifactResponse.Signatures
+	attestations := verifyArtifactResponse.Attestations
+
+	for _, s := range signatures {
+		if s.Timestamp != nil {
+			times = append(times, *s.Timestamp)
+		}
+	}
+
+	for _, a := range attestations {
+		if a.Timestamp != nil {
+			times = append(times, *a.Timestamp)
+		}
+	}
+
+	// Determine status
+	// No timestamps at all
+	if len(times) == 0 {
+		return models.TimeCoherenceSummary{
+			Status: models.TimeCoherenceSummaryStatusUnknown,
+		}
+	}
+
+	sort.Slice(times, func(i, j int) bool { return times[i].Before(times[j]) })
+
+	minTime := times[0]
+	maxTime := times[len(times)-1]
+
+	status := models.TimeCoherenceSummaryStatusOk
+	diff := maxTime.Sub(minTime)
+	const maxAllowedSkew = 24 * time.Hour // 1 Day
+
+	if diff > maxAllowedSkew {
+		status = models.TimeCoherenceSummaryStatusWarning
+	}
+
+	// If any future timestamp: Error
+	if maxTime.After(time.Now().UTC().Add(2 * time.Minute)) {
+		status = models.TimeCoherenceSummaryStatusError
+	}
+
+	return models.TimeCoherenceSummary{
+		Status:            status,
+		MinIntegratedTime: &minTime,
+		MaxIntegratedTime: &maxTime,
+	}
 }
