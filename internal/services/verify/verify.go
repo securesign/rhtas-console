@@ -522,7 +522,7 @@ func extractSignatureViewFromLayer(layer *v1.Descriptor, b *bundle.Bundle) (sign
 		Pem:          c.PEM,
 	}
 
-	// Rekor entries
+	// Tlog entries
 	tlogEntries := b.VerificationMaterial.TlogEntries
 	var tlogMap map[string]interface{}
 	if len(tlogEntries) > 0 && tlogEntries[0] != nil {
@@ -581,7 +581,73 @@ func extractAttestationViewFromLayer(layer *v1.Descriptor, b *bundle.Bundle) (at
 		return models.AttestationView{}, []models.ArtifactIdentity{}, fmt.Errorf("empty bundle")
 	}
 
-	// Tlog entry
+	// Certificate chain
+	certChain := ""
+	if chain, ok := layer.Annotations["dev.sigstore.cosign/chain"]; ok && chain != "" {
+		certChain = chain
+	}
+
+	var parsedCerts []models.ParsedCertificate
+
+	if certChain != "" {
+		chainCerts, err := parsePEMCertificates(certChain)
+		if err != nil {
+			return models.AttestationView{}, []models.ArtifactIdentity{}, fmt.Errorf("failed parsing certificate chain: %w", err)
+		}
+
+		for _, c := range chainCerts {
+			sn := c.Cert.SerialNumber.String()
+			role := identifyCertRole(c.Cert)
+			sanList := mergeSANs(c.Cert)
+			pc := models.ParsedCertificate{
+				Role:         role,
+				Subject:      c.Cert.Subject.String(),
+				Issuer:       c.Cert.Issuer.String(),
+				NotBefore:    c.Cert.NotBefore.UTC(),
+				NotAfter:     c.Cert.NotAfter.UTC(),
+				Sans:         sanList,
+				SerialNumber: &sn,
+				IsCa:         c.Cert.IsCA,
+				Pem:          c.PEM,
+			}
+
+			parsedCerts = append(parsedCerts, pc)
+		}
+	}
+
+	// SigningCertificate
+	var parsedSigningCert models.ParsedCertificate
+	var signingCertStr string
+	if cert, ok := layer.Annotations["dev.sigstore.cosign/certificate"]; ok && cert != "" {
+		signingCertStr = cert
+	}
+
+	if signingCertStr != "" {
+		certs, err := parsePEMCertificates(signingCertStr)
+		if err != nil {
+			return models.AttestationView{}, []models.ArtifactIdentity{}, fmt.Errorf("failed parsing signing certificate: %w", err)
+		}
+		if len(certs) == 0 {
+			return models.AttestationView{}, []models.ArtifactIdentity{}, fmt.Errorf("no signing certificate found in annotations")
+		}
+
+		c := certs[0]
+		sanList := mergeSANs(c.Cert)
+		sn := c.Cert.SerialNumber.String()
+		parsedSigningCert = models.ParsedCertificate{
+			Role:         models.CertificateRoleLeaf,
+			Subject:      c.Cert.Subject.String(),
+			Issuer:       c.Cert.Issuer.String(),
+			NotBefore:    c.Cert.NotBefore.UTC(),
+			NotAfter:     c.Cert.NotAfter.UTC(),
+			Sans:         sanList,
+			SerialNumber: &sn,
+			IsCa:         c.Cert.IsCA,
+			Pem:          c.PEM,
+		}
+	}
+
+	// Tlog entries
 	tlogEntries := b.VerificationMaterial.TlogEntries
 	var tlogMap map[string]interface{}
 	if len(tlogEntries) > 0 && tlogEntries[0] != nil {
@@ -613,10 +679,12 @@ func extractAttestationViewFromLayer(layer *v1.Descriptor, b *bundle.Bundle) (at
 
 	digestStr := layer.Digest.String()
 	attestationView = models.AttestationView{
-		Digest:        digestStr,
-		TlogEntry:     tlogMap,
-		RawBundleJson: rawBundle,
-		Timestamp:     isoTime,
+		Digest:             digestStr,
+		TlogEntry:          tlogMap,
+		RawBundleJson:      rawBundle,
+		Timestamp:          isoTime,
+		CertificateChain:   &parsedCerts,
+		SigningCertificate: &parsedSigningCert,
 	}
 
 	// Extract identities from signing certificate

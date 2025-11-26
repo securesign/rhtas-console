@@ -98,14 +98,16 @@ type ArtifactSummaryView struct {
 
 // AttestationView defines model for AttestationView.
 type AttestationView struct {
-	AttestationStatus string `json:"attestationStatus"`
-	Digest            string `json:"digest"`
+	AttestationStatus string               `json:"attestationStatus"`
+	CertificateChain  *[]ParsedCertificate `json:"certificateChain,omitempty"`
+	Digest            string               `json:"digest"`
 
 	// Id Unique identifier for the signature view
-	Id               int    `json:"id"`
-	PredicateType    string `json:"predicateType"`
-	RawBundleJson    string `json:"rawBundleJson"`
-	RawStatementJson string `json:"rawStatementJson"`
+	Id                 int                `json:"id"`
+	PredicateType      string             `json:"predicateType"`
+	RawBundleJson      string             `json:"rawBundleJson"`
+	RawStatementJson   string             `json:"rawStatementJson"`
+	SigningCertificate *ParsedCertificate `json:"signingCertificate,omitempty"`
 
 	// Timestamp ISO-8601 timestamp
 	Timestamp *time.Time `json:"timestamp,omitempty"`

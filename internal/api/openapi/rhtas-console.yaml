@@ -869,6 +869,12 @@ components:
           description: Unique identifier for the signature view
         digest:
           type: string
+        signingCertificate:
+          $ref: '#/components/schemas/ParsedCertificate'
+        certificateChain:
+          type: array
+          items:
+            $ref: '#/components/schemas/ParsedCertificate'
         type:
           type: string
         tlogEntry:
