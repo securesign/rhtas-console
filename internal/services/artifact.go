@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/securesign/rhtas-console/internal/models"
@@ -23,9 +24,11 @@ func NewArtifactService() ArtifactService {
 func (s *artifactService) VerifyArtifact(req models.VerifyArtifactRequest) (models.VerifyArtifactResponse, error) {
 	verifyOpts := verify.NewVerifyOptions()
 
-	if req.OciImage != "" {
-		verifyOpts.OCIImage = req.OciImage
+	if req.OciImage == "" {
+		return models.VerifyArtifactResponse{}, fmt.Errorf("ociImage is a required parameter and cannot be empty")
 	}
+	verifyOpts.OCIImage = req.OciImage
+
 	if req.Bundle != nil {
 		verifyOpts.Bundle = *req.Bundle
 	}
@@ -41,11 +44,11 @@ func (s *artifactService) VerifyArtifact(req models.VerifyArtifactRequest) (mode
 	if req.ExpectedSANRegex != nil {
 		verifyOpts.ExpectedSANRegex = *req.ExpectedSANRegex
 	}
-	if req.TufRootURL != "" {
-		verifyOpts.TUFRootURL = req.TufRootURL
-	} else {
-		verifyOpts.TUFRootURL = TufPublicGoodInstance
+	if req.TufRootURL == "" {
+		return models.VerifyArtifactResponse{}, fmt.Errorf("tufRootURL is a required parameter and cannot be empty")
 	}
+	verifyOpts.TUFRootURL = req.TufRootURL
+
 	if req.ArtifactDigest != nil {
 		verifyOpts.ArtifactDigest = *req.ArtifactDigest
 	}
