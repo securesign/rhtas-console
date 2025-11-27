@@ -23,8 +23,8 @@ func NewArtifactService() ArtifactService {
 func (s *artifactService) VerifyArtifact(req models.VerifyArtifactRequest) (models.VerifyArtifactResponse, error) {
 	verifyOpts := verify.NewVerifyOptions()
 
-	if req.OciImage != nil {
-		verifyOpts.OCIImage = *req.OciImage
+	if req.OciImage != "" {
+		verifyOpts.OCIImage = req.OciImage
 	}
 	if req.Bundle != nil {
 		verifyOpts.Bundle = *req.Bundle
@@ -41,8 +41,8 @@ func (s *artifactService) VerifyArtifact(req models.VerifyArtifactRequest) (mode
 	if req.ExpectedSANRegex != nil {
 		verifyOpts.ExpectedSANRegex = *req.ExpectedSANRegex
 	}
-	if req.TufRootURL != nil {
-		verifyOpts.TUFRootURL = *req.TufRootURL
+	if req.TufRootURL != "" {
+		verifyOpts.TUFRootURL = req.TufRootURL
 	} else {
 		verifyOpts.TUFRootURL = TufPublicGoodInstance
 	}
