@@ -184,6 +184,33 @@ func VerifyArtifact(verifyOpts VerifyOptions) (verifyArtifactResponse models.Ver
 	timeCoherenceSummary := ComputeTimeCoherenceSummary(verifyArtifactResponse)
 	verifyArtifactResponse.Summary.TimeCoherence = &timeCoherenceSummary
 
+	// status
+	status := models.ArtifactSummaryViewStatusVerified
+	hasAny := len(verifyArtifactResponse.Signatures) > 0 || len(verifyArtifactResponse.Attestations) > 0
+
+	if !hasAny {
+		status = models.ArtifactSummaryViewStatusUnsigned
+	} else {
+		// Check signatures
+		for _, sig := range verifyArtifactResponse.Signatures {
+			if sig.SignatureStatus != models.Verified {
+				status = models.ArtifactSummaryViewStatusFailed
+				break
+			}
+		}
+
+		// Check attestations only if still verified
+		if status == models.ArtifactSummaryViewStatusVerified {
+			for _, att := range verifyArtifactResponse.Attestations {
+				if att.AttestationStatus != models.AttestationViewAttestationStatusVerified {
+					status = models.ArtifactSummaryViewStatusFailed
+					break
+				}
+			}
+		}
+	}
+
+	verifyArtifactResponse.Summary.Status = status
 	return verifyArtifactResponse, nil
 }
 
@@ -314,7 +341,7 @@ func VerifyLayer(verifyOpts VerifyOptions, b *bundle.Bundle) (verified bool, ver
 
 func VerifyAndGetSignatureView(verifyOpts VerifyOptions, layer *v1.Descriptor) (signatureView models.SignatureView, identities []models.ArtifactIdentity, err error) {
 	var b *bundle.Bundle
-	invalidSignatureView := models.SignatureView{SignatureStatus: "invalid"}
+	invalidSignatureView := models.SignatureView{SignatureStatus: models.Failed}
 
 	b, verifyOpts.ArtifactDigest, err = bundleFromSigningLayer(layer, verifyOpts.RequireTLog, verifyOpts.RequireTimestamp)
 	if err != nil {
@@ -336,13 +363,13 @@ func VerifyAndGetSignatureView(verifyOpts VerifyOptions, layer *v1.Descriptor) (
 		return invalidSignatureView, []models.ArtifactIdentity{}, fmt.Errorf("failed to verify signing layer: %w", err)
 	}
 
-	signatureView.SignatureStatus = "verified"
+	signatureView.SignatureStatus = models.Verified
 	return signatureView, identities, nil
 }
 
 func VerifyAndGetAttestationView(verifyOpts VerifyOptions, layer *v1.Descriptor) (attestationView models.AttestationView, identities []models.ArtifactIdentity, err error) {
 	var b *bundle.Bundle
-	invalidAttestationView := models.AttestationView{AttestationStatus: "invalid"}
+	invalidAttestationView := models.AttestationView{AttestationStatus: models.AttestationViewAttestationStatusFailed}
 
 	b, verifyOpts.ArtifactDigest, err = bundleFromAttestationLayer(verifyOpts.OCIImage, layer, verifyOpts.RequireTLog, verifyOpts.RequireTimestamp)
 	if err != nil {
@@ -380,7 +407,7 @@ func VerifyAndGetAttestationView(verifyOpts VerifyOptions, layer *v1.Descriptor)
 	}
 
 	attestationView.RawStatementJson = string(statementBytes)
-	attestationView.AttestationStatus = "verified"
+	attestationView.AttestationStatus = models.AttestationViewAttestationStatusVerified
 
 	return attestationView, identities, nil
 }
@@ -441,8 +468,11 @@ func GetImageMetadata(image string, username string, password string) (models.Im
 		labels = nil
 	}
 
+	registry := ref.Context().Scheme() + "://" + ref.Context().RegistryStr()
+
 	response := models.ImageMetadataResponse{
-		Image: &image,
+		Image:    &image,
+		Registry: registry,
 		Metadata: models.Metadata{
 			MediaType: string(descriptor.MediaType),
 			Size:      descriptor.Size,
@@ -555,7 +585,7 @@ func extractSignatureViewFromLayer(layer *v1.Descriptor, b *bundle.Bundle) (sign
 		Digest:             digestStr,
 		CertificateChain:   parsedCerts,
 		SigningCertificate: parsedSigningCert,
-		TlogEntry:          tlogMap,
+		RekorEntry:         tlogMap,
 		RawBundleJson:      rawBundle,
 		Timestamp:          isoTime,
 	}
@@ -680,7 +710,7 @@ func extractAttestationViewFromLayer(layer *v1.Descriptor, b *bundle.Bundle) (at
 	digestStr := layer.Digest.String()
 	attestationView = models.AttestationView{
 		Digest:             digestStr,
-		TlogEntry:          tlogMap,
+		RekorEntry:         tlogMap,
 		RawBundleJson:      rawBundle,
 		Timestamp:          isoTime,
 		CertificateChain:   &parsedCerts,

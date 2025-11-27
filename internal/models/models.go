@@ -24,12 +24,31 @@ const (
 	San    ArtifactIdentitySource = "san"
 )
 
+// Defines values for ArtifactSummaryViewStatus.
+const (
+	ArtifactSummaryViewStatusFailed   ArtifactSummaryViewStatus = "failed"
+	ArtifactSummaryViewStatusUnsigned ArtifactSummaryViewStatus = "unsigned"
+	ArtifactSummaryViewStatusVerified ArtifactSummaryViewStatus = "verified"
+)
+
+// Defines values for AttestationViewAttestationStatus.
+const (
+	AttestationViewAttestationStatusFailed   AttestationViewAttestationStatus = "failed"
+	AttestationViewAttestationStatusVerified AttestationViewAttestationStatus = "verified"
+)
+
 // Defines values for CertificateRole.
 const (
 	CertificateRoleIntermediate CertificateRole = "intermediate"
 	CertificateRoleLeaf         CertificateRole = "leaf"
 	CertificateRoleRoot         CertificateRole = "root"
 	CertificateRoleUnknown      CertificateRole = "unknown"
+)
+
+// Defines values for SignatureViewSignatureStatus.
+const (
+	Failed   SignatureViewSignatureStatus = "failed"
+	Verified SignatureViewSignatureStatus = "verified"
 )
 
 // Defines values for TimeCoherenceSummaryStatus.
@@ -92,30 +111,37 @@ type ArtifactSummaryView struct {
 	RekorEntryCount int `json:"rekorEntryCount"`
 
 	// SignatureCount Total number of signatures
-	SignatureCount int                   `json:"signatureCount"`
-	TimeCoherence  *TimeCoherenceSummary `json:"timeCoherence,omitempty"`
+	SignatureCount int                       `json:"signatureCount"`
+	Status         ArtifactSummaryViewStatus `json:"status"`
+	TimeCoherence  *TimeCoherenceSummary     `json:"timeCoherence,omitempty"`
 }
+
+// ArtifactSummaryViewStatus defines model for ArtifactSummaryView.Status.
+type ArtifactSummaryViewStatus string
 
 // AttestationView defines model for AttestationView.
 type AttestationView struct {
-	AttestationStatus string               `json:"attestationStatus"`
-	CertificateChain  *[]ParsedCertificate `json:"certificateChain,omitempty"`
-	Digest            string               `json:"digest"`
+	AttestationStatus AttestationViewAttestationStatus `json:"attestationStatus"`
+	CertificateChain  *[]ParsedCertificate             `json:"certificateChain,omitempty"`
+	Digest            string                           `json:"digest"`
 
 	// Id Unique identifier for the signature view
-	Id                 int                `json:"id"`
-	PredicateType      string             `json:"predicateType"`
-	RawBundleJson      string             `json:"rawBundleJson"`
-	RawStatementJson   string             `json:"rawStatementJson"`
-	SigningCertificate *ParsedCertificate `json:"signingCertificate,omitempty"`
+	Id               int    `json:"id"`
+	PredicateType    string `json:"predicateType"`
+	RawBundleJson    string `json:"rawBundleJson"`
+	RawStatementJson string `json:"rawStatementJson"`
+
+	// RekorEntry Rekor transparency log entry
+	RekorEntry         map[string]interface{} `json:"rekorEntry"`
+	SigningCertificate *ParsedCertificate     `json:"signingCertificate,omitempty"`
 
 	// Timestamp ISO-8601 timestamp
 	Timestamp *time.Time `json:"timestamp,omitempty"`
-
-	// TlogEntry Rekor transparency log entry
-	TlogEntry map[string]interface{} `json:"tlogEntry"`
-	Type      string                 `json:"type"`
+	Type      string     `json:"type"`
 }
+
+// AttestationViewAttestationStatus defines model for AttestationView.AttestationStatus.
+type AttestationViewAttestationStatus string
 
 // CertificateInfo defines model for CertificateInfo.
 type CertificateInfo struct {
@@ -165,6 +191,9 @@ type ImageMetadataResponse struct {
 
 	// Metadata Metadata for a container image
 	Metadata Metadata `json:"metadata"`
+
+	// Registry The registry URI of the container image
+	Registry string `json:"registry"`
 }
 
 // InclusionProof Merkle tree inclusion proof for a Rekor entry
@@ -270,17 +299,20 @@ type SignatureView struct {
 	Digest           string              `json:"digest"`
 
 	// Id Unique identifier for the signature view
-	Id                 int               `json:"id"`
-	RawBundleJson      string            `json:"rawBundleJson"`
-	SignatureStatus    string            `json:"signatureStatus"`
-	SigningCertificate ParsedCertificate `json:"signingCertificate"`
+	Id            int    `json:"id"`
+	RawBundleJson string `json:"rawBundleJson"`
+
+	// RekorEntry Rekor transparency log entry
+	RekorEntry         map[string]interface{}       `json:"rekorEntry"`
+	SignatureStatus    SignatureViewSignatureStatus `json:"signatureStatus"`
+	SigningCertificate ParsedCertificate            `json:"signingCertificate"`
 
 	// Timestamp ISO-8601 timestamp
 	Timestamp *time.Time `json:"timestamp,omitempty"`
-
-	// TlogEntry Rekor transparency log entry
-	TlogEntry map[string]interface{} `json:"tlogEntry"`
 }
+
+// SignatureViewSignatureStatus defines model for SignatureView.SignatureStatus.
+type SignatureViewSignatureStatus string
 
 // TargetContent defines model for TargetContent.
 type TargetContent struct {
