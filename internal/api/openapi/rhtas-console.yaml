@@ -660,6 +660,10 @@ components:
           type: string
           description: The container image URI
           example: docker.io/library/nginx:latest
+        registry:
+          type: string
+          description: The registry URI of the container image
+          example: index.docker.io
         metadata:
           $ref: '#/components/schemas/Metadata'
         digest:
@@ -668,6 +672,7 @@ components:
           example: sha256:abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890
       required:
         - artifact
+        - registry
         - metadata
         - digest
     RootMetadataInfo:
@@ -841,7 +846,7 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/ParsedCertificate'
-        tlogEntry:
+        rekorEntry:
           type: object
           description: Rekor transparency log entry
           additionalProperties: true
@@ -852,13 +857,13 @@ components:
           format: date-time
           description: ISO-8601 timestamp
         signatureStatus:
-          type: string
+          $ref: '#/components/schemas/signatureStatus'
       required:
         - id
         - digest
         - signingCertificate
         - certificateChain
-        - tlogEntry
+        - rekorEntry
         - rawBundleJson
         - signatureStatus
     AttestationView:
@@ -877,7 +882,7 @@ components:
             $ref: '#/components/schemas/ParsedCertificate'
         type:
           type: string
-        tlogEntry:
+        rekorEntry:
           type: object
           description: Rekor transparency log entry
           additionalProperties: true
@@ -892,7 +897,7 @@ components:
           format: date-time
           description: ISO-8601 timestamp
         attestationStatus:
-          type: string
+          $ref: '#/components/schemas/attestationStatus'
       required:
         - id
         - digest
@@ -901,10 +906,13 @@ components:
         - rawStatementJson
         - predicateType
         - attestationStatus
-        - tlogEntry
+        - rekorEntry
     ArtifactSummaryView:
       type: object
       properties:
+        overallStatus:
+          type: string
+          enum: ["verified", "failed", "unsigned", "partially-verified"]
         identities:
           type: array
           items:
@@ -921,6 +929,7 @@ components:
         timeCoherence:
           $ref: '#/components/schemas/TimeCoherenceSummary'
       required:
+        - overallStatus
         - identities
         - signatureCount
         - attestationCount
@@ -966,3 +975,35 @@ components:
           nullable: true
       required:
         - status
+    signatureStatus:
+      type: object
+      properties:
+        signature:
+          type: string
+          enum: ["verified", "failed"]
+        chain:
+          type: string
+          enum: ["verified", "failed"]
+        rekor:
+          type: string
+          enum: ["verified", "failed"]
+      required:
+        - signature
+        - chain
+        - rekor
+    attestationStatus:
+      type: object
+      properties:
+        attestation:
+          type: string
+          enum: ["verified", "failed"]
+        chain:
+          type: string
+          enum: ["verified", "failed"]
+        rekor:
+          type: string
+          enum: ["verified", "failed"]
+      required:
+        - attestation
+        - chain
+        - rekor

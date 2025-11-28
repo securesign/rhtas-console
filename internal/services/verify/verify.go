@@ -184,6 +184,47 @@ func VerifyArtifact(verifyOpts VerifyOptions) (verifyArtifactResponse models.Ver
 	timeCoherenceSummary := ComputeTimeCoherenceSummary(verifyArtifactResponse)
 	verifyArtifactResponse.Summary.TimeCoherence = &timeCoherenceSummary
 
+	// status
+	status := models.ArtifactSummaryViewOverallStatusVerified
+	hasSignatures := len(verifyArtifactResponse.Signatures) > 0
+	hasAttestations := len(verifyArtifactResponse.Attestations) > 0
+	hasAny := hasSignatures || hasAttestations
+
+	// UNSIGNED: no signatures AND no attestations
+	if !hasAny {
+		status = models.ArtifactSummaryViewOverallStatusUnsigned
+	} else {
+		// FAILED: any failed signature
+		for _, sig := range verifyArtifactResponse.Signatures {
+			if sig.SignatureStatus.Signature != models.Verified {
+				status = models.ArtifactSummaryViewOverallStatusFailed
+				break
+			}
+		}
+
+		// FAILED: any failed attestation (only if not already failed)
+		if status == models.ArtifactSummaryViewOverallStatusVerified {
+			for _, att := range verifyArtifactResponse.Attestations {
+				if att.AttestationStatus.Attestation != models.AttestationStatusAttestationVerified {
+					status = models.ArtifactSummaryViewOverallStatusFailed
+					break
+				}
+			}
+		}
+		// PARTIALLY VERIFIED:
+		// If still "verified" BUT either:
+		// - some signatures missing OR
+		// - some attestations missing OR
+		// - only signatures or only attestations exist
+		if status == models.ArtifactSummaryViewOverallStatusVerified {
+			// If not both signatures and attestations are present AND verified
+			if !hasSignatures || !hasAttestations {
+				status = models.ArtifactSummaryViewOverallStatusPartiallyVerified
+			}
+		}
+	}
+
+	verifyArtifactResponse.Summary.OverallStatus = status
 	return verifyArtifactResponse, nil
 }
 
@@ -314,7 +355,11 @@ func VerifyLayer(verifyOpts VerifyOptions, b *bundle.Bundle) (verified bool, ver
 
 func VerifyAndGetSignatureView(verifyOpts VerifyOptions, layer *v1.Descriptor) (signatureView models.SignatureView, identities []models.ArtifactIdentity, err error) {
 	var b *bundle.Bundle
-	invalidSignatureView := models.SignatureView{SignatureStatus: "invalid"}
+	invalidSignatureView := models.SignatureView{SignatureStatus: models.SignatureStatus{
+		Signature: models.Failed,
+		Chain:     models.SignatureStatusChainFailed,
+		Rekor:     models.SignatureStatusRekorFailed,
+	}}
 
 	b, verifyOpts.ArtifactDigest, err = bundleFromSigningLayer(layer, verifyOpts.RequireTLog, verifyOpts.RequireTimestamp)
 	if err != nil {
@@ -326,6 +371,21 @@ func VerifyAndGetSignatureView(verifyOpts VerifyOptions, layer *v1.Descriptor) (
 		return invalidSignatureView, []models.ArtifactIdentity{}, fmt.Errorf("failed to extract SignatureView from layer %w", err)
 	}
 
+	// SignatureStatus
+	rekorStatus := models.SignatureStatusRekorVerified
+	chainStatus := models.SignatureStatusChainVerified
+
+	if len(signatureView.RekorEntry) == 0 {
+		rekorStatus = models.SignatureStatusRekorFailed
+	}
+
+	if !isCertChainValid(signatureView.CertificateChain) {
+		chainStatus = models.SignatureStatusChainFailed
+	}
+
+	invalidSignatureView.SignatureStatus.Chain = chainStatus
+	invalidSignatureView.SignatureStatus.Rekor = rekorStatus
+
 	if len(signatureView.SigningCertificate.Sans) == 0 {
 		return invalidSignatureView, []models.ArtifactIdentity{}, fmt.Errorf("signing certificate contains no SANs")
 	}
@@ -336,13 +396,24 @@ func VerifyAndGetSignatureView(verifyOpts VerifyOptions, layer *v1.Descriptor) (
 		return invalidSignatureView, []models.ArtifactIdentity{}, fmt.Errorf("failed to verify signing layer: %w", err)
 	}
 
-	signatureView.SignatureStatus = "verified"
+	// signatureStatus
+	signatureStatus := models.SignatureStatus{
+		Signature: models.Verified,
+		Chain:     chainStatus,
+		Rekor:     rekorStatus,
+	}
+
+	signatureView.SignatureStatus = signatureStatus
 	return signatureView, identities, nil
 }
 
 func VerifyAndGetAttestationView(verifyOpts VerifyOptions, layer *v1.Descriptor) (attestationView models.AttestationView, identities []models.ArtifactIdentity, err error) {
 	var b *bundle.Bundle
-	invalidAttestationView := models.AttestationView{AttestationStatus: "invalid"}
+	invalidAttestationView := models.AttestationView{AttestationStatus: models.AttestationStatus{
+		Attestation: models.AttestationStatusAttestationFailed,
+		Chain:       models.AttestationStatusChainFailed,
+		Rekor:       models.AttestationStatusRekorFailed,
+	}}
 
 	b, verifyOpts.ArtifactDigest, err = bundleFromAttestationLayer(verifyOpts.OCIImage, layer, verifyOpts.RequireTLog, verifyOpts.RequireTimestamp)
 	if err != nil {
@@ -353,6 +424,22 @@ func VerifyAndGetAttestationView(verifyOpts VerifyOptions, layer *v1.Descriptor)
 	if err != nil {
 		return invalidAttestationView, []models.ArtifactIdentity{}, fmt.Errorf("failed to extract AttestationView from layer: %w", err)
 	}
+
+	// SignatureStatus
+	rekorStatus := models.AttestationStatusRekorVerified
+	chainStatus := models.AttestationStatusChainVerified
+
+	if len(attestationView.RekorEntry) == 0 {
+		rekorStatus = models.AttestationStatusRekorFailed
+	}
+
+	if !isCertChainValid(*attestationView.CertificateChain) {
+		chainStatus = models.AttestationStatusChainFailed
+	}
+
+	invalidAttestationView.AttestationStatus.Chain = chainStatus
+	invalidAttestationView.AttestationStatus.Rekor = rekorStatus
+
 	// Get SAN from attestation signing certificate
 	signingCertificate := ""
 	if certificate, ok := layer.Annotations["dev.sigstore.cosign/certificate"]; ok && certificate != "" {
@@ -380,7 +467,12 @@ func VerifyAndGetAttestationView(verifyOpts VerifyOptions, layer *v1.Descriptor)
 	}
 
 	attestationView.RawStatementJson = string(statementBytes)
-	attestationView.AttestationStatus = "verified"
+	attestationStatus := models.AttestationStatus{
+		Attestation: models.AttestationStatusAttestationVerified,
+		Chain:       chainStatus,
+		Rekor:       rekorStatus,
+	}
+	attestationView.AttestationStatus = attestationStatus
 
 	return attestationView, identities, nil
 }
@@ -441,8 +533,11 @@ func GetImageMetadata(image string, username string, password string) (models.Im
 		labels = nil
 	}
 
+	registry := ref.Context().Scheme() + "://" + ref.Context().RegistryStr()
+
 	response := models.ImageMetadataResponse{
-		Image: &image,
+		Image:    &image,
+		Registry: registry,
 		Metadata: models.Metadata{
 			MediaType: string(descriptor.MediaType),
 			Size:      descriptor.Size,
@@ -555,7 +650,7 @@ func extractSignatureViewFromLayer(layer *v1.Descriptor, b *bundle.Bundle) (sign
 		Digest:             digestStr,
 		CertificateChain:   parsedCerts,
 		SigningCertificate: parsedSigningCert,
-		TlogEntry:          tlogMap,
+		RekorEntry:         tlogMap,
 		RawBundleJson:      rawBundle,
 		Timestamp:          isoTime,
 	}
@@ -680,7 +775,7 @@ func extractAttestationViewFromLayer(layer *v1.Descriptor, b *bundle.Bundle) (at
 	digestStr := layer.Digest.String()
 	attestationView = models.AttestationView{
 		Digest:             digestStr,
-		TlogEntry:          tlogMap,
+		RekorEntry:         tlogMap,
 		RawBundleJson:      rawBundle,
 		Timestamp:          isoTime,
 		CertificateChain:   &parsedCerts,
@@ -1515,4 +1610,86 @@ func ComputeTimeCoherenceSummary(verifyArtifactResponse models.VerifyArtifactRes
 		MinIntegratedTime: &minTime,
 		MaxIntegratedTime: &maxTime,
 	}
+}
+
+// isCertChainValid checks if a certificate chain is valid based on a list of criterias
+func isCertChainValid(certChain []models.ParsedCertificate) bool {
+	valid := true
+
+	// 1. Require at least root + intermediate certificates
+	if len(certChain) < 2 {
+		return false
+	}
+
+	// 2. The intermediate is correctly signed by the root
+	var rootCert, intermediateCert *models.ParsedCertificate
+
+	for _, cert := range certChain {
+		switch cert.Role {
+		case models.CertificateRoleRoot:
+			rootCert = &cert
+		case models.CertificateRoleIntermediate:
+			intermediateCert = &cert
+		}
+	}
+	if (rootCert == nil) || (intermediateCert == nil) {
+		return false
+	}
+
+	sigVerified := checkSignature(rootCert.Pem, intermediateCert.Pem)
+	if !sigVerified {
+		valid = false
+	}
+
+	// 3. Intermediate issuer must match root subject
+	if intermediateCert.Issuer != rootCert.Subject {
+		valid = false
+	}
+
+	// 4. The certificates are within validity period
+	if !isTimeValid(rootCert.Pem) || !isTimeValid(intermediateCert.Pem) {
+		valid = false
+	}
+
+	// 5. Ensure intermediate is a CA
+	if !intermediateCert.IsCa {
+		valid = false
+	}
+
+	// 6. Ensure intermediate has keyCertSign (required for CA certs)
+	intermediateX509, _ := parsePEMCertificates(intermediateCert.Pem)
+	if intermediateX509[0].Cert.KeyUsage&x509.KeyUsageCertSign == 0 {
+		valid = false
+	}
+
+	return valid
+}
+
+// checkSignature returns true if the intermediate certificate is correctly signed by the provided root certificate
+func checkSignature(rootPEM string, intermediatePEM string) bool {
+	root, err := parsePEMCertificates(rootPEM)
+	if err != nil {
+		return false
+	}
+	rootCert := root[0].Cert
+	intermediate, err := parsePEMCertificates(intermediatePEM)
+	if err != nil {
+		return false
+	}
+	intermediateCert := intermediate[0].Cert
+	err = intermediateCert.CheckSignatureFrom(rootCert)
+	return err == nil
+}
+
+// isTimeValid returns true if the certificate is currently valid based on its NotBefore/NotAfter fields
+func isTimeValid(certPEM string) bool {
+	cert, err := parsePEMCertificates(certPEM)
+	if err != nil {
+		return false
+	}
+	now := time.Now()
+	if now.Before(cert[0].Cert.NotBefore) || now.After(cert[0].Cert.NotAfter) {
+		return false
+	}
+	return true
 }
