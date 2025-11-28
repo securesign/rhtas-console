@@ -857,8 +857,7 @@ components:
           format: date-time
           description: ISO-8601 timestamp
         signatureStatus:
-          type: string
-          enum: ["verified", "failed"]
+          $ref: '#/components/schemas/signatureStatus'
       required:
         - id
         - digest
@@ -898,8 +897,7 @@ components:
           format: date-time
           description: ISO-8601 timestamp
         attestationStatus:
-          type: string
-          enum: ["verified", "failed"]
+          $ref: '#/components/schemas/attestationStatus'
       required:
         - id
         - digest
@@ -912,9 +910,9 @@ components:
     ArtifactSummaryView:
       type: object
       properties:
-        status:
+        overallStatus:
           type: string
-          enum: ["verified", "failed", "unsigned"]
+          enum: ["verified", "failed", "unsigned", "partially-verified"]
         identities:
           type: array
           items:
@@ -931,7 +929,7 @@ components:
         timeCoherence:
           $ref: '#/components/schemas/TimeCoherenceSummary'
       required:
-        - status
+        - overallStatus
         - identities
         - signatureCount
         - attestationCount
@@ -977,3 +975,35 @@ components:
           nullable: true
       required:
         - status
+    signatureStatus:
+      type: object
+      properties:
+        signature:
+          type: string
+          enum: ["verified", "failed"]
+        chain:
+          type: string
+          enum: ["verified", "failed"]
+        rekor:
+          type: string
+          enum: ["verified", "failed"]
+      required:
+        - signature
+        - chain
+        - rekor
+    attestationStatus:
+      type: object
+      properties:
+        attestation:
+          type: string
+          enum: ["verified", "failed"]
+        chain:
+          type: string
+          enum: ["verified", "failed"]
+        rekor:
+          type: string
+          enum: ["verified", "failed"]
+      required:
+        - attestation
+        - chain
+        - rekor
