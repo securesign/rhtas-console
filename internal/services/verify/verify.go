@@ -1623,7 +1623,7 @@ func isCertChainValid(certChain []models.ParsedCertificate) bool {
 		return false
 	}
 
-	// 2. The intermediate is correctly signed by the root - verifySignature(intermediate, rootPublicKey) succeeds
+	// 2. The intermediate is correctly signed by the root
 	var rootCert, intermediateCert *models.ParsedCertificate
 
 	for _, cert := range certChain {
@@ -1638,28 +1638,27 @@ func isCertChainValid(certChain []models.ParsedCertificate) bool {
 		return false
 	}
 
-	// 3. Check signature
 	sigVerified := checkSignature(rootCert.Pem, intermediateCert.Pem)
 	if !sigVerified {
 		valid = false
 	}
 
-	// 4. Intermediate issuer must match root subject
+	// 3. Intermediate issuer must match root subject
 	if intermediateCert.Issuer != rootCert.Subject {
 		valid = false
 	}
 
-	// 5. The certificates are within validity period
+	// 4. The certificates are within validity period
 	if !isTimeValid(rootCert.Pem) || !isTimeValid(intermediateCert.Pem) {
 		valid = false
 	}
 
-	// 6. Ensure intermediate is a CA
+	// 5. Ensure intermediate is a CA
 	if !intermediateCert.IsCa {
 		valid = false
 	}
 
-	// 7. Ensure intermediate has keyCertSign (required for CA certs)
+	// 6. Ensure intermediate has keyCertSign (required for CA certs)
 	intermediateX509, _ := parsePEMCertificates(intermediateCert.Pem)
 	if intermediateX509[0].Cert.KeyUsage&x509.KeyUsageCertSign == 0 {
 		valid = false
