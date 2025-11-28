@@ -409,7 +409,6 @@ func VerifyAndGetSignatureView(verifyOpts VerifyOptions, layer *v1.Descriptor) (
 
 func VerifyAndGetAttestationView(verifyOpts VerifyOptions, layer *v1.Descriptor) (attestationView models.AttestationView, identities []models.ArtifactIdentity, err error) {
 	var b *bundle.Bundle
-	// invalidAttestationView := models.AttestationView{AttestationStatus: models.AttestationViewAttestationStatusFailed}
 	invalidAttestationView := models.AttestationView{AttestationStatus: models.AttestationStatus{
 		Attestation: models.AttestationStatusAttestationFailed,
 		Chain:       models.AttestationStatusChainFailed,
@@ -427,7 +426,6 @@ func VerifyAndGetAttestationView(verifyOpts VerifyOptions, layer *v1.Descriptor)
 	}
 
 	// SignatureStatus
-	// rekorStatus := models.SignatureStatusRekorVerified
 	rekorStatus := models.AttestationStatusRekorVerified
 	chainStatus := models.AttestationStatusChainVerified
 
