@@ -435,7 +435,6 @@ func VerifyAndGetAttestationView(verifyOpts VerifyOptions, layer *v1.Descriptor)
 		rekorStatus = models.AttestationStatusRekorFailed
 	}
 
-	// Get cert chain
 	if !isCertChainValid(*attestationView.CertificateChain) {
 		chainStatus = models.AttestationStatusChainFailed
 	}
