@@ -415,7 +415,7 @@ type VerifyArtifactRequest struct {
 	MinBundleVersion *string `json:"minBundleVersion"`
 
 	// OciImage The OCI image reference to verify.
-	OciImage *string `json:"ociImage,omitempty"`
+	OciImage string `json:"ociImage"`
 
 	// PredicateType The type of the predicate for the attestation.
 	PredicateType *string `json:"predicateType,omitempty"`
@@ -430,7 +430,7 @@ type VerifyArtifactRequest struct {
 	RequireTimestamp *bool `json:"requireTimestamp,omitempty"`
 
 	// TufRootURL URL of a TUF repository containing the trusted root JSON file.
-	TufRootURL *string `json:"tufRootURL"`
+	TufRootURL string `json:"tufRootURL"`
 }
 
 // VerifyArtifactResponse defines model for VerifyArtifactResponse.
