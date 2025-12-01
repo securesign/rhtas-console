@@ -443,7 +443,7 @@ components:
             Minimum acceptable bundle version (e.g., '0.1') for verified signatures.
           example: "0.1"
           nullable: true
-        tufRootURL:
+        tufRepoUrl:
           type: string
           description: >
             URL of a TUF repository containing the trusted root JSON file.
@@ -455,7 +455,6 @@ components:
           example: https://example.com/attestations/build
       required:
         - ociImage
-        - tufRootURL
     VerifyArtifactResponse:
       type: object
       properties:

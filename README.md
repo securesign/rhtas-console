@@ -101,8 +101,7 @@ To verify an OCI image:
 curl -X POST http://localhost:8080/api/v1/artifacts/verify \
   -H "Content-Type: application/json" \
   -d '{
-    "ociImage": "ttl.sh/rhtas/test-image:1h",
-    "tufRootURL": "https://tuf-repo-cdn.sigstore.dev"
+    "ociImage": "ttl.sh/rhtas/test-image:1h"
   }'
 ```
 Response:
