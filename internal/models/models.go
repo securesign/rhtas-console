@@ -429,8 +429,8 @@ type VerifyArtifactRequest struct {
 	// RequireTimestamp Require that either an RFC3161 signed timestamp or a log entry integrated timestamp is present in the signature.
 	RequireTimestamp *bool `json:"requireTimestamp,omitempty"`
 
-	// TufRootURL URL of a TUF repository containing the trusted root JSON file.
-	TufRootURL string `json:"tufRootURL"`
+	// TufRepoUrl URL of a TUF repository containing the trusted root JSON file.
+	TufRepoUrl *string `json:"tufRepoUrl,omitempty"`
 }
 
 // VerifyArtifactResponse defines model for VerifyArtifactResponse.

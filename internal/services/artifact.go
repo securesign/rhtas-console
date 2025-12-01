@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/securesign/rhtas-console/internal/models"
@@ -44,10 +45,18 @@ func (s *artifactService) VerifyArtifact(req models.VerifyArtifactRequest) (mode
 	if req.ExpectedSANRegex != nil {
 		verifyOpts.ExpectedSANRegex = *req.ExpectedSANRegex
 	}
-	if req.TufRootURL == "" {
-		return models.VerifyArtifactResponse{}, fmt.Errorf("tufRootURL is a required parameter and cannot be empty")
+
+	tufRepoUrl := ""
+	if req.TufRepoUrl != nil {
+		tufRepoUrl = *req.TufRepoUrl
+	} else {
+		tufRepoUrl = os.Getenv("TUF_REPO_URL")
 	}
-	verifyOpts.TUFRootURL = req.TufRootURL
+
+	if tufRepoUrl == "" {
+		return models.VerifyArtifactResponse{}, fmt.Errorf("tufRepoUrl is a required parameter and cannot be empty. Provide it either in request or as the TUF_REPO_URL environment variable")
+	}
+	verifyOpts.TUFRootURL = tufRepoUrl
 
 	if req.ArtifactDigest != nil {
 		verifyOpts.ArtifactDigest = *req.ArtifactDigest
