@@ -187,11 +187,9 @@ func VerifyArtifact(verifyOpts VerifyOptions) (verifyArtifactResponse models.Ver
 	// status
 	status := models.ArtifactSummaryViewOverallStatusVerified
 	hasSignatures := len(verifyArtifactResponse.Signatures) > 0
-	hasAttestations := len(verifyArtifactResponse.Attestations) > 0
-	hasAny := hasSignatures || hasAttestations
 
-	// UNSIGNED: no signatures AND no attestations
-	if !hasAny {
+	// UNSIGNED: no signatures
+	if !hasSignatures {
 		status = models.ArtifactSummaryViewOverallStatusUnsigned
 	} else {
 		// FAILED: any failed signature
@@ -201,7 +199,6 @@ func VerifyArtifact(verifyOpts VerifyOptions) (verifyArtifactResponse models.Ver
 				break
 			}
 		}
-
 		// FAILED: any failed attestation (only if not already failed)
 		if status == models.ArtifactSummaryViewOverallStatusVerified {
 			for _, att := range verifyArtifactResponse.Attestations {
@@ -211,19 +208,7 @@ func VerifyArtifact(verifyOpts VerifyOptions) (verifyArtifactResponse models.Ver
 				}
 			}
 		}
-		// PARTIALLY VERIFIED:
-		// If still "verified" BUT either:
-		// - some signatures missing OR
-		// - some attestations missing OR
-		// - only signatures or only attestations exist
-		if status == models.ArtifactSummaryViewOverallStatusVerified {
-			// If not both signatures and attestations are present AND verified
-			if !hasSignatures || !hasAttestations {
-				status = models.ArtifactSummaryViewOverallStatusPartiallyVerified
-			}
-		}
 	}
-
 	verifyArtifactResponse.Summary.OverallStatus = status
 	return verifyArtifactResponse, nil
 }
@@ -375,7 +360,7 @@ func VerifyAndGetSignatureView(verifyOpts VerifyOptions, layer *v1.Descriptor) (
 	rekorStatus := models.SignatureStatusRekorVerified
 	chainStatus := models.SignatureStatusChainVerified
 
-	if len(signatureView.RekorEntry) == 0 {
+	if signatureView.RekorEntry == nil {
 		rekorStatus = models.SignatureStatusRekorFailed
 	}
 
@@ -429,7 +414,7 @@ func VerifyAndGetAttestationView(verifyOpts VerifyOptions, layer *v1.Descriptor)
 	rekorStatus := models.AttestationStatusRekorVerified
 	chainStatus := models.AttestationStatusChainVerified
 
-	if len(attestationView.RekorEntry) == 0 {
+	if attestationView.RekorEntry == nil {
 		rekorStatus = models.AttestationStatusRekorFailed
 	}
 
@@ -472,6 +457,7 @@ func VerifyAndGetAttestationView(verifyOpts VerifyOptions, layer *v1.Descriptor)
 		Chain:       chainStatus,
 		Rekor:       rekorStatus,
 	}
+	attestationView.PayloadType = &b.GetDsseEnvelope().PayloadType
 	attestationView.AttestationStatus = attestationStatus
 
 	return attestationView, identities, nil
@@ -617,19 +603,10 @@ func extractSignatureViewFromLayer(layer *v1.Descriptor, b *bundle.Bundle) (sign
 		Pem:          c.PEM,
 	}
 
-	// Tlog entries
-	tlogEntries := b.VerificationMaterial.TlogEntries
-	var tlogMap map[string]interface{}
-	if len(tlogEntries) > 0 && tlogEntries[0] != nil {
-		raw, err := json.Marshal(tlogEntries[0])
-		if err != nil {
-			return models.SignatureView{}, []models.ArtifactIdentity{}, fmt.Errorf("failed to marshal tlog entry: %w", err)
-		}
-		if err := json.Unmarshal(raw, &tlogMap); err != nil {
-			return models.SignatureView{}, []models.ArtifactIdentity{}, fmt.Errorf("failed to unmarshal tlog entry: %w", err)
-		}
-	} else {
-		return models.SignatureView{}, []models.ArtifactIdentity{}, fmt.Errorf("bundle contains no Rekor entries")
+	// Tlog entry
+	tlogEntry, err := extractTransparencyLogEntry(b)
+	if err != nil {
+		return models.SignatureView{}, []models.ArtifactIdentity{}, fmt.Errorf("%w", err)
 	}
 
 	var rawBundle string
@@ -642,6 +619,7 @@ func extractSignatureViewFromLayer(layer *v1.Descriptor, b *bundle.Bundle) (sign
 	}
 
 	var isoTime *time.Time
+	tlogEntries := b.VerificationMaterial.TlogEntries
 	t := time.Unix(tlogEntries[0].IntegratedTime, 0).UTC()
 	isoTime = &t
 
@@ -650,7 +628,7 @@ func extractSignatureViewFromLayer(layer *v1.Descriptor, b *bundle.Bundle) (sign
 		Digest:             digestStr,
 		CertificateChain:   parsedCerts,
 		SigningCertificate: parsedSigningCert,
-		RekorEntry:         tlogMap,
+		RekorEntry:         &tlogEntry,
 		RawBundleJson:      rawBundle,
 		Timestamp:          isoTime,
 	}
@@ -743,18 +721,9 @@ func extractAttestationViewFromLayer(layer *v1.Descriptor, b *bundle.Bundle) (at
 	}
 
 	// Tlog entries
-	tlogEntries := b.VerificationMaterial.TlogEntries
-	var tlogMap map[string]interface{}
-	if len(tlogEntries) > 0 && tlogEntries[0] != nil {
-		raw, err := json.Marshal(tlogEntries[0])
-		if err != nil {
-			return models.AttestationView{}, []models.ArtifactIdentity{}, fmt.Errorf("failed to marshal tlog entry: %w", err)
-		}
-		if err := json.Unmarshal(raw, &tlogMap); err != nil {
-			return models.AttestationView{}, []models.ArtifactIdentity{}, fmt.Errorf("failed to unmarshal tlog entry: %w", err)
-		}
-	} else {
-		return models.AttestationView{}, []models.ArtifactIdentity{}, fmt.Errorf("bundle contains no Rekor entries")
+	tlogEntry, err := extractTransparencyLogEntry(b)
+	if err != nil {
+		return models.AttestationView{}, []models.ArtifactIdentity{}, fmt.Errorf("%w", err)
 	}
 
 	// Raw bunle
@@ -769,13 +738,14 @@ func extractAttestationViewFromLayer(layer *v1.Descriptor, b *bundle.Bundle) (at
 
 	// Timestamp
 	var isoTime *time.Time
+	tlogEntries := b.VerificationMaterial.TlogEntries
 	t := time.Unix(tlogEntries[0].IntegratedTime, 0).UTC()
 	isoTime = &t
 
 	digestStr := layer.Digest.String()
 	attestationView = models.AttestationView{
 		Digest:             digestStr,
-		RekorEntry:         tlogMap,
+		RekorEntry:         &tlogEntry,
 		RawBundleJson:      rawBundle,
 		Timestamp:          isoTime,
 		CertificateChain:   &parsedCerts,
@@ -1692,4 +1662,55 @@ func isTimeValid(certPEM string) bool {
 		return false
 	}
 	return true
+}
+
+// extractTransparencyLogEntry extracts the first Rekor transparency log entry from the bundle and converts it to the public model.
+func extractTransparencyLogEntry(b *bundle.Bundle) (models.TransparencyLogEntry, error) {
+	tlogEntries := b.VerificationMaterial.TlogEntries
+	var tlogEntry *protorekor.TransparencyLogEntry
+
+	if len(tlogEntries) > 0 && tlogEntries[0] != nil {
+		tlogEntry = tlogEntries[0]
+	} else {
+		return models.TransparencyLogEntry{}, fmt.Errorf("bundle contains no Rekor entries")
+	}
+
+	apiEntry := models.TransparencyLogEntry{
+		CanonicalizedBody: tlogEntry.GetCanonicalizedBody(),
+		IntegratedTime:    tlogEntry.GetIntegratedTime(),
+		LogIndex:          tlogEntry.GetLogIndex(),
+	}
+	if kv := tlogEntry.GetKindVersion(); kv != nil {
+		apiEntry.KindVersion = &models.KindVersion{
+			Kind:    kv.Kind,
+			Version: kv.Version,
+		}
+	}
+	if lid := tlogEntry.GetLogId(); lid != nil {
+		apiEntry.LogId = &models.LogId{
+			KeyId: lid.KeyId,
+		}
+	}
+	if ip := tlogEntry.GetInclusionPromise(); ip != nil {
+		apiEntry.InclusionPromise = &models.InclusionPromise{
+			SignedEntryTimestamp: ip.SignedEntryTimestamp,
+		}
+	}
+	if proof := tlogEntry.GetInclusionProof(); proof != nil {
+		hashes := make([][]byte, len(proof.Hashes))
+		for i, h := range proof.Hashes {
+			hashes[i] = h
+		}
+
+		apiEntry.InclusionProof = &models.InclusionProof{
+			Checkpoint: &models.Checkpoint{
+				Envelope: proof.Checkpoint.Envelope,
+			},
+			Hashes:   hashes,
+			LogIndex: proof.LogIndex,
+			RootHash: proof.RootHash,
+			TreeSize: proof.TreeSize,
+		}
+	}
+	return apiEntry, nil
 }
