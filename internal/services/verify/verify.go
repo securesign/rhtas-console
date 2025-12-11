@@ -619,8 +619,7 @@ func extractSignatureViewFromLayer(layer *v1.Descriptor, b *bundle.Bundle) (sign
 	}
 
 	var isoTime *time.Time
-	tlogEntries := b.VerificationMaterial.TlogEntries
-	t := time.Unix(tlogEntries[0].IntegratedTime, 0).UTC()
+	t := time.Unix(tlogEntry.IntegratedTime, 0).UTC()
 	isoTime = &t
 
 	digestStr := layer.Digest.String()
@@ -738,8 +737,7 @@ func extractAttestationViewFromLayer(layer *v1.Descriptor, b *bundle.Bundle) (at
 
 	// Timestamp
 	var isoTime *time.Time
-	tlogEntries := b.VerificationMaterial.TlogEntries
-	t := time.Unix(tlogEntries[0].IntegratedTime, 0).UTC()
+	t := time.Unix(tlogEntry.IntegratedTime, 0).UTC()
 	isoTime = &t
 
 	digestStr := layer.Digest.String()
@@ -1675,42 +1673,39 @@ func extractTransparencyLogEntry(b *bundle.Bundle) (models.TransparencyLogEntry,
 		return models.TransparencyLogEntry{}, fmt.Errorf("bundle contains no Rekor entries")
 	}
 
-	apiEntry := models.TransparencyLogEntry{
+	apiTlogEntry := models.TransparencyLogEntry{
 		CanonicalizedBody: tlogEntry.GetCanonicalizedBody(),
 		IntegratedTime:    tlogEntry.GetIntegratedTime(),
 		LogIndex:          tlogEntry.GetLogIndex(),
 	}
 	if kv := tlogEntry.GetKindVersion(); kv != nil {
-		apiEntry.KindVersion = &models.KindVersion{
+		apiTlogEntry.KindVersion = &models.KindVersion{
 			Kind:    kv.Kind,
 			Version: kv.Version,
 		}
 	}
 	if lid := tlogEntry.GetLogId(); lid != nil {
-		apiEntry.LogId = &models.LogId{
+		apiTlogEntry.LogId = &models.LogId{
 			KeyId: lid.KeyId,
 		}
 	}
 	if ip := tlogEntry.GetInclusionPromise(); ip != nil {
-		apiEntry.InclusionPromise = &models.InclusionPromise{
+		apiTlogEntry.InclusionPromise = &models.InclusionPromise{
 			SignedEntryTimestamp: ip.SignedEntryTimestamp,
 		}
 	}
 	if proof := tlogEntry.GetInclusionProof(); proof != nil {
-		hashes := make([][]byte, len(proof.Hashes))
-		for i, h := range proof.Hashes {
-			hashes[i] = h
-		}
-
-		apiEntry.InclusionProof = &models.InclusionProof{
-			Checkpoint: &models.Checkpoint{
-				Envelope: proof.Checkpoint.Envelope,
-			},
-			Hashes:   hashes,
+		apiTlogEntry.InclusionProof = &models.InclusionProof{
+			Hashes:   proof.Hashes,
 			LogIndex: proof.LogIndex,
 			RootHash: proof.RootHash,
 			TreeSize: proof.TreeSize,
 		}
+		if checkpoint := proof.GetCheckpoint(); checkpoint != nil {
+			apiTlogEntry.InclusionProof.Checkpoint = &models.Checkpoint{
+				Envelope: checkpoint.Envelope,
+			}
+		}
 	}
-	return apiEntry, nil
+	return apiTlogEntry, nil
 }
