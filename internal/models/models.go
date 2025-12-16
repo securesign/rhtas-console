@@ -26,10 +26,9 @@ const (
 
 // Defines values for ArtifactSummaryViewOverallStatus.
 const (
-	ArtifactSummaryViewOverallStatusFailed            ArtifactSummaryViewOverallStatus = "failed"
-	ArtifactSummaryViewOverallStatusPartiallyVerified ArtifactSummaryViewOverallStatus = "partially-verified"
-	ArtifactSummaryViewOverallStatusUnsigned          ArtifactSummaryViewOverallStatus = "unsigned"
-	ArtifactSummaryViewOverallStatusVerified          ArtifactSummaryViewOverallStatus = "verified"
+	ArtifactSummaryViewOverallStatusFailed   ArtifactSummaryViewOverallStatus = "failed"
+	ArtifactSummaryViewOverallStatusUnsigned ArtifactSummaryViewOverallStatus = "unsigned"
+	ArtifactSummaryViewOverallStatusVerified ArtifactSummaryViewOverallStatus = "verified"
 )
 
 // Defines values for CertificateRole.
@@ -151,14 +150,13 @@ type AttestationView struct {
 	Digest            string               `json:"digest"`
 
 	// Id Unique identifier for the signature view
-	Id               int    `json:"id"`
-	PredicateType    string `json:"predicateType"`
-	RawBundleJson    string `json:"rawBundleJson"`
-	RawStatementJson string `json:"rawStatementJson"`
-
-	// RekorEntry Rekor transparency log entry
-	RekorEntry         map[string]interface{} `json:"rekorEntry"`
-	SigningCertificate *ParsedCertificate     `json:"signingCertificate,omitempty"`
+	Id                 int                   `json:"id"`
+	PayloadType        *string               `json:"payloadType,omitempty"`
+	PredicateType      string                `json:"predicateType"`
+	RawBundleJson      string                `json:"rawBundleJson"`
+	RawStatementJson   string                `json:"rawStatementJson"`
+	RekorEntry         *TransparencyLogEntry `json:"rekorEntry,omitempty"`
+	SigningCertificate *ParsedCertificate    `json:"signingCertificate,omitempty"`
 
 	// Timestamp ISO-8601 timestamp
 	Timestamp *time.Time `json:"timestamp,omitempty"`
@@ -197,6 +195,11 @@ type CertificateInfoList struct {
 // CertificateRole defines model for CertificateRole.
 type CertificateRole string
 
+// Checkpoint defines model for Checkpoint.
+type Checkpoint struct {
+	Envelope string `json:"envelope"`
+}
+
 // Error defines model for Error.
 type Error struct {
 	// Error Error message
@@ -218,22 +221,37 @@ type ImageMetadataResponse struct {
 	Registry string `json:"registry"`
 }
 
+// InclusionPromise defines model for InclusionPromise.
+type InclusionPromise struct {
+	SignedEntryTimestamp []byte `json:"signedEntryTimestamp"`
+}
+
 // InclusionProof Merkle tree inclusion proof for a Rekor entry
 type InclusionProof struct {
-	// Checkpoint Checkpoint string for the log, including tree size and root hash
-	Checkpoint string `json:"checkpoint"`
+	Checkpoint *Checkpoint `json:"checkpoint,omitempty"`
 
 	// Hashes Array of Merkle tree hashes for the inclusion proof
-	Hashes []string `json:"hashes"`
+	Hashes [][]byte `json:"hashes"`
 
 	// LogIndex Log index of the entry in the Merkle tree
 	LogIndex int64 `json:"logIndex"`
 
 	// RootHash Root hash of the Merkle tree at the time of inclusion
-	RootHash string `json:"rootHash"`
+	RootHash []byte `json:"rootHash"`
 
 	// TreeSize Size of the Merkle tree at the time of inclusion
 	TreeSize int64 `json:"treeSize"`
+}
+
+// KindVersion defines model for KindVersion.
+type KindVersion struct {
+	Kind    string `json:"kind"`
+	Version string `json:"version"`
+}
+
+// LogId defines model for LogId.
+type LogId struct {
+	KeyId []byte `json:"keyId"`
 }
 
 // Metadata Metadata for a container image
@@ -268,27 +286,6 @@ type ParsedCertificate struct {
 	Subject      string          `json:"subject"`
 }
 
-// RekorEntry defines model for RekorEntry.
-type RekorEntry struct {
-	// Body Base64-encoded entry body
-	Body string `json:"body"`
-
-	// IntegratedTime Timestamp of when the entry was integrated
-	IntegratedTime int `json:"integratedTime"`
-
-	// LogID Unique identifier of the transparency log
-	LogID string `json:"logID"`
-
-	// LogIndex Index in the transparency log
-	LogIndex int `json:"logIndex"`
-
-	// Uuid Unique identifier of the Rekor entry
-	Uuid string `json:"uuid"`
-
-	// Verification Verification details for a Rekor entry, including inclusion proof and signed timestamp
-	Verification Verification `json:"verification"`
-}
-
 // RekorPublicKey defines model for RekorPublicKey.
 type RekorPublicKey struct {
 	// PublicKey Rekor public key in PEM format
@@ -321,13 +318,11 @@ type SignatureView struct {
 	Digest           string              `json:"digest"`
 
 	// Id Unique identifier for the signature view
-	Id            int    `json:"id"`
-	RawBundleJson string `json:"rawBundleJson"`
-
-	// RekorEntry Rekor transparency log entry
-	RekorEntry         map[string]interface{} `json:"rekorEntry"`
-	SignatureStatus    SignatureStatus        `json:"signatureStatus"`
-	SigningCertificate ParsedCertificate      `json:"signingCertificate"`
+	Id                 int                   `json:"id"`
+	RawBundleJson      string                `json:"rawBundleJson"`
+	RekorEntry         *TransparencyLogEntry `json:"rekorEntry,omitempty"`
+	SignatureStatus    SignatureStatus       `json:"signatureStatus"`
+	SigningCertificate ParsedCertificate     `json:"signingCertificate"`
 
 	// Timestamp ISO-8601 timestamp
 	Timestamp *time.Time `json:"timestamp,omitempty"`
@@ -368,6 +363,19 @@ type TimeCoherenceSummary struct {
 // TimeCoherenceSummaryStatus defines model for TimeCoherenceSummary.Status.
 type TimeCoherenceSummaryStatus string
 
+// TransparencyLogEntry defines model for TransparencyLogEntry.
+type TransparencyLogEntry struct {
+	CanonicalizedBody []byte            `json:"canonicalizedBody"`
+	InclusionPromise  *InclusionPromise `json:"inclusionPromise,omitempty"`
+
+	// InclusionProof Merkle tree inclusion proof for a Rekor entry
+	InclusionProof *InclusionProof `json:"inclusionProof"`
+	IntegratedTime int64           `json:"integratedTime"`
+	KindVersion    *KindVersion    `json:"kindVersion,omitempty"`
+	LogId          *LogId          `json:"logId,omitempty"`
+	LogIndex       int64           `json:"logIndex"`
+}
+
 // TrustConfig defines model for TrustConfig.
 type TrustConfig struct {
 	FulcioCertAuthorities []struct {
@@ -377,15 +385,6 @@ type TrustConfig struct {
 		// Subject Certificate authority subject
 		Subject string `json:"subject"`
 	} `json:"fulcioCertAuthorities"`
-}
-
-// Verification Verification details for a Rekor entry, including inclusion proof and signed timestamp
-type Verification struct {
-	// InclusionProof Merkle tree inclusion proof for a Rekor entry
-	InclusionProof InclusionProof `json:"inclusionProof"`
-
-	// SignedEntryTimestamp Base64-encoded signed timestamp for the entry
-	SignedEntryTimestamp string `json:"signedEntryTimestamp"`
 }
 
 // VerifyArtifactRequest Parameters for verifying a signed artifact or container image using Sigstore and related trust sources. Fields correspond to common verification inputs such as issuer expectations, trusted roots, and TUF configuration.

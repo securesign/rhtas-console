@@ -122,7 +122,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/RekorEntry'
+                $ref: '#/components/schemas/TransparencyLogEntry'
         '404':
           description: Entry not found
           content:
@@ -479,36 +479,6 @@ components:
         - attestations
         - summary
         - artifact
-    InclusionProof:
-      type: object
-      description: Merkle tree inclusion proof for a Rekor entry
-      properties:
-        checkpoint:
-          type: string
-          description: Checkpoint string for the log, including tree size and root hash
-        hashes:
-          type: array
-          description: Array of Merkle tree hashes for the inclusion proof
-          items:
-            type: string
-            description: A single hash in the inclusion proof
-        logIndex:
-          type: integer
-          format: int64
-          description: Log index of the entry in the Merkle tree
-        rootHash:
-          type: string
-          description: Root hash of the Merkle tree at the time of inclusion
-        treeSize:
-          type: integer
-          format: int64
-          description: Size of the Merkle tree at the time of inclusion
-      required:
-        - checkpoint
-        - hashes
-        - logIndex
-        - rootHash
-        - treeSize
     Verification:
       type: object
       description: Verification details for a Rekor entry, including inclusion proof and signed timestamp
@@ -522,34 +492,6 @@ components:
       required:
         - inclusionProof
         - signedEntryTimestamp
-    RekorEntry:
-      type: object
-      properties:
-        uuid:
-          type: string
-          description: Unique identifier of the Rekor entry
-        body:
-          type: string
-          description: Base64-encoded entry body
-        integratedTime:
-          type: integer
-          description: Timestamp of when the entry was integrated
-        logID:
-          type: string
-          description: Unique identifier of the transparency log
-        logIndex:
-          type: integer
-          description: Index in the transparency log
-        verification:
-          $ref: '#/components/schemas/Verification'
-          description: Verification details for the entry
-      required:
-        - uuid
-        - body
-        - integratedTime
-        - logID
-        - logIndex
-        - verification
     RekorPublicKey:
       type: object
       properties:
@@ -845,7 +787,7 @@ components:
           items:
             $ref: '#/components/schemas/ParsedCertificate'
         rekorEntry:
-          type: object
+          $ref: '#/components/schemas/TransparencyLogEntry'
           description: Rekor transparency log entry
           additionalProperties: true
         rawBundleJson:
@@ -861,7 +803,6 @@ components:
         - digest
         - signingCertificate
         - certificateChain
-        - rekorEntry
         - rawBundleJson
         - signatureStatus
     AttestationView:
@@ -881,7 +822,7 @@ components:
         type:
           type: string
         rekorEntry:
-          type: object
+          $ref: '#/components/schemas/TransparencyLogEntry'
           description: Rekor transparency log entry
           additionalProperties: true
         rawBundleJson:
@@ -894,6 +835,8 @@ components:
           type: string
           format: date-time
           description: ISO-8601 timestamp
+        payloadType:
+          type: string
         attestationStatus:
           $ref: '#/components/schemas/attestationStatus'
       required:
@@ -904,13 +847,12 @@ components:
         - rawStatementJson
         - predicateType
         - attestationStatus
-        - rekorEntry
     ArtifactSummaryView:
       type: object
       properties:
         overallStatus:
           type: string
-          enum: ["verified", "failed", "unsigned", "partially-verified"]
+          enum: ["verified", "failed", "unsigned"]
         identities:
           type: array
           items:
@@ -1005,3 +947,96 @@ components:
         - attestation
         - chain
         - rekor
+    TransparencyLogEntry:
+      type: object
+      properties:
+        logIndex:
+          type: integer
+          format: int64
+        logId:
+          $ref: '#/components/schemas/LogId'
+        kindVersion:
+          $ref: '#/components/schemas/KindVersion'
+        integratedTime:
+          type: integer
+          format: int64
+        inclusionPromise:
+          $ref: '#/components/schemas/InclusionPromise'
+        inclusionProof:
+          $ref: '#/components/schemas/InclusionProof'
+        canonicalizedBody:
+          type: string
+          format: byte
+      required:
+        - logIndex
+        - integratedTime
+        - canonicalizedBody
+    KindVersion:
+      type: object
+      properties:
+        kind:
+          type: string
+        version:
+          type: string
+      required:
+        - kind
+        - version
+    InclusionPromise:
+      type: object
+      properties:
+        signedEntryTimestamp:
+          type: string
+          format: byte
+      required:
+        - signedEntryTimestamp
+    InclusionProof:
+      type: object
+      description: Merkle tree inclusion proof for a Rekor entry
+      nullable: true
+      properties:
+        checkpoint:
+          $ref: '#/components/schemas/Checkpoint'
+          description: Checkpoint string for the log, including tree size and root hash
+        hashes:
+          type: array
+          description: Array of Merkle tree hashes for the inclusion proof
+          items:
+            type: string
+            format: byte
+            description: A single hash in the inclusion proof (Base64-encoded)
+        logIndex:
+          type: integer
+          format: int64
+          description: Log index of the entry in the Merkle tree
+        rootHash:
+          type: string
+          format: byte
+          description: Root hash of the Merkle tree at the time of inclusion
+        treeSize:
+          type: integer
+          format: int64
+          description: Size of the Merkle tree at the time of inclusion
+      required:
+        - hashes
+        - logIndex
+        - rootHash
+        - treeSize
+    Checkpoint:
+      type: object
+      properties:
+        envelope:
+          type: string
+      required:
+        - envelope
+    LogId:
+      type: object
+      properties:
+        keyId:
+          type: string
+          format: byte
+      required:
+        - keyId
+    TlogEntries:
+      type: array
+      items:
+        $ref: '#/components/schemas/TransparencyLogEntry'
