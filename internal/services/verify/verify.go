@@ -1582,84 +1582,74 @@ func ComputeTimeCoherenceSummary(verifyArtifactResponse models.VerifyArtifactRes
 
 // isCertChainValid checks if a certificate chain is valid based on a list of criterias
 func isCertChainValid(certChain []models.ParsedCertificate) bool {
-	valid := true
-
-	// 1. Require at least root + intermediate certificates
-	if len(certChain) < 2 {
+	if len(certChain) == 0 {
 		return false
 	}
 
-	// 2. The intermediate is correctly signed by the root
-	var rootCert, intermediateCert *models.ParsedCertificate
+	// Parse all certs into x509.Certificate
+	var x509Certs []*x509.Certificate
+	for _, pc := range certChain {
+		parsed, err := parsePEMCertificates(pc.Pem)
+		if err != nil || len(parsed) == 0 {
+			return false
+		}
+		x509Certs = append(x509Certs, parsed[0].Cert)
+	}
 
-	for _, cert := range certChain {
-		switch cert.Role {
-		case models.CertificateRoleRoot:
-			rootCert = &cert
-		case models.CertificateRoleIntermediate:
-			intermediateCert = &cert
+	// If there is only one certificate
+	if len(x509Certs) == 1 {
+		cert := x509Certs[0]
+
+		// It must be self-signed
+		if err := cert.CheckSignatureFrom(cert); err != nil {
+			return false
+		}
+
+		// Check time validity
+		now := time.Now()
+		if now.Before(cert.NotBefore) || now.After(cert.NotAfter) {
+			return false
+		}
+
+		return true
+	}
+
+	// Build root and intermediate pools
+	roots := x509.NewCertPool()
+	intermediates := x509.NewCertPool()
+
+	for _, cert := range x509Certs {
+		if cert.IsCA && cert.CheckSignatureFrom(cert) == nil {
+			// Self-signed CA: root
+			roots.AddCert(cert)
+		} else if cert.IsCA {
+			intermediates.AddCert(cert)
 		}
 	}
-	if (rootCert == nil) || (intermediateCert == nil) {
-		return false
+
+	// Assume first non-CA cert is the leaf
+	var leaf *x509.Certificate
+	for _, cert := range x509Certs {
+		if !cert.IsCA {
+			leaf = cert
+			break
+		}
 	}
 
-	sigVerified := checkSignature(rootCert.Pem, intermediateCert.Pem)
-	if !sigVerified {
-		valid = false
+	// If no explicit leaf, allow CA-only chains (e.g., root + intermediate)
+	if leaf == nil {
+		leaf = x509Certs[0]
 	}
 
-	// 3. Intermediate issuer must match root subject
-	if intermediateCert.Issuer != rootCert.Subject {
-		valid = false
+	opts := x509.VerifyOptions{
+		Roots:         roots,
+		Intermediates: intermediates,
+		CurrentTime:   time.Now(),
+		KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
 	}
 
-	// 4. The certificates are within validity period
-	if !isTimeValid(rootCert.Pem) || !isTimeValid(intermediateCert.Pem) {
-		valid = false
-	}
-
-	// 5. Ensure intermediate is a CA
-	if !intermediateCert.IsCa {
-		valid = false
-	}
-
-	// 6. Ensure intermediate has keyCertSign (required for CA certs)
-	intermediateX509, _ := parsePEMCertificates(intermediateCert.Pem)
-	if intermediateX509[0].Cert.KeyUsage&x509.KeyUsageCertSign == 0 {
-		valid = false
-	}
-
-	return valid
-}
-
-// checkSignature returns true if the intermediate certificate is correctly signed by the provided root certificate
-func checkSignature(rootPEM string, intermediatePEM string) bool {
-	root, err := parsePEMCertificates(rootPEM)
-	if err != nil {
-		return false
-	}
-	rootCert := root[0].Cert
-	intermediate, err := parsePEMCertificates(intermediatePEM)
-	if err != nil {
-		return false
-	}
-	intermediateCert := intermediate[0].Cert
-	err = intermediateCert.CheckSignatureFrom(rootCert)
+	_, err := leaf.Verify(opts)
 	return err == nil
-}
-
-// isTimeValid returns true if the certificate is currently valid based on its NotBefore/NotAfter fields
-func isTimeValid(certPEM string) bool {
-	cert, err := parsePEMCertificates(certPEM)
-	if err != nil {
-		return false
-	}
-	now := time.Now()
-	if now.Before(cert[0].Cert.NotBefore) || now.After(cert[0].Cert.NotAfter) {
-		return false
-	}
-	return true
 }
 
 // extractTransparencyLogEntry extracts the first Rekor transparency log entry from the bundle and converts it to the public model.
