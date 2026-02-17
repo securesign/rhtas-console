@@ -23,7 +23,7 @@ LABEL io.k8s.display-name="RHTAS Console Backend"
 LABEL io.openshift.tags="rhtas backend api trusted-signer"
 LABEL summary="Provides the backend service for RHTAS Console."
 LABEL com.redhat.component="rhtas-console"
-LABEL name="rhtas-console"
+LABEL name="rhtas/rhtas-console-rhel9"
 
 COPY LICENSE /licenses/LICENSE
 
