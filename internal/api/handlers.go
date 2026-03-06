@@ -58,7 +58,7 @@ func (h *Handler) GetApiV1RekorEntriesUuid(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, "missing uuid")
 		return
 	}
-	resp, err := h.rekorService.GetRekorEntry(r.Context(), uuid)
+	resp, err := h.rekorService.GetRekorEntries(r.Context(), uuid)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "missing entry")
 		return

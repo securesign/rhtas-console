@@ -132,8 +132,8 @@ type ArtifactSummaryView struct {
 	Identities       []ArtifactIdentity               `json:"identities"`
 	OverallStatus    ArtifactSummaryViewOverallStatus `json:"overallStatus"`
 
-	// RekorEntryCount Total number of Rekor entries
-	RekorEntryCount int `json:"rekorEntryCount"`
+	// RekorEntriesCount Total number of Rekor entries
+	RekorEntriesCount int `json:"RekorEntriesCount"`
 
 	// SignatureCount Total number of signatures
 	SignatureCount int                   `json:"signatureCount"`
@@ -155,7 +155,7 @@ type AttestationView struct {
 	PredicateType      string                `json:"predicateType"`
 	RawBundleJson      string                `json:"rawBundleJson"`
 	RawStatementJson   string                `json:"rawStatementJson"`
-	RekorEntry         *TransparencyLogEntry `json:"rekorEntry,omitempty"`
+	RekorEntries         *TransparencyLogEntry `json:"RekorEntries,omitempty"`
 	SigningCertificate *ParsedCertificate    `json:"signingCertificate,omitempty"`
 
 	// Timestamp ISO-8601 timestamp
@@ -320,7 +320,7 @@ type SignatureView struct {
 	// Id Unique identifier for the signature view
 	Id                 int                   `json:"id"`
 	RawBundleJson      string                `json:"rawBundleJson"`
-	RekorEntry         *TransparencyLogEntry `json:"rekorEntry,omitempty"`
+	RekorEntries         *TransparencyLogEntry `json:"RekorEntries,omitempty"`
 	SignatureStatus    SignatureStatus       `json:"signatureStatus"`
 	SigningCertificate ParsedCertificate     `json:"signingCertificate"`
 

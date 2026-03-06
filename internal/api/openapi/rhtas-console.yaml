@@ -786,7 +786,7 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/ParsedCertificate'
-        rekorEntry:
+        rekorEntries:
           $ref: '#/components/schemas/TransparencyLogEntry'
           description: Rekor transparency log entry
           additionalProperties: true
@@ -821,7 +821,7 @@ components:
             $ref: '#/components/schemas/ParsedCertificate'
         type:
           type: string
-        rekorEntry:
+        rekorEntries:
           $ref: '#/components/schemas/TransparencyLogEntry'
           description: Rekor transparency log entry
           additionalProperties: true
@@ -863,7 +863,7 @@ components:
         attestationCount:
           type: integer
           description: Total number of attestations
-        rekorEntryCount:
+        rekorEntriesCount:
           type: integer
           description: Total number of Rekor entries
         timeCoherence:
@@ -873,7 +873,7 @@ components:
         - identities
         - signatureCount
         - attestationCount
-        - rekorEntryCount
+        - rekorEntriesCount
     ArtifactIdentitySource:
       type: string
       enum:
