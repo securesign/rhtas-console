@@ -166,7 +166,7 @@ func VerifyArtifact(verifyOpts VerifyOptions) (verifyArtifactResponse models.Ver
 	// Summary
 	verifyArtifactResponse.Summary.SignatureCount = len(verifyArtifactResponse.Signatures)
 	verifyArtifactResponse.Summary.AttestationCount = len(verifyArtifactResponse.Attestations)
-	verifyArtifactResponse.Summary.RekorEntryCount = verifyArtifactResponse.Summary.SignatureCount + verifyArtifactResponse.Summary.AttestationCount
+	verifyArtifactResponse.Summary.RekorEntriesCount = verifyArtifactResponse.Summary.SignatureCount + verifyArtifactResponse.Summary.AttestationCount
 
 	// ImageMetadataResponse
 	// Add artifact metadata
@@ -360,7 +360,7 @@ func VerifyAndGetSignatureView(verifyOpts VerifyOptions, layer *v1.Descriptor) (
 	rekorStatus := models.SignatureStatusRekorVerified
 	chainStatus := models.SignatureStatusChainVerified
 
-	if signatureView.RekorEntry == nil {
+	if signatureView.RekorEntries == nil {
 		rekorStatus = models.SignatureStatusRekorFailed
 	}
 
@@ -414,7 +414,7 @@ func VerifyAndGetAttestationView(verifyOpts VerifyOptions, layer *v1.Descriptor)
 	rekorStatus := models.AttestationStatusRekorVerified
 	chainStatus := models.AttestationStatusChainVerified
 
-	if attestationView.RekorEntry == nil {
+	if attestationView.RekorEntries == nil {
 		rekorStatus = models.AttestationStatusRekorFailed
 	}
 
@@ -627,7 +627,7 @@ func extractSignatureViewFromLayer(layer *v1.Descriptor, b *bundle.Bundle) (sign
 		Digest:             digestStr,
 		CertificateChain:   parsedCerts,
 		SigningCertificate: parsedSigningCert,
-		RekorEntry:         &tlogEntry,
+		RekorEntries:       &tlogEntry,
 		RawBundleJson:      rawBundle,
 		Timestamp:          isoTime,
 	}
@@ -743,7 +743,7 @@ func extractAttestationViewFromLayer(layer *v1.Descriptor, b *bundle.Bundle) (at
 	digestStr := layer.Digest.String()
 	attestationView = models.AttestationView{
 		Digest:             digestStr,
-		RekorEntry:         &tlogEntry,
+		RekorEntries:       &tlogEntry,
 		RawBundleJson:      rawBundle,
 		Timestamp:          isoTime,
 		CertificateChain:   &parsedCerts,

@@ -7,7 +7,7 @@ import (
 )
 
 type RekorService interface {
-	GetRekorEntry(ctx context.Context, uuid string) (models.TransparencyLogEntry, error)
+	GetRekorEntries(ctx context.Context, uuid string) (models.TransparencyLogEntry, error)
 	GetRekorPublicKey(ctx context.Context) (models.RekorPublicKey, error)
 }
 
@@ -17,7 +17,7 @@ func NewRekorService() RekorService {
 	return &rekorService{}
 }
 
-func (s *rekorService) GetRekorEntry(ctx context.Context, uuid string) (models.TransparencyLogEntry, error) {
+func (s *rekorService) GetRekorEntries(ctx context.Context, uuid string) (models.TransparencyLogEntry, error) {
 	// TODO: Implement actual API call to Rekor server
 	return models.TransparencyLogEntry{}, nil
 }
