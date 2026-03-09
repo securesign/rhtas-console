@@ -19,6 +19,7 @@ func RegisterRoutes(r *chi.Mux, as services.ArtifactService, rs services.RekorSe
 	r.Get("/api/v1/trust/targets", handler.GetApiV1TrustTargets)
 	r.Get("/api/v1/trust/target", handler.GetApiV1TrustTarget)
 	r.Get("/api/v1/trust/targets/certificates", handler.GetApiV1TrustTargetsCertificates)
+	r.Get("/api/v1/trust/coverage", handler.GetApiV1TrustCoverage)
 	r.Get("/swagger-ui", handler.ServeSwaggerUI)
 	r.Get("/rhtas-console.yaml", handler.ServeOpenAPIFile)
 }

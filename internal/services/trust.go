@@ -334,18 +334,15 @@ func (s *trustService) GetAllTargets(ctx context.Context, tufRepoUrl string) (mo
 }
 
 func (s *trustService) GetTrustCoverage(ctx context.Context, timeWindow string, environment *string, tufRepoUrl string) (models.TrustCoverageResponse, int, error) {
-	// Check if MOCK_MODE is enabled
 	mockMode := os.Getenv("MOCK_MODE")
 	if mockMode != "true" {
 		return models.TrustCoverageResponse{}, http.StatusNotImplemented, fmt.Errorf("coverage endpoint not yet implemented - set MOCK_MODE=true for mock data")
 	}
 
-	// Validate and default time window
 	if timeWindow == "" {
 		timeWindow = "7d"
 	}
 
-	// Validate time window parameter
 	validTimeWindows := map[string]bool{
 		"24h": true,
 		"7d":  true,
@@ -357,13 +354,11 @@ func (s *trustService) GetTrustCoverage(ctx context.Context, timeWindow string, 
 		return models.TrustCoverageResponse{}, http.StatusBadRequest, fmt.Errorf("invalid time window: %s (valid values: 24h, 7d, 30d, 90d, all)", timeWindow)
 	}
 
-	// Return mock data
 	return getMockTrustCoverage(timeWindow, environment), http.StatusOK, nil
 }
 
-// getMockTrustCoverage returns mock coverage data for development and testing
 func getMockTrustCoverage(timeWindow string, environment *string) models.TrustCoverageResponse {
-	// Define mock data for each environment
+	// define mock data for each environment
 	prodTotals := models.CoverageTotals{
 		TotalArtifacts:     500,
 		SignedArtifacts:    475,
@@ -371,6 +366,7 @@ func getMockTrustCoverage(timeWindow string, environment *string) models.TrustCo
 		AttestedArtifacts:  400,
 		RekorEntries:       475,
 	}
+
 	prodPercentages := models.CoveragePercentages{
 		SignedPercentage:    95.0,
 		VerifiedPercentage:  90.0,
@@ -384,6 +380,7 @@ func getMockTrustCoverage(timeWindow string, environment *string) models.TrustCo
 		AttestedArtifacts:  150,
 		RekorEntries:       240,
 	}
+
 	stagingPercentages := models.CoveragePercentages{
 		SignedPercentage:    80.0,
 		VerifiedPercentage:  75.0,
@@ -397,13 +394,14 @@ func getMockTrustCoverage(timeWindow string, environment *string) models.TrustCo
 		AttestedArtifacts:  60,
 		RekorEntries:       130,
 	}
+	
 	devPercentages := models.CoveragePercentages{
 		SignedPercentage:    65.0,
 		VerifiedPercentage:  60.0,
 		AttestedPercentage:  30.0,
 	}
 
-	// Build environment breakdown
+	// build environment breakdown
 	allEnvironments := []models.EnvironmentCoverage{
 		{
 			Environment: "production",
@@ -422,13 +420,12 @@ func getMockTrustCoverage(timeWindow string, environment *string) models.TrustCo
 		},
 	}
 
-	// Filter by environment if specified
+	// filter by environment
 	var environmentBreakdown []models.EnvironmentCoverage
 	var aggregateTotals models.CoverageTotals
 	var aggregatePercentages models.CoveragePercentages
 
 	if environment != nil && *environment != "" {
-		// Filter to specific environment
 		for _, env := range allEnvironments {
 			if env.Environment == *environment {
 				environmentBreakdown = append(environmentBreakdown, env)
@@ -437,7 +434,7 @@ func getMockTrustCoverage(timeWindow string, environment *string) models.TrustCo
 				break
 			}
 		}
-		// If no match found, return empty breakdown with defaults
+
 		if len(environmentBreakdown) == 0 {
 			environmentBreakdown = []models.EnvironmentCoverage{}
 			aggregateTotals = models.CoverageTotals{
@@ -454,10 +451,8 @@ func getMockTrustCoverage(timeWindow string, environment *string) models.TrustCo
 			}
 		}
 	} else {
-		// Include all environments
 		environmentBreakdown = allEnvironments
 
-		// Calculate aggregate totals across all environments
 		aggregateTotals = models.CoverageTotals{
 			TotalArtifacts:     1000,
 			SignedArtifacts:    845,
@@ -466,7 +461,6 @@ func getMockTrustCoverage(timeWindow string, environment *string) models.TrustCo
 			RekorEntries:       845,
 		}
 
-		// Calculate aggregate percentages
 		aggregatePercentages = models.CoveragePercentages{
 			SignedPercentage:    84.5,
 			VerifiedPercentage:  79.5,
@@ -478,7 +472,7 @@ func getMockTrustCoverage(timeWindow string, environment *string) models.TrustCo
 		Totals:               aggregateTotals,
 		Percentages:          aggregatePercentages,
 		EnvironmentBreakdown: environmentBreakdown,
-		TrendData:            nil, // Not implemented in initial version
+		TrendData:            nil, // not implemented in initial version
 		TimeWindow:           timeWindow,
 		GeneratedAt:          time.Now().UTC(),
 	}
