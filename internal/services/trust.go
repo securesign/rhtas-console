@@ -45,6 +45,7 @@ type TrustService interface {
 	GetTarget(ctx context.Context, tufRepoUrl string, target string) (content models.TargetContent, statusCode int, err error)
 	GetCertificatesInfo(ctx context.Context, tufRepoUrl string) (certs models.CertificateInfoList, statusCode int, err error)
 	GetAllTargets(ctx context.Context, tufRepoUrl string) (targets models.TargetsList, statusCode int, err error)
+	GetTrustCoverage(ctx context.Context, timeWindow string, environment *string, tufRepoUrl string) (coverage models.TrustCoverageResponse, statusCode int, err error)
 	CloseDB() error
 }
 
@@ -330,6 +331,157 @@ func (s *trustService) GetAllTargets(ctx context.Context, tufRepoUrl string) (mo
 		})
 	}
 	return result, http.StatusOK, nil
+}
+
+func (s *trustService) GetTrustCoverage(ctx context.Context, timeWindow string, environment *string, tufRepoUrl string) (models.TrustCoverageResponse, int, error) {
+	// Check if MOCK_MODE is enabled
+	mockMode := os.Getenv("MOCK_MODE")
+	if mockMode != "true" {
+		return models.TrustCoverageResponse{}, http.StatusNotImplemented, fmt.Errorf("coverage endpoint not yet implemented - set MOCK_MODE=true for mock data")
+	}
+
+	// Validate and default time window
+	if timeWindow == "" {
+		timeWindow = "7d"
+	}
+
+	// Validate time window parameter
+	validTimeWindows := map[string]bool{
+		"24h": true,
+		"7d":  true,
+		"30d": true,
+		"90d": true,
+		"all": true,
+	}
+	if !validTimeWindows[timeWindow] {
+		return models.TrustCoverageResponse{}, http.StatusBadRequest, fmt.Errorf("invalid time window: %s (valid values: 24h, 7d, 30d, 90d, all)", timeWindow)
+	}
+
+	// Return mock data
+	return getMockTrustCoverage(timeWindow, environment), http.StatusOK, nil
+}
+
+// getMockTrustCoverage returns mock coverage data for development and testing
+func getMockTrustCoverage(timeWindow string, environment *string) models.TrustCoverageResponse {
+	// Define mock data for each environment
+	prodTotals := models.CoverageTotals{
+		TotalArtifacts:     500,
+		SignedArtifacts:    475,
+		VerifiedArtifacts:  450,
+		AttestedArtifacts:  400,
+		RekorEntries:       475,
+	}
+	prodPercentages := models.CoveragePercentages{
+		SignedPercentage:    95.0,
+		VerifiedPercentage:  90.0,
+		AttestedPercentage:  80.0,
+	}
+
+	stagingTotals := models.CoverageTotals{
+		TotalArtifacts:     300,
+		SignedArtifacts:    240,
+		VerifiedArtifacts:  225,
+		AttestedArtifacts:  150,
+		RekorEntries:       240,
+	}
+	stagingPercentages := models.CoveragePercentages{
+		SignedPercentage:    80.0,
+		VerifiedPercentage:  75.0,
+		AttestedPercentage:  50.0,
+	}
+
+	devTotals := models.CoverageTotals{
+		TotalArtifacts:     200,
+		SignedArtifacts:    130,
+		VerifiedArtifacts:  120,
+		AttestedArtifacts:  60,
+		RekorEntries:       130,
+	}
+	devPercentages := models.CoveragePercentages{
+		SignedPercentage:    65.0,
+		VerifiedPercentage:  60.0,
+		AttestedPercentage:  30.0,
+	}
+
+	// Build environment breakdown
+	allEnvironments := []models.EnvironmentCoverage{
+		{
+			Environment: "production",
+			Totals:      prodTotals,
+			Percentages: prodPercentages,
+		},
+		{
+			Environment: "staging",
+			Totals:      stagingTotals,
+			Percentages: stagingPercentages,
+		},
+		{
+			Environment: "development",
+			Totals:      devTotals,
+			Percentages: devPercentages,
+		},
+	}
+
+	// Filter by environment if specified
+	var environmentBreakdown []models.EnvironmentCoverage
+	var aggregateTotals models.CoverageTotals
+	var aggregatePercentages models.CoveragePercentages
+
+	if environment != nil && *environment != "" {
+		// Filter to specific environment
+		for _, env := range allEnvironments {
+			if env.Environment == *environment {
+				environmentBreakdown = append(environmentBreakdown, env)
+				aggregateTotals = env.Totals
+				aggregatePercentages = env.Percentages
+				break
+			}
+		}
+		// If no match found, return empty breakdown with defaults
+		if len(environmentBreakdown) == 0 {
+			environmentBreakdown = []models.EnvironmentCoverage{}
+			aggregateTotals = models.CoverageTotals{
+				TotalArtifacts:     0,
+				SignedArtifacts:    0,
+				VerifiedArtifacts:  0,
+				AttestedArtifacts:  0,
+				RekorEntries:       0,
+			}
+			aggregatePercentages = models.CoveragePercentages{
+				SignedPercentage:    0.0,
+				VerifiedPercentage:  0.0,
+				AttestedPercentage:  0.0,
+			}
+		}
+	} else {
+		// Include all environments
+		environmentBreakdown = allEnvironments
+
+		// Calculate aggregate totals across all environments
+		aggregateTotals = models.CoverageTotals{
+			TotalArtifacts:     1000,
+			SignedArtifacts:    845,
+			VerifiedArtifacts:  795,
+			AttestedArtifacts:  610,
+			RekorEntries:       845,
+		}
+
+		// Calculate aggregate percentages
+		aggregatePercentages = models.CoveragePercentages{
+			SignedPercentage:    84.5,
+			VerifiedPercentage:  79.5,
+			AttestedPercentage:  61.0,
+		}
+	}
+
+	return models.TrustCoverageResponse{
+		Totals:               aggregateTotals,
+		Percentages:          aggregatePercentages,
+		EnvironmentBreakdown: environmentBreakdown,
+		TrendData:            nil, // Not implemented in initial version
+		TimeWindow:           timeWindow,
+		GeneratedAt:          time.Now().UTC(),
+	}
 }
 
 // getOrCreateUpdater retrieves or initializes a TUF updater for the given repository URL.

@@ -363,6 +363,63 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+  /api/v1/trust/coverage:
+    get:
+      summary: Get Trust Coverage
+      description: |
+        Returns aggregated signing and verification posture data across environments.
+        Supports filtering by time window and deployment environment.
+      tags:
+        - Trust
+      parameters:
+        - name: timeWindow
+          in: query
+          required: false
+          schema:
+            type: string
+            description: Time window for filtering coverage data
+            enum: [24h, 7d, 30d, 90d, all]
+            default: 7d
+            example: 7d
+        - name: environment
+          in: query
+          required: false
+          schema:
+            type: string
+            description: Deployment environment filter (e.g., production, staging, development)
+            example: production
+        - name: tufRepositoryUrl
+          in: query
+          required: false
+          schema:
+            type: string
+            description: URL of the TUF repository
+            example: https://tuf-repo-cdn.sigstore.dev/
+      responses:
+        '200':
+          description: Trust coverage data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrustCoverageResponse'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '501':
+          description: Not implemented (MOCK_MODE not enabled)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 components:
   securitySchemes:
     basicAuth:
@@ -1040,3 +1097,124 @@ components:
       type: array
       items:
         $ref: '#/components/schemas/TransparencyLogEntry'
+    TrustCoverageResponse:
+      type: object
+      properties:
+        totals:
+          $ref: '#/components/schemas/CoverageTotals'
+          description: Aggregate coverage totals across all environments
+        percentages:
+          $ref: '#/components/schemas/CoveragePercentages'
+          description: Coverage percentages across all environments
+        environmentBreakdown:
+          type: array
+          description: Coverage breakdown by deployment environment
+          items:
+            $ref: '#/components/schemas/EnvironmentCoverage'
+        trendData:
+          type: array
+          nullable: true
+          description: Historical trend data for coverage metrics
+          items:
+            $ref: '#/components/schemas/TrendDataPoint'
+        timeWindow:
+          type: string
+          description: Applied time window filter
+          example: 7d
+        generatedAt:
+          type: string
+          format: date-time
+          description: Timestamp when the coverage report was generated
+      required:
+        - totals
+        - percentages
+        - environmentBreakdown
+        - timeWindow
+        - generatedAt
+    CoverageTotals:
+      type: object
+      properties:
+        totalArtifacts:
+          type: integer
+          description: Total number of artifacts
+          example: 1000
+        signedArtifacts:
+          type: integer
+          description: Number of signed artifacts
+          example: 850
+        verifiedArtifacts:
+          type: integer
+          description: Number of verified artifacts
+          example: 800
+        attestedArtifacts:
+          type: integer
+          description: Number of artifacts with attestations
+          example: 600
+        rekorEntries:
+          type: integer
+          description: Total number of Rekor transparency log entries
+          example: 850
+      required:
+        - totalArtifacts
+        - signedArtifacts
+        - verifiedArtifacts
+        - attestedArtifacts
+        - rekorEntries
+    CoveragePercentages:
+      type: object
+      properties:
+        signedPercentage:
+          type: number
+          format: float
+          description: Percentage of artifacts that are signed
+          example: 85.0
+        verifiedPercentage:
+          type: number
+          format: float
+          description: Percentage of artifacts that are verified
+          example: 80.0
+        attestedPercentage:
+          type: number
+          format: float
+          description: Percentage of artifacts with attestations
+          example: 60.0
+      required:
+        - signedPercentage
+        - verifiedPercentage
+        - attestedPercentage
+    EnvironmentCoverage:
+      type: object
+      properties:
+        environment:
+          type: string
+          description: Environment name
+          example: production
+        totals:
+          $ref: '#/components/schemas/CoverageTotals'
+        percentages:
+          $ref: '#/components/schemas/CoveragePercentages'
+      required:
+        - environment
+        - totals
+        - percentages
+    TrendDataPoint:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+          description: Time point
+        signedCount:
+          type: integer
+          description: Number of signed artifacts at this time point
+        verifiedCount:
+          type: integer
+          description: Number of verified artifacts at this time point
+        attestedCount:
+          type: integer
+          description: Number of attested artifacts at this time point
+      required:
+        - timestamp
+        - signedCount
+        - verifiedCount
+        - attestedCount
