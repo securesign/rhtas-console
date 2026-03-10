@@ -336,7 +336,7 @@ func (s *trustService) GetAllTargets(ctx context.Context, tufRepoUrl string) (mo
 func (s *trustService) GetTrustCoverage(ctx context.Context, timeWindow string, environment *string, tufRepoUrl string) (models.TrustCoverageResponse, int, error) {
 	mockMode := os.Getenv("MOCK_MODE")
 	if mockMode != "true" {
-		return models.TrustCoverageResponse{}, http.StatusNotImplemented, fmt.Errorf("coverage endpoint not yet implemented - set MOCK_MODE=true for mock data")
+		return models.TrustCoverageResponse{}, http.StatusServiceUnavailable, fmt.Errorf("coverage data not available - set MOCK_MODE=true for mock data")
 	}
 
 	if timeWindow == "" {

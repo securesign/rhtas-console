@@ -414,8 +414,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-        '501':
-          description: Not implemented (MOCK_MODE not enabled)
+        '503':
+          description: Service unavailable (MOCK_MODE not enabled)
           content:
             application/json:
               schema:
