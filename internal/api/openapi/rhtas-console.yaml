@@ -1186,16 +1186,22 @@ components:
           type: number
           format: float
           description: Percentage of artifacts that are signed
+          minimum: 0
+          maximum: 100
           example: 85.0
         verifiedPercentage:
           type: number
           format: float
           description: Percentage of artifacts that are verified
+          minimum: 0
+          maximum: 100
           example: 80.0
         attestedPercentage:
           type: number
           format: float
           description: Percentage of artifacts with attestations
+          minimum: 0
+          maximum: 100
           example: 60.0
       required:
         - signedPercentage
