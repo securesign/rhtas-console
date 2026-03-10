@@ -92,6 +92,18 @@ const (
 	N90d GetApiV1TrustCoverageParamsTimeWindow = "90d"
 )
 
+// AppliedCoverageFilters defines model for AppliedCoverageFilters.
+type AppliedCoverageFilters struct {
+	// Environment Environment filter that was applied (null if not filtered)
+	Environment *string `json:"environment"`
+
+	// TimeWindow Time window that was applied
+	TimeWindow string `json:"timeWindow"`
+
+	// TufRepositoryUrl TUF repository URL that was used as the data source
+	TufRepositoryUrl string `json:"tufRepositoryUrl"`
+}
+
 // ArtifactIdentity defines model for ArtifactIdentity.
 type ArtifactIdentity struct {
 	// Id Unique identifier for the signature view
@@ -451,16 +463,15 @@ type TrustConfig struct {
 
 // TrustCoverageResponse defines model for TrustCoverageResponse.
 type TrustCoverageResponse struct {
+	AppliedFilters AppliedCoverageFilters `json:"appliedFilters"`
+
 	// EnvironmentBreakdown Coverage breakdown by deployment environment
 	EnvironmentBreakdown []EnvironmentCoverage `json:"environmentBreakdown"`
 
 	// GeneratedAt Timestamp when the coverage report was generated
 	GeneratedAt time.Time           `json:"generatedAt"`
 	Percentages CoveragePercentages `json:"percentages"`
-
-	// TimeWindow Applied time window filter
-	TimeWindow string         `json:"timeWindow"`
-	Totals     CoverageTotals `json:"totals"`
+	Totals      CoverageTotals      `json:"totals"`
 
 	// TrendData Historical trend data for coverage metrics
 	TrendData *[]TrendDataPoint `json:"trendData"`

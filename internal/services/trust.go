@@ -354,10 +354,10 @@ func (s *trustService) GetTrustCoverage(ctx context.Context, timeWindow string, 
 		return models.TrustCoverageResponse{}, http.StatusBadRequest, fmt.Errorf("invalid time window: %s (valid values: 24h, 7d, 30d, 90d, all)", timeWindow)
 	}
 
-	return getMockTrustCoverage(timeWindow, environment), http.StatusOK, nil
+	return getMockTrustCoverage(timeWindow, environment, tufRepoUrl), http.StatusOK, nil
 }
 
-func getMockTrustCoverage(timeWindow string, environment *string) models.TrustCoverageResponse {
+func getMockTrustCoverage(timeWindow string, environment *string, tufRepoUrl string) models.TrustCoverageResponse {
 	// define mock data for each environment
 	prodTotals := models.CoverageTotals{
 		TotalArtifacts:     500,
@@ -473,8 +473,12 @@ func getMockTrustCoverage(timeWindow string, environment *string) models.TrustCo
 		Percentages:          aggregatePercentages,
 		EnvironmentBreakdown: environmentBreakdown,
 		TrendData:            nil, // not implemented in initial version
-		TimeWindow:           timeWindow,
-		GeneratedAt:          time.Now().UTC(),
+		AppliedFilters: models.AppliedCoverageFilters{
+			TimeWindow:       timeWindow,
+			Environment:      environment,
+			TufRepositoryUrl: tufRepoUrl,
+		},
+		GeneratedAt: time.Now().UTC(),
 	}
 }
 

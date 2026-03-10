@@ -18,7 +18,7 @@ paths:
     get:
       operationId: GetHealthz
       responses:
-        '200':
+        "200":
           description: Server is healthy
           content:
             application/json:
@@ -38,26 +38,26 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/VerifyArtifactRequest'
+              $ref: "#/components/schemas/VerifyArtifactRequest"
       responses:
-        '200':
+        "200":
           description: Verification succeeded
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/VerifyArtifactResponse'
-        '400':
+                $ref: "#/components/schemas/VerifyArtifactResponse"
+        "400":
           description: Invalid input
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
-        '500':
+                $ref: "#/components/schemas/Error"
+        "500":
           description: Verification failed due to internal error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: "#/components/schemas/Error"
 
   /api/v1/artifacts/image:
     get:
@@ -75,36 +75,36 @@ paths:
       security:
         - basicAuth: []
       responses:
-        '200':
+        "200":
           description: Container image metadata and digest retrieved successfully
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ImageMetadataResponse'
-        '400':
+                $ref: "#/components/schemas/ImageMetadataResponse"
+        "400":
           description: Invalid input (e.g., malformed container image URI)
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
-        '401':
+                $ref: "#/components/schemas/Error"
+        "401":
           description: Authentication failed
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
-        '404':
+                $ref: "#/components/schemas/Error"
+        "404":
           description: Container image not found in the registry
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
-        '500':
+                $ref: "#/components/schemas/Error"
+        "500":
           description: Internal server error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: "#/components/schemas/Error"
   /api/v1/rekor/entries/{uuid}:
     get:
       summary: Retrieve Rekor log entry by UUID
@@ -117,42 +117,42 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: Rekor entry data
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/TransparencyLogEntry'
-        '404':
+                $ref: "#/components/schemas/TransparencyLogEntry"
+        "404":
           description: Entry not found
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
-        '500':
+                $ref: "#/components/schemas/Error"
+        "500":
           description: Internal server error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: "#/components/schemas/Error"
   /api/v1/rekor/public-key:
     get:
       summary: Get Rekor public key
       tags:
         - Rekor
       responses:
-        '200':
+        "200":
           description: Rekor public key in PEM format
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/RekorPublicKey'
-        '500':
+                $ref: "#/components/schemas/RekorPublicKey"
+        "500":
           description: Internal server error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: "#/components/schemas/Error"
   /api/v1/artifacts/{artifact}/policies:
     get:
       summary: Get policies and attestations for an artifact
@@ -166,24 +166,24 @@ paths:
             type: string
             example: quay.io/example/app:latest
       responses:
-        '200':
+        "200":
           description: Policy and attestation data
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ArtifactPolicies'
-        '404':
+                $ref: "#/components/schemas/ArtifactPolicies"
+        "404":
           description: Artifact not found
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
-        '500':
+                $ref: "#/components/schemas/Error"
+        "500":
           description: Internal server error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: "#/components/schemas/Error"
   /api/v1/trust/config:
     get:
       summary: Get Fulcio and Rekor metadata from TUF targets
@@ -201,24 +201,24 @@ paths:
             description: URL of the TUF repository
             example: https://tuf-repo-cdn.sigstore.dev/
       responses:
-        '200':
+        "200":
           description: Trust root data
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/TrustConfig'
-        '400':
+                $ref: "#/components/schemas/TrustConfig"
+        "400":
           description: Invalid input
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
-        '500':
+                $ref: "#/components/schemas/Error"
+        "500":
           description: Internal server error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: "#/components/schemas/Error"
   /api/v1/trust/root-metadata-info:
     get:
       summary: Get TUF Root Metadata
@@ -236,24 +236,24 @@ paths:
             description: URL of the TUF repository
             example: https://tuf-repo-cdn.sigstore.dev/
       responses:
-        '200':
+        "200":
           description: List of TUF root metadata entries
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/RootMetadataInfoList'
-        '400':
+                $ref: "#/components/schemas/RootMetadataInfoList"
+        "400":
           description: Invalid input
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
-        '500':
+                $ref: "#/components/schemas/Error"
+        "500":
           description: Internal server error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: "#/components/schemas/Error"
   /api/v1/trust/targets:
     get:
       summary: Get TUF Targets List
@@ -270,24 +270,24 @@ paths:
             description: URL of the TUF repository
             example: https://tuf-repo-cdn.sigstore.dev/
       responses:
-        '200':
+        "200":
           description: List of TUF target names
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/TargetsList'
-        '400':
+                $ref: "#/components/schemas/TargetsList"
+        "400":
           description: Invalid input
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
-        '500':
+                $ref: "#/components/schemas/Error"
+        "500":
           description: Internal server error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: "#/components/schemas/Error"
   /api/v1/trust/target:
     get:
       summary: Get TUF Target File Content
@@ -311,24 +311,24 @@ paths:
             description: Target filename
             example: rekor.pub
       responses:
-        '200':
+        "200":
           description: Content of the requested TUF target file
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/TargetContent'
-        '400':
+                $ref: "#/components/schemas/TargetContent"
+        "400":
           description: Invalid input
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
-        '500':
+                $ref: "#/components/schemas/Error"
+        "500":
           description: Internal server error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: "#/components/schemas/Error"
   /api/v1/trust/targets/certificates:
     get:
       summary: Get Certificates Information
@@ -345,24 +345,24 @@ paths:
             description: URL of the TUF repository
             example: https://tuf-repo-cdn.sigstore.dev/
       responses:
-        '200':
+        "200":
           description: List of TUF target names
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/CertificateInfoList'
-        '400':
+                $ref: "#/components/schemas/CertificateInfoList"
+        "400":
           description: Invalid input
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
-        '500':
+                $ref: "#/components/schemas/Error"
+        "500":
           description: Internal server error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: "#/components/schemas/Error"
   /api/v1/trust/coverage:
     get:
       summary: Get Trust Coverage
@@ -396,30 +396,30 @@ paths:
             description: URL of the TUF repository
             example: https://tuf-repo-cdn.sigstore.dev/
       responses:
-        '200':
+        "200":
           description: Trust coverage data
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/TrustCoverageResponse'
-        '400':
+                $ref: "#/components/schemas/TrustCoverageResponse"
+        "400":
           description: Invalid input
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
-        '500':
+                $ref: "#/components/schemas/Error"
+        "500":
           description: Internal server error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
-        '503':
+                $ref: "#/components/schemas/Error"
+        "503":
           description: Service unavailable (MOCK_MODE not enabled)
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: "#/components/schemas/Error"
 components:
   securitySchemes:
     basicAuth:
@@ -519,18 +519,18 @@ components:
           type: array
           description: List of signature verification results
           items:
-            $ref: '#/components/schemas/SignatureView'
+            $ref: "#/components/schemas/SignatureView"
         attestations:
           type: array
           description: List of attestations for the artifact
           items:
-            $ref: '#/components/schemas/AttestationView'
+            $ref: "#/components/schemas/AttestationView"
         summary:
           description: List of attestations for the artifact
-          $ref: '#/components/schemas/ArtifactSummaryView'
+          $ref: "#/components/schemas/ArtifactSummaryView"
         artifact:
           description: Artifact metadata response
-          $ref: '#/components/schemas/ImageMetadataResponse'
+          $ref: "#/components/schemas/ImageMetadataResponse"
       required:
         - signatures
         - attestations
@@ -541,7 +541,7 @@ components:
       description: Verification details for a Rekor entry, including inclusion proof and signed timestamp
       properties:
         inclusionProof:
-          $ref: '#/components/schemas/InclusionProof'
+          $ref: "#/components/schemas/InclusionProof"
           description: Merkle tree inclusion proof for the entry
         signedEntryTimestamp:
           type: string
@@ -662,7 +662,7 @@ components:
           description: The registry URI of the container image
           example: index.docker.io
         metadata:
-          $ref: '#/components/schemas/Metadata'
+          $ref: "#/components/schemas/Metadata"
         digest:
           type: string
           description: The container image's digest (e.g., SHA256 hash)
@@ -697,7 +697,7 @@ components:
         data:
           type: array
           items:
-            $ref: '#/components/schemas/RootMetadataInfo'
+            $ref: "#/components/schemas/RootMetadataInfo"
       required:
         - data
     TargetsList:
@@ -706,7 +706,7 @@ components:
         data:
           type: array
           items:
-            $ref: '#/components/schemas/TargetInfo'
+            $ref: "#/components/schemas/TargetInfo"
       required:
         - data
     TargetContent:
@@ -753,7 +753,7 @@ components:
           description: Status of the target to which the certificate is associated.
         target:
           type: string
-          description:  The TUF target to which the certificate is associated.
+          description: The TUF target to which the certificate is associated.
         expiration:
           type: string
           description: Expiration date and time of the certificate (notAfter).
@@ -774,7 +774,7 @@ components:
         data:
           type: array
           items:
-            $ref: '#/components/schemas/CertificateInfo'
+            $ref: "#/components/schemas/CertificateInfo"
       required:
         - data
     Error:
@@ -796,7 +796,7 @@ components:
       type: object
       properties:
         role:
-          $ref: '#/components/schemas/CertificateRole'
+          $ref: "#/components/schemas/CertificateRole"
         subject:
           type: string
         issuer:
@@ -838,13 +838,13 @@ components:
         digest:
           type: string
         signingCertificate:
-          $ref: '#/components/schemas/ParsedCertificate'
+          $ref: "#/components/schemas/ParsedCertificate"
         certificateChain:
           type: array
           items:
-            $ref: '#/components/schemas/ParsedCertificate'
+            $ref: "#/components/schemas/ParsedCertificate"
         rekorEntry:
-          $ref: '#/components/schemas/TransparencyLogEntry'
+          $ref: "#/components/schemas/TransparencyLogEntry"
           description: Rekor transparency log entry
           additionalProperties: true
         rawBundleJson:
@@ -854,7 +854,7 @@ components:
           format: date-time
           description: ISO-8601 timestamp
         signatureStatus:
-          $ref: '#/components/schemas/signatureStatus'
+          $ref: "#/components/schemas/signatureStatus"
       required:
         - id
         - digest
@@ -871,15 +871,15 @@ components:
         digest:
           type: string
         signingCertificate:
-          $ref: '#/components/schemas/ParsedCertificate'
+          $ref: "#/components/schemas/ParsedCertificate"
         certificateChain:
           type: array
           items:
-            $ref: '#/components/schemas/ParsedCertificate'
+            $ref: "#/components/schemas/ParsedCertificate"
         type:
           type: string
         rekorEntry:
-          $ref: '#/components/schemas/TransparencyLogEntry'
+          $ref: "#/components/schemas/TransparencyLogEntry"
           description: Rekor transparency log entry
           additionalProperties: true
         rawBundleJson:
@@ -895,7 +895,7 @@ components:
         payloadType:
           type: string
         attestationStatus:
-          $ref: '#/components/schemas/attestationStatus'
+          $ref: "#/components/schemas/attestationStatus"
       required:
         - id
         - digest
@@ -913,7 +913,7 @@ components:
         identities:
           type: array
           items:
-            $ref: '#/components/schemas/ArtifactIdentity'
+            $ref: "#/components/schemas/ArtifactIdentity"
         signatureCount:
           type: integer
           description: Total number of signatures
@@ -924,7 +924,7 @@ components:
           type: integer
           description: Total number of Rekor entries
         timeCoherence:
-          $ref: '#/components/schemas/TimeCoherenceSummary'
+          $ref: "#/components/schemas/TimeCoherenceSummary"
       required:
         - overallStatus
         - identities
@@ -950,7 +950,7 @@ components:
         issuer:
           type: string
         source:
-          $ref: '#/components/schemas/ArtifactIdentitySource'
+          $ref: "#/components/schemas/ArtifactIdentitySource"
       required:
         - id
         - type
@@ -1011,16 +1011,16 @@ components:
           type: integer
           format: int64
         logId:
-          $ref: '#/components/schemas/LogId'
+          $ref: "#/components/schemas/LogId"
         kindVersion:
-          $ref: '#/components/schemas/KindVersion'
+          $ref: "#/components/schemas/KindVersion"
         integratedTime:
           type: integer
           format: int64
         inclusionPromise:
-          $ref: '#/components/schemas/InclusionPromise'
+          $ref: "#/components/schemas/InclusionPromise"
         inclusionProof:
-          $ref: '#/components/schemas/InclusionProof'
+          $ref: "#/components/schemas/InclusionProof"
         canonicalizedBody:
           type: string
           format: byte
@@ -1052,7 +1052,7 @@ components:
       nullable: true
       properties:
         checkpoint:
-          $ref: '#/components/schemas/Checkpoint'
+          $ref: "#/components/schemas/Checkpoint"
           description: Checkpoint string for the log, including tree size and root hash
         hashes:
           type: array
@@ -1096,31 +1096,30 @@ components:
     TlogEntries:
       type: array
       items:
-        $ref: '#/components/schemas/TransparencyLogEntry'
+        $ref: "#/components/schemas/TransparencyLogEntry"
     TrustCoverageResponse:
       type: object
       properties:
         totals:
-          $ref: '#/components/schemas/CoverageTotals'
+          $ref: "#/components/schemas/CoverageTotals"
           description: Aggregate coverage totals across all environments
         percentages:
-          $ref: '#/components/schemas/CoveragePercentages'
+          $ref: "#/components/schemas/CoveragePercentages"
           description: Coverage percentages across all environments
         environmentBreakdown:
           type: array
           description: Coverage breakdown by deployment environment
           items:
-            $ref: '#/components/schemas/EnvironmentCoverage'
+            $ref: "#/components/schemas/EnvironmentCoverage"
         trendData:
           type: array
           nullable: true
           description: Historical trend data for coverage metrics
           items:
-            $ref: '#/components/schemas/TrendDataPoint'
-        timeWindow:
-          type: string
-          description: Applied time window filter
-          example: 7d
+            $ref: "#/components/schemas/TrendDataPoint"
+        appliedFilters:
+          $ref: "#/components/schemas/AppliedCoverageFilters"
+          description: The filters that were applied to generate this coverage data
         generatedAt:
           type: string
           format: date-time
@@ -1129,8 +1128,27 @@ components:
         - totals
         - percentages
         - environmentBreakdown
-        - timeWindow
+        - appliedFilters
         - generatedAt
+    AppliedCoverageFilters:
+      type: object
+      properties:
+        timeWindow:
+          type: string
+          description: Time window that was applied
+          example: 7d
+        environment:
+          type: string
+          nullable: true
+          description: Environment filter that was applied (null if not filtered)
+          example: production
+        tufRepositoryUrl:
+          type: string
+          description: TUF repository URL that was used as the data source
+          example: https://tuf-repo-cdn.sigstore.dev
+      required:
+        - timeWindow
+        - tufRepositoryUrl
     CoverageTotals:
       type: object
       properties:
@@ -1190,9 +1208,9 @@ components:
           description: Environment name
           example: production
         totals:
-          $ref: '#/components/schemas/CoverageTotals'
+          $ref: "#/components/schemas/CoverageTotals"
         percentages:
-          $ref: '#/components/schemas/CoveragePercentages'
+          $ref: "#/components/schemas/CoveragePercentages"
       required:
         - environment
         - totals
