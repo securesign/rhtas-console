@@ -1113,10 +1113,10 @@ components:
             $ref: "#/components/schemas/EnvironmentCoverage"
         trendData:
           type: array
-          nullable: true
           description: Historical trend data for coverage metrics
           items:
             $ref: "#/components/schemas/TrendDataPoint"
+          default: []
         appliedFilters:
           $ref: "#/components/schemas/AppliedCoverageFilters"
           description: The filters that were applied to generate this coverage data
@@ -1128,6 +1128,7 @@ components:
         - totals
         - percentages
         - environmentBreakdown
+        - trendData
         - appliedFilters
         - generatedAt
     AppliedCoverageFilters:

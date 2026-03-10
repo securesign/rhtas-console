@@ -472,7 +472,7 @@ func getMockTrustCoverage(timeWindow string, environment *string, tufRepoUrl str
 		Totals:               aggregateTotals,
 		Percentages:          aggregatePercentages,
 		EnvironmentBreakdown: environmentBreakdown,
-		TrendData:            nil, // not implemented in initial version
+		TrendData:            []models.TrendDataPoint{},
 		AppliedFilters: models.AppliedCoverageFilters{
 			TimeWindow:       timeWindow,
 			Environment:      environment,

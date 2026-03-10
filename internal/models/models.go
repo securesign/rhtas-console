@@ -474,7 +474,7 @@ type TrustCoverageResponse struct {
 	Totals      CoverageTotals      `json:"totals"`
 
 	// TrendData Historical trend data for coverage metrics
-	TrendData *[]TrendDataPoint `json:"trendData"`
+	TrendData []TrendDataPoint `json:"trendData"`
 }
 
 // VerifyArtifactRequest Parameters for verifying a signed artifact or container image using Sigstore and related trust sources. Fields correspond to common verification inputs such as issuer expectations, trusted roots, and TUF configuration.
