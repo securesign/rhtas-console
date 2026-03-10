@@ -440,14 +440,26 @@ type TrendDataPoint struct {
 	// AttestedCount Number of attested artifacts at this time point
 	AttestedCount int `json:"attestedCount"`
 
+	// AttestedPercentage Percentage of artifacts with attestations at this time point
+	AttestedPercentage float32 `json:"attestedPercentage"`
+
 	// SignedCount Number of signed artifacts at this time point
 	SignedCount int `json:"signedCount"`
+
+	// SignedPercentage Percentage of artifacts that are signed at this time point
+	SignedPercentage float32 `json:"signedPercentage"`
 
 	// Timestamp Time point
 	Timestamp time.Time `json:"timestamp"`
 
+	// TotalArtifacts Total number of artifacts at this time point
+	TotalArtifacts int `json:"totalArtifacts"`
+
 	// VerifiedCount Number of verified artifacts at this time point
 	VerifiedCount int `json:"verifiedCount"`
+
+	// VerifiedPercentage Percentage of artifacts that are verified at this time point
+	VerifiedPercentage float32 `json:"verifiedPercentage"`
 }
 
 // TrustConfig defines model for TrustConfig.

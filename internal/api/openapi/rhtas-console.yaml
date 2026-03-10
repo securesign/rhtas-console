@@ -1229,6 +1229,9 @@ components:
           type: string
           format: date-time
           description: Time point
+        totalArtifacts:
+          type: integer
+          description: Total number of artifacts at this time point
         signedCount:
           type: integer
           description: Number of signed artifacts at this time point
@@ -1238,8 +1241,30 @@ components:
         attestedCount:
           type: integer
           description: Number of attested artifacts at this time point
+        signedPercentage:
+          type: number
+          format: float
+          description: Percentage of artifacts that are signed at this time point
+          minimum: 0
+          maximum: 100
+        verifiedPercentage:
+          type: number
+          format: float
+          description: Percentage of artifacts that are verified at this time point
+          minimum: 0
+          maximum: 100
+        attestedPercentage:
+          type: number
+          format: float
+          description: Percentage of artifacts with attestations at this time point
+          minimum: 0
+          maximum: 100
       required:
         - timestamp
+        - totalArtifacts
         - signedCount
         - verifiedCount
         - attestedCount
+        - signedPercentage
+        - verifiedPercentage
+        - attestedPercentage
