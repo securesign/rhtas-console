@@ -1,5 +1,5 @@
 # Build stage
-FROM registry.redhat.io/ubi9/go-toolset:9.7@sha256:dc1f887fd22e4cc112f59b3173754ef97f1c6b7202a720e697b2798d8053b7be AS builder
+FROM registry.redhat.io/ubi9/go-toolset:9.7-1773318690@sha256:2a6a828a4020b8a03875bb0fa72cf41c0bd8695c2e5c60f49acb5fcdbd1e35cf AS builder
 
 WORKDIR /app
 
@@ -8,7 +8,7 @@ COPY . .
 RUN go build -buildvcs=false -o rhtas_console ./cmd/rhtas_console
 
 # Final stage
-FROM registry.access.redhat.com/ubi9/ubi-minimal@sha256:bb08f2300cb8d12a7eb91dddf28ea63692b3ec99e7f0fa71a1b300f2756ea829
+FROM registry.access.redhat.com/ubi9/ubi-minimal@sha256:69f5c9886ecb19b23e88275a5cd904c47dd982dfa370fbbd0c356d7b1047ef68
 
 # Set a writable working directory
 WORKDIR /tmp
