@@ -12,6 +12,7 @@ DB_CONTAINER = mariadb
 DB_IMAGE = registry.redhat.io/rhel9/mariadb-105@sha256:050dd5a7a32395b73b8680570e967e55050b152727412fdd73a25d8816e62d53
 DB_DSN = $(DB_USER):$(DB_PASS)@tcp(localhost:$(DB_PORT))/$(DB_NAME)
 TUF_PUBLIC_INSTANCE = https://tuf-repo-cdn.sigstore.dev
+OAPI_CODEGEN_VERSION := v2.5.1
 
 .PHONY: all
 all: generate-openapi build
@@ -45,7 +46,7 @@ run: build deploy-mariadb
 deps:
 	@echo "Installing dependencies..."
 	@go mod tidy
-	@go install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@latest
+	@go install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@$(OAPI_CODEGEN_VERSION)
 
 # Database Management
 .PHONY: deploy-mariadb
