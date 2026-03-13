@@ -83,6 +83,27 @@ const (
 	Verified SignatureStatusSignature = "verified"
 )
 
+// Defines values for GetApiV1TrustCoverageParamsTimeWindow.
+const (
+	All  GetApiV1TrustCoverageParamsTimeWindow = "all"
+	N24h GetApiV1TrustCoverageParamsTimeWindow = "24h"
+	N30d GetApiV1TrustCoverageParamsTimeWindow = "30d"
+	N7d  GetApiV1TrustCoverageParamsTimeWindow = "7d"
+	N90d GetApiV1TrustCoverageParamsTimeWindow = "90d"
+)
+
+// AppliedCoverageFilters defines model for AppliedCoverageFilters.
+type AppliedCoverageFilters struct {
+	// Environment Environment filter that was applied (null if not filtered)
+	Environment *string `json:"environment"`
+
+	// TimeWindow Time window that was applied
+	TimeWindow string `json:"timeWindow"`
+
+	// TufRepositoryUrl TUF repository URL that was used as the data source
+	TufRepositoryUrl string `json:"tufRepositoryUrl"`
+}
+
 // ArtifactIdentity defines model for ArtifactIdentity.
 type ArtifactIdentity struct {
 	// Id Unique identifier for the signature view
@@ -198,6 +219,44 @@ type CertificateRole string
 // Checkpoint defines model for Checkpoint.
 type Checkpoint struct {
 	Envelope string `json:"envelope"`
+}
+
+// CoveragePercentages defines model for CoveragePercentages.
+type CoveragePercentages struct {
+	// AttestedPercentage Percentage of artifacts with attestations
+	AttestedPercentage float32 `json:"attestedPercentage"`
+
+	// SignedPercentage Percentage of artifacts that are signed
+	SignedPercentage float32 `json:"signedPercentage"`
+
+	// VerifiedPercentage Percentage of artifacts that are verified
+	VerifiedPercentage float32 `json:"verifiedPercentage"`
+}
+
+// CoverageTotals defines model for CoverageTotals.
+type CoverageTotals struct {
+	// AttestedArtifacts Number of artifacts with attestations
+	AttestedArtifacts int `json:"attestedArtifacts"`
+
+	// RekorEntries Total number of Rekor transparency log entries
+	RekorEntries int `json:"rekorEntries"`
+
+	// SignedArtifacts Number of signed artifacts
+	SignedArtifacts int `json:"signedArtifacts"`
+
+	// TotalArtifacts Total number of artifacts
+	TotalArtifacts int `json:"totalArtifacts"`
+
+	// VerifiedArtifacts Number of verified artifacts
+	VerifiedArtifacts int `json:"verifiedArtifacts"`
+}
+
+// EnvironmentCoverage defines model for EnvironmentCoverage.
+type EnvironmentCoverage struct {
+	// Environment Environment name
+	Environment string              `json:"environment"`
+	Percentages CoveragePercentages `json:"percentages"`
+	Totals      CoverageTotals      `json:"totals"`
 }
 
 // Error defines model for Error.
@@ -376,6 +435,33 @@ type TransparencyLogEntry struct {
 	LogIndex       int64           `json:"logIndex"`
 }
 
+// TrendDataPoint defines model for TrendDataPoint.
+type TrendDataPoint struct {
+	// AttestedCount Number of attested artifacts at this time point
+	AttestedCount int `json:"attestedCount"`
+
+	// AttestedPercentage Percentage of artifacts with attestations at this time point
+	AttestedPercentage float32 `json:"attestedPercentage"`
+
+	// SignedCount Number of signed artifacts at this time point
+	SignedCount int `json:"signedCount"`
+
+	// SignedPercentage Percentage of artifacts that are signed at this time point
+	SignedPercentage float32 `json:"signedPercentage"`
+
+	// Timestamp Time point
+	Timestamp time.Time `json:"timestamp"`
+
+	// TotalArtifacts Total number of artifacts at this time point
+	TotalArtifacts int `json:"totalArtifacts"`
+
+	// VerifiedCount Number of verified artifacts at this time point
+	VerifiedCount int `json:"verifiedCount"`
+
+	// VerifiedPercentage Percentage of artifacts that are verified at this time point
+	VerifiedPercentage float32 `json:"verifiedPercentage"`
+}
+
 // TrustConfig defines model for TrustConfig.
 type TrustConfig struct {
 	FulcioCertAuthorities []struct {
@@ -385,6 +471,22 @@ type TrustConfig struct {
 		// Subject Certificate authority subject
 		Subject string `json:"subject"`
 	} `json:"fulcioCertAuthorities"`
+}
+
+// TrustCoverageResponse defines model for TrustCoverageResponse.
+type TrustCoverageResponse struct {
+	AppliedFilters AppliedCoverageFilters `json:"appliedFilters"`
+
+	// EnvironmentBreakdown Coverage breakdown by deployment environment
+	EnvironmentBreakdown []EnvironmentCoverage `json:"environmentBreakdown"`
+
+	// GeneratedAt Timestamp when the coverage report was generated
+	GeneratedAt time.Time           `json:"generatedAt"`
+	Percentages CoveragePercentages `json:"percentages"`
+	Totals      CoverageTotals      `json:"totals"`
+
+	// TrendData Historical trend data for coverage metrics
+	TrendData []TrendDataPoint `json:"trendData"`
 }
 
 // VerifyArtifactRequest Parameters for verifying a signed artifact or container image using Sigstore and related trust sources. Fields correspond to common verification inputs such as issuer expectations, trusted roots, and TUF configuration.
@@ -486,6 +588,16 @@ type GetApiV1TrustConfigParams struct {
 	TufRepositoryUrl *string `form:"tufRepositoryUrl,omitempty" json:"tufRepositoryUrl,omitempty"`
 }
 
+// GetApiV1TrustCoverageParams defines parameters for GetApiV1TrustCoverage.
+type GetApiV1TrustCoverageParams struct {
+	TimeWindow       *GetApiV1TrustCoverageParamsTimeWindow `form:"timeWindow,omitempty" json:"timeWindow,omitempty"`
+	Environment      *string                                `form:"environment,omitempty" json:"environment,omitempty"`
+	TufRepositoryUrl *string                                `form:"tufRepositoryUrl,omitempty" json:"tufRepositoryUrl,omitempty"`
+}
+
+// GetApiV1TrustCoverageParamsTimeWindow defines parameters for GetApiV1TrustCoverage.
+type GetApiV1TrustCoverageParamsTimeWindow string
+
 // GetApiV1TrustRootMetadataInfoParams defines parameters for GetApiV1TrustRootMetadataInfo.
 type GetApiV1TrustRootMetadataInfoParams struct {
 	TufRepositoryUrl *string `form:"tufRepositoryUrl,omitempty" json:"tufRepositoryUrl,omitempty"`
@@ -530,6 +642,9 @@ type ServerInterface interface {
 	// Get Fulcio and Rekor metadata from TUF targets
 	// (GET /api/v1/trust/config)
 	GetApiV1TrustConfig(w http.ResponseWriter, r *http.Request, params GetApiV1TrustConfigParams)
+	// Get Trust Coverage
+	// (GET /api/v1/trust/coverage)
+	GetApiV1TrustCoverage(w http.ResponseWriter, r *http.Request, params GetApiV1TrustCoverageParams)
 	// Get TUF Root Metadata
 	// (GET /api/v1/trust/root-metadata-info)
 	GetApiV1TrustRootMetadataInfo(w http.ResponseWriter, r *http.Request, params GetApiV1TrustRootMetadataInfoParams)
@@ -584,6 +699,12 @@ func (_ Unimplemented) GetApiV1RekorPublicKey(w http.ResponseWriter, r *http.Req
 // Get Fulcio and Rekor metadata from TUF targets
 // (GET /api/v1/trust/config)
 func (_ Unimplemented) GetApiV1TrustConfig(w http.ResponseWriter, r *http.Request, params GetApiV1TrustConfigParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Get Trust Coverage
+// (GET /api/v1/trust/coverage)
+func (_ Unimplemented) GetApiV1TrustCoverage(w http.ResponseWriter, r *http.Request, params GetApiV1TrustCoverageParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -761,6 +882,49 @@ func (siw *ServerInterfaceWrapper) GetApiV1TrustConfig(w http.ResponseWriter, r 
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetApiV1TrustConfig(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetApiV1TrustCoverage operation middleware
+func (siw *ServerInterfaceWrapper) GetApiV1TrustCoverage(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetApiV1TrustCoverageParams
+
+	// ------------- Optional query parameter "timeWindow" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "timeWindow", r.URL.Query(), &params.TimeWindow)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "timeWindow", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "environment" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "environment", r.URL.Query(), &params.Environment)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "environment", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "tufRepositoryUrl" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "tufRepositoryUrl", r.URL.Query(), &params.TufRepositoryUrl)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "tufRepositoryUrl", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetApiV1TrustCoverage(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1037,6 +1201,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/trust/config", wrapper.GetApiV1TrustConfig)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/trust/coverage", wrapper.GetApiV1TrustCoverage)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/trust/root-metadata-info", wrapper.GetApiV1TrustRootMetadataInfo)

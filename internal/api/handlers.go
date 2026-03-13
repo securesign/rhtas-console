@@ -140,6 +140,31 @@ func (h *Handler) GetApiV1TrustTargetsCertificates(w http.ResponseWriter, r *htt
 	writeJSON(w, statusCode, resp)
 }
 
+func (h *Handler) GetApiV1TrustCoverage(w http.ResponseWriter, r *http.Request) {
+	timeWindow := r.URL.Query().Get("timeWindow")
+	if timeWindow == "" {
+		timeWindow = "7d"
+	}
+
+	environmentParam := r.URL.Query().Get("environment")
+	var environment *string
+	if environmentParam != "" {
+		environment = &environmentParam
+	}
+
+	tufRepoUrl := r.URL.Query().Get("tufRepositoryUrl")
+	if tufRepoUrl == "" {
+		tufRepoUrl = os.Getenv("TUF_REPO_URL")
+	}
+
+	resp, statusCode, err := h.trustService.GetTrustCoverage(r.Context(), timeWindow, environment, tufRepoUrl)
+	if err != nil {
+		writeError(w, statusCode, err.Error())
+		return
+	}
+	writeJSON(w, statusCode, resp)
+}
+
 func (h *Handler) ServeSwaggerUI(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
