@@ -378,14 +378,16 @@ func VerifyAndGetSignatureView(verifyOpts VerifyOptions, layer *v1.Descriptor) (
 
 	verified, _, err := VerifyLayer(verifyOpts, b)
 	if err != nil && !verified {
-		// If verification failed and the error is related to transparency log,
-		// retry without requiring transparency log. This handles the case where
+		// If verification failed and transparency log is required, retry without
+		// requiring transparency log and timestamp. This handles the case where
 		// the image was signed by a different RHTAS instance (e.g., public cosign)
 		// whose Rekor entries are not in the current cluster's transparency log.
-		if verifyOpts.RequireTLog && strings.Contains(err.Error(), "not enough verified log entries from transparency log") {
-			log.Printf("Transparency log verification failed for signature, retrying without tlog requirement: %v", err)
+		// We also disable timestamp requirement as it may depend on the transparency log entry.
+		if verifyOpts.RequireTLog && (strings.Contains(err.Error(), "not enough verified log entries from transparency log") || strings.Contains(err.Error(), "threshold not met for verified signed & log entry integrated timestamps")) {
+			log.Printf("Transparency log/timestamp verification failed for signature, retrying without tlog/timestamp requirement: %v", err)
 			verifyOptsNoTLog := verifyOpts
 			verifyOptsNoTLog.RequireTLog = false
+			verifyOptsNoTLog.RequireTimestamp = false
 			verified, _, err = VerifyLayer(verifyOptsNoTLog, b)
 			if err != nil && !verified {
 				return invalidSignatureView, []models.ArtifactIdentity{}, fmt.Errorf("failed to verify signing layer: %w", err)
@@ -456,14 +458,16 @@ func VerifyAndGetAttestationView(verifyOpts VerifyOptions, layer *v1.Descriptor)
 
 	verified, verificationResult, err := VerifyLayer(verifyOpts, b)
 	if err != nil && !verified {
-		// If verification failed and the error is related to transparency log,
-		// retry without requiring transparency log. This handles the case where
+		// If verification failed and transparency log is required, retry without
+		// requiring transparency log and timestamp. This handles the case where
 		// the image was signed by a different RHTAS instance (e.g., public cosign)
 		// whose Rekor entries are not in the current cluster's transparency log.
-		if verifyOpts.RequireTLog && strings.Contains(err.Error(), "not enough verified log entries from transparency log") {
-			log.Printf("Transparency log verification failed for attestation, retrying without tlog requirement: %v", err)
+		// We also disable timestamp requirement as it may depend on the transparency log entry.
+		if verifyOpts.RequireTLog && (strings.Contains(err.Error(), "not enough verified log entries from transparency log") || strings.Contains(err.Error(), "threshold not met for verified signed & log entry integrated timestamps")) {
+			log.Printf("Transparency log/timestamp verification failed for attestation, retrying without tlog/timestamp requirement: %v", err)
 			verifyOptsNoTLog := verifyOpts
 			verifyOptsNoTLog.RequireTLog = false
+			verifyOptsNoTLog.RequireTimestamp = false
 			verified, verificationResult, err = VerifyLayer(verifyOptsNoTLog, b)
 			if err != nil && !verified {
 				return invalidAttestationView, []models.ArtifactIdentity{}, fmt.Errorf("failed to verify attestation layer: %w", err)
