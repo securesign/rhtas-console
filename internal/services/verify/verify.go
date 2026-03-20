@@ -90,11 +90,6 @@ type VerifyOptions struct {
 	// Default: true
 	RequireTLog bool
 
-	// NoObserverTimestamps explicitly opts out of all timestamp verification.
-	// This is used when verifying artifacts from other RHTAS instances.
-	// Default: false
-	NoObserverTimestamps bool
-
 	// MinBundleVersion specifies the minimum acceptable bundle version, e.g., "0.1".
 	MinBundleVersion string
 
@@ -233,19 +228,24 @@ func VerifyLayer(verifyOpts VerifyOptions, b *bundle.Bundle) (verified bool, ver
 		verifierConfig = append(verifierConfig, verify.WithSignedCertificateTimestamps(1))
 	}
 
+	// Configure timestamp verification
+	// WithObserverTimestamps accepts either RFC3161 or integrated timestamps from transparency log
+	// WithSignedTimestamps accepts only RFC3161 signed timestamps
 	if verifyOpts.RequireTimestamp {
-		verifierConfig = append(verifierConfig, verify.WithObserverTimestamps(1))
+		if verifyOpts.RequireTLog {
+			// When both are required, use ObserverTimestamps which accepts both RFC3161 and integrated timestamps
+			verifierConfig = append(verifierConfig, verify.WithObserverTimestamps(1))
+		} else {
+			// When only timestamp is required (not tlog), use SignedTimestamps to accept RFC3161 timestamps
+			// This handles signatures from other RHTAS instances that may have RFC3161 timestamps
+			verifierConfig = append(verifierConfig, verify.WithSignedTimestamps(1))
+		}
 	}
 
 	if verifyOpts.RequireTLog {
 		verifierConfig = append(verifierConfig, verify.WithTransparencyLog(1))
 	}
 
-	if verifyOpts.NoObserverTimestamps {
-		// Accept RFC3161 signed timestamps if present (threshold 0 means optional)
-		// and use current time as fallback for certificate validation
-		verifierConfig = append(verifierConfig, verify.WithSignedTimestamps(0), verify.WithCurrentTime())
-	}
 
 	if verifyOpts.TrustedPublicKey == "" {
 		certID, err := verify.NewShortCertificateIdentity(verifyOpts.ExpectedOIDIssuer, verifyOpts.ExpectedOIDIssuerRegex, verifyOpts.ExpectedSAN, verifyOpts.ExpectedSANRegex)
@@ -389,17 +389,16 @@ func VerifyAndGetSignatureView(verifyOpts VerifyOptions, layer *v1.Descriptor) (
 
 	verified, _, err := VerifyLayer(verifyOpts, b)
 	if err != nil && !verified {
-		// If verification failed and transparency log is required, retry without
-		// requiring transparency log and timestamp. This handles the case where
-		// the image was signed by a different RHTAS instance (e.g., public cosign)
-		// whose Rekor entries are not in the current cluster's transparency log.
-		// We also disable timestamp requirement as it may depend on the transparency log entry.
+		// If verification failed due to transparency log or timestamp verification,
+		// retry without requiring transparency log. This handles the case where the image
+		// was signed by a different RHTAS instance (e.g., public cosign) whose Rekor entries
+		// are not in the current cluster's transparency log. We keep RequireTimestamp=true
+		// which will use RFC3161 timestamps when RequireTLog=false.
 		if verifyOpts.RequireTLog && (strings.Contains(err.Error(), "not enough verified log entries from transparency log") || strings.Contains(err.Error(), "threshold not met for verified signed & log entry integrated timestamps")) {
-			log.Printf("Transparency log/timestamp verification failed for signature, retrying without tlog/timestamp requirement: %v", err)
+			log.Printf("Transparency log/timestamp verification failed for signature, retrying without tlog requirement: %v", err)
 			verifyOptsNoTLog := verifyOpts
 			verifyOptsNoTLog.RequireTLog = false
-			verifyOptsNoTLog.RequireTimestamp = false
-			verifyOptsNoTLog.NoObserverTimestamps = true
+			// Keep RequireTimestamp=true to use RFC3161 timestamps
 			verified, _, err = VerifyLayer(verifyOptsNoTLog, b)
 			if err != nil && !verified {
 				return invalidSignatureView, []models.ArtifactIdentity{}, fmt.Errorf("failed to verify signing layer: %w", err)
@@ -470,17 +469,16 @@ func VerifyAndGetAttestationView(verifyOpts VerifyOptions, layer *v1.Descriptor)
 
 	verified, verificationResult, err := VerifyLayer(verifyOpts, b)
 	if err != nil && !verified {
-		// If verification failed and transparency log is required, retry without
-		// requiring transparency log and timestamp. This handles the case where
-		// the image was signed by a different RHTAS instance (e.g., public cosign)
-		// whose Rekor entries are not in the current cluster's transparency log.
-		// We also disable timestamp requirement as it may depend on the transparency log entry.
+		// If verification failed due to transparency log or timestamp verification,
+		// retry without requiring transparency log. This handles the case where the image
+		// was signed by a different RHTAS instance (e.g., public cosign) whose Rekor entries
+		// are not in the current cluster's transparency log. We keep RequireTimestamp=true
+		// which will use RFC3161 timestamps when RequireTLog=false.
 		if verifyOpts.RequireTLog && (strings.Contains(err.Error(), "not enough verified log entries from transparency log") || strings.Contains(err.Error(), "threshold not met for verified signed & log entry integrated timestamps")) {
-			log.Printf("Transparency log/timestamp verification failed for attestation, retrying without tlog/timestamp requirement: %v", err)
+			log.Printf("Transparency log/timestamp verification failed for attestation, retrying without tlog requirement: %v", err)
 			verifyOptsNoTLog := verifyOpts
 			verifyOptsNoTLog.RequireTLog = false
-			verifyOptsNoTLog.RequireTimestamp = false
-			verifyOptsNoTLog.NoObserverTimestamps = true
+			// Keep RequireTimestamp=true to use RFC3161 timestamps
 			verified, verificationResult, err = VerifyLayer(verifyOptsNoTLog, b)
 			if err != nil && !verified {
 				return invalidAttestationView, []models.ArtifactIdentity{}, fmt.Errorf("failed to verify attestation layer: %w", err)
