@@ -242,7 +242,7 @@ func VerifyLayer(verifyOpts VerifyOptions, b *bundle.Bundle) (verified bool, ver
 	}
 
 	if verifyOpts.NoObserverTimestamps {
-		verifierConfig = append(verifierConfig, verify.WithNoObserverTimestamps())
+		verifierConfig = append(verifierConfig, verify.WithNoObserverTimestamps(), verify.WithCurrentTime())
 	}
 
 	if verifyOpts.TrustedPublicKey == "" {
