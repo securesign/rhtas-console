@@ -231,6 +231,7 @@ func VerifyLayer(verifyOpts VerifyOptions, b *bundle.Bundle) (verified bool, ver
 	// Configure timestamp verification
 	// WithObserverTimestamps accepts either RFC3161 or integrated timestamps from transparency log
 	// WithSignedTimestamps accepts only RFC3161 signed timestamps
+	// WithCurrentTime uses current time for certificate validation (no timestamp verification)
 	if verifyOpts.RequireTimestamp {
 		if verifyOpts.RequireTLog {
 			// When both are required, use ObserverTimestamps which accepts both RFC3161 and integrated timestamps
@@ -240,12 +241,15 @@ func VerifyLayer(verifyOpts VerifyOptions, b *bundle.Bundle) (verified bool, ver
 			// This handles signatures from other RHTAS instances that may have RFC3161 timestamps
 			verifierConfig = append(verifierConfig, verify.WithSignedTimestamps(1))
 		}
+	} else if !verifyOpts.RequireTLog {
+		// When neither timestamp nor tlog is required, use current time for certificate validation
+		// This handles signatures from other RHTAS instances that don't have verifiable timestamps
+		verifierConfig = append(verifierConfig, verify.WithCurrentTime())
 	}
 
 	if verifyOpts.RequireTLog {
 		verifierConfig = append(verifierConfig, verify.WithTransparencyLog(1))
 	}
-
 
 	if verifyOpts.TrustedPublicKey == "" {
 		certID, err := verify.NewShortCertificateIdentity(verifyOpts.ExpectedOIDIssuer, verifyOpts.ExpectedOIDIssuerRegex, verifyOpts.ExpectedSAN, verifyOpts.ExpectedSANRegex)
@@ -398,10 +402,21 @@ func VerifyAndGetSignatureView(verifyOpts VerifyOptions, layer *v1.Descriptor) (
 			log.Printf("Transparency log/timestamp verification failed for signature, retrying without tlog requirement: %v", err)
 			verifyOptsNoTLog := verifyOpts
 			verifyOptsNoTLog.RequireTLog = false
-			// Keep RequireTimestamp=true to use RFC3161 timestamps
+			// Keep RequireTimestamp=true to try RFC3161 timestamps first
 			verified, _, err = VerifyLayer(verifyOptsNoTLog, b)
 			if err != nil && !verified {
-				return invalidSignatureView, []models.ArtifactIdentity{}, fmt.Errorf("failed to verify signing layer: %w", err)
+				// If RFC3161 timestamps also not available, retry with no timestamp requirement
+				// This uses current time for certificate validation
+				if strings.Contains(err.Error(), "threshold not met for verified signed timestamps") {
+					log.Printf("RFC3161 timestamp not available for signature, retrying with current time: %v", err)
+					verifyOptsNoTLog.RequireTimestamp = false
+					verified, _, err = VerifyLayer(verifyOptsNoTLog, b)
+					if err != nil && !verified {
+						return invalidSignatureView, []models.ArtifactIdentity{}, fmt.Errorf("failed to verify signing layer: %w", err)
+					}
+				} else {
+					return invalidSignatureView, []models.ArtifactIdentity{}, fmt.Errorf("failed to verify signing layer: %w", err)
+				}
 			}
 			// Mark rekor status as failed since we couldn't verify against the current cluster's transparency log
 			rekorStatus = models.SignatureStatusRekorFailed
@@ -478,10 +493,21 @@ func VerifyAndGetAttestationView(verifyOpts VerifyOptions, layer *v1.Descriptor)
 			log.Printf("Transparency log/timestamp verification failed for attestation, retrying without tlog requirement: %v", err)
 			verifyOptsNoTLog := verifyOpts
 			verifyOptsNoTLog.RequireTLog = false
-			// Keep RequireTimestamp=true to use RFC3161 timestamps
+			// Keep RequireTimestamp=true to try RFC3161 timestamps first
 			verified, verificationResult, err = VerifyLayer(verifyOptsNoTLog, b)
 			if err != nil && !verified {
-				return invalidAttestationView, []models.ArtifactIdentity{}, fmt.Errorf("failed to verify attestation layer: %w", err)
+				// If RFC3161 timestamps also not available, retry with no timestamp requirement
+				// This uses current time for certificate validation
+				if strings.Contains(err.Error(), "threshold not met for verified signed timestamps") {
+					log.Printf("RFC3161 timestamp not available for attestation, retrying with current time: %v", err)
+					verifyOptsNoTLog.RequireTimestamp = false
+					verified, verificationResult, err = VerifyLayer(verifyOptsNoTLog, b)
+					if err != nil && !verified {
+						return invalidAttestationView, []models.ArtifactIdentity{}, fmt.Errorf("failed to verify attestation layer: %w", err)
+					}
+				} else {
+					return invalidAttestationView, []models.ArtifactIdentity{}, fmt.Errorf("failed to verify attestation layer: %w", err)
+				}
 			}
 			// Mark rekor status as failed since we couldn't verify against the current cluster's transparency log
 			rekorStatus = models.AttestationStatusRekorFailed
