@@ -242,10 +242,9 @@ func VerifyLayer(verifyOpts VerifyOptions, b *bundle.Bundle) (verified bool, ver
 	}
 
 	if verifyOpts.NoObserverTimestamps {
-		// Use integrated timestamps from the bundle (even if from a different RHTAS instance)
-		// This provides a timestamp for certificate validation without requiring verification
-		// against the current cluster's transparency log
-		verifierConfig = append(verifierConfig, verify.WithIntegratedTimestamps(1))
+		// Accept RFC3161 signed timestamps if present (threshold 0 means optional)
+		// and use current time as fallback for certificate validation
+		verifierConfig = append(verifierConfig, verify.WithSignedTimestamps(0), verify.WithCurrentTime())
 	}
 
 	if verifyOpts.TrustedPublicKey == "" {
