@@ -90,6 +90,11 @@ type VerifyOptions struct {
 	// Default: true
 	RequireTLog bool
 
+	// NoObserverTimestamps explicitly opts out of all timestamp verification.
+	// This is used when verifying artifacts from other RHTAS instances.
+	// Default: false
+	NoObserverTimestamps bool
+
 	// MinBundleVersion specifies the minimum acceptable bundle version, e.g., "0.1".
 	MinBundleVersion string
 
@@ -234,6 +239,10 @@ func VerifyLayer(verifyOpts VerifyOptions, b *bundle.Bundle) (verified bool, ver
 
 	if verifyOpts.RequireTLog {
 		verifierConfig = append(verifierConfig, verify.WithTransparencyLog(1))
+	}
+
+	if verifyOpts.NoObserverTimestamps {
+		verifierConfig = append(verifierConfig, verify.WithNoObserverTimestamps())
 	}
 
 	if verifyOpts.TrustedPublicKey == "" {
@@ -388,6 +397,7 @@ func VerifyAndGetSignatureView(verifyOpts VerifyOptions, layer *v1.Descriptor) (
 			verifyOptsNoTLog := verifyOpts
 			verifyOptsNoTLog.RequireTLog = false
 			verifyOptsNoTLog.RequireTimestamp = false
+			verifyOptsNoTLog.NoObserverTimestamps = true
 			verified, _, err = VerifyLayer(verifyOptsNoTLog, b)
 			if err != nil && !verified {
 				return invalidSignatureView, []models.ArtifactIdentity{}, fmt.Errorf("failed to verify signing layer: %w", err)
@@ -468,6 +478,7 @@ func VerifyAndGetAttestationView(verifyOpts VerifyOptions, layer *v1.Descriptor)
 			verifyOptsNoTLog := verifyOpts
 			verifyOptsNoTLog.RequireTLog = false
 			verifyOptsNoTLog.RequireTimestamp = false
+			verifyOptsNoTLog.NoObserverTimestamps = true
 			verified, verificationResult, err = VerifyLayer(verifyOptsNoTLog, b)
 			if err != nil && !verified {
 				return invalidAttestationView, []models.ArtifactIdentity{}, fmt.Errorf("failed to verify attestation layer: %w", err)
