@@ -378,7 +378,23 @@ func VerifyAndGetSignatureView(verifyOpts VerifyOptions, layer *v1.Descriptor) (
 
 	verified, _, err := VerifyLayer(verifyOpts, b)
 	if err != nil && !verified {
-		return invalidSignatureView, []models.ArtifactIdentity{}, fmt.Errorf("failed to verify signing layer: %w", err)
+		// If verification failed and the error is related to transparency log,
+		// retry without requiring transparency log. This handles the case where
+		// the image was signed by a different RHTAS instance (e.g., public cosign)
+		// whose Rekor entries are not in the current cluster's transparency log.
+		if verifyOpts.RequireTLog && strings.Contains(err.Error(), "not enough verified log entries from transparency log") {
+			log.Printf("Transparency log verification failed for signature, retrying without tlog requirement: %v", err)
+			verifyOptsNoTLog := verifyOpts
+			verifyOptsNoTLog.RequireTLog = false
+			verified, _, err = VerifyLayer(verifyOptsNoTLog, b)
+			if err != nil && !verified {
+				return invalidSignatureView, []models.ArtifactIdentity{}, fmt.Errorf("failed to verify signing layer: %w", err)
+			}
+			// Mark rekor status as failed since we couldn't verify against the current cluster's transparency log
+			rekorStatus = models.SignatureStatusRekorFailed
+		} else {
+			return invalidSignatureView, []models.ArtifactIdentity{}, fmt.Errorf("failed to verify signing layer: %w", err)
+		}
 	}
 
 	// signatureStatus
@@ -440,7 +456,23 @@ func VerifyAndGetAttestationView(verifyOpts VerifyOptions, layer *v1.Descriptor)
 
 	verified, verificationResult, err := VerifyLayer(verifyOpts, b)
 	if err != nil && !verified {
-		return invalidAttestationView, []models.ArtifactIdentity{}, fmt.Errorf("failed to verify attestation layer: %w", err)
+		// If verification failed and the error is related to transparency log,
+		// retry without requiring transparency log. This handles the case where
+		// the image was signed by a different RHTAS instance (e.g., public cosign)
+		// whose Rekor entries are not in the current cluster's transparency log.
+		if verifyOpts.RequireTLog && strings.Contains(err.Error(), "not enough verified log entries from transparency log") {
+			log.Printf("Transparency log verification failed for attestation, retrying without tlog requirement: %v", err)
+			verifyOptsNoTLog := verifyOpts
+			verifyOptsNoTLog.RequireTLog = false
+			verified, verificationResult, err = VerifyLayer(verifyOptsNoTLog, b)
+			if err != nil && !verified {
+				return invalidAttestationView, []models.ArtifactIdentity{}, fmt.Errorf("failed to verify attestation layer: %w", err)
+			}
+			// Mark rekor status as failed since we couldn't verify against the current cluster's transparency log
+			rekorStatus = models.AttestationStatusRekorFailed
+		} else {
+			return invalidAttestationView, []models.ArtifactIdentity{}, fmt.Errorf("failed to verify attestation layer: %w", err)
+		}
 	}
 
 	// Add remaining fields
