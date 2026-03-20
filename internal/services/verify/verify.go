@@ -242,7 +242,10 @@ func VerifyLayer(verifyOpts VerifyOptions, b *bundle.Bundle) (verified bool, ver
 	}
 
 	if verifyOpts.NoObserverTimestamps {
-		verifierConfig = append(verifierConfig, verify.WithNoObserverTimestamps(), verify.WithCurrentTime())
+		// Use integrated timestamps from the bundle (even if from a different RHTAS instance)
+		// This provides a timestamp for certificate validation without requiring verification
+		// against the current cluster's transparency log
+		verifierConfig = append(verifierConfig, verify.WithIntegratedTimestamps(1))
 	}
 
 	if verifyOpts.TrustedPublicKey == "" {
