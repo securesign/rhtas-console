@@ -132,16 +132,25 @@ func VerifyArtifact(verifyOpts VerifyOptions) (verifyArtifactResponse models.Ver
 	}
 
 	signingLayerId := 0
-	var signingIdentities []models.ArtifactIdentity
+	var allSigningIdentities []models.ArtifactIdentity
 	var sigDetails models.SignatureView
+	var signingIdentities []models.ArtifactIdentity
 	for _, layer := range signingLayers {
 		sigDetails, signingIdentities, err = VerifyAndGetSignatureView(verifyOpts, layer)
 		sigDetails.Id = signingLayerId
 		signingLayerId++
 		if err != nil {
-			return models.VerifyArtifactResponse{}, fmt.Errorf("error verifying signing layer: %w", err)
+			// Check if this is a transparency log verification error (signature from different Sigstore instance)
+			if isTransparencyLogError(err) {
+				// Skip signatures from other Sigstore instances silently
+				fmt.Fprintf(os.Stderr, "Info: skipping signature layer %d (likely from different Sigstore instance): %v\n", sigDetails.Id, err)
+				continue
+			}
+			// For other errors, return the error to report the failure
+			return models.VerifyArtifactResponse{}, fmt.Errorf("error verifying signing layer %d: %w", sigDetails.Id, err)
 		}
 		verifyArtifactResponse.Signatures = append(verifyArtifactResponse.Signatures, sigDetails)
+		allSigningIdentities = append(allSigningIdentities, signingIdentities...)
 	}
 
 	// AttestationViews
@@ -151,16 +160,25 @@ func VerifyArtifact(verifyOpts VerifyOptions) (verifyArtifactResponse models.Ver
 		return models.VerifyArtifactResponse{}, fmt.Errorf("error getting attestation layers: %w", err)
 	}
 	attestationLayerId := 0
-	var attestationIdentities []models.ArtifactIdentity
+	var allAttestationIdentities []models.ArtifactIdentity
 	var attDetails models.AttestationView
+	var attestationIdentities []models.ArtifactIdentity
 	for _, layer := range attestationLayers {
 		attDetails, attestationIdentities, err = VerifyAndGetAttestationView(verifyOpts, layer)
 		attDetails.Id = attestationLayerId
 		attestationLayerId++
 		if err != nil {
-			return models.VerifyArtifactResponse{}, fmt.Errorf("error verifying signing layer: %w", err)
+			// Check if this is a transparency log verification error (attestation from different Sigstore instance)
+			if isTransparencyLogError(err) {
+				// Skip attestations from other Sigstore instances silently
+				fmt.Fprintf(os.Stderr, "Info: skipping attestation layer %d (likely from different Sigstore instance): %v\n", attDetails.Id, err)
+				continue
+			}
+			// For other errors, return the error to report the failure
+			return models.VerifyArtifactResponse{}, fmt.Errorf("error verifying attestation layer %d: %w", attDetails.Id, err)
 		}
 		verifyArtifactResponse.Attestations = append(verifyArtifactResponse.Attestations, attDetails)
+		allAttestationIdentities = append(allAttestationIdentities, attestationIdentities...)
 	}
 
 	// Summary
@@ -177,7 +195,7 @@ func VerifyArtifact(verifyOpts VerifyOptions) (verifyArtifactResponse models.Ver
 	verifyArtifactResponse.Artifact = artifactMetadata
 
 	// Identities
-	identities := append(signingIdentities, attestationIdentities...)
+	identities := append(allSigningIdentities, allAttestationIdentities...)
 	verifyArtifactResponse.Summary.Identities = dedupeIdentities(identities)
 
 	// TimeCoherenceSummary
@@ -1384,6 +1402,18 @@ func isConnectionError(err error) bool {
 		return false
 	}
 	return strings.Contains(strings.ToLower(err.Error()), "connection refused")
+}
+
+// isTransparencyLogError checks if the error is related to transparency log verification failure
+// This typically happens when verifying a signature from a different Sigstore instance
+func isTransparencyLogError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errMsg := strings.ToLower(err.Error())
+	return strings.Contains(errMsg, "not enough verified log entries from transparency log") ||
+		strings.Contains(errMsg, "failed to verify log inclusion") ||
+		strings.Contains(errMsg, "transparency log verification")
 }
 
 // CertWithPEM holds a parsed certificate and the original PEM block.
