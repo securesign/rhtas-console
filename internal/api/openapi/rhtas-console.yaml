@@ -1164,7 +1164,7 @@ components:
         tasStatus:
           type: string
           enum: ["healthy", "unhealthy", "unknown"]
-          description: TAS (Timestamp Authority Service) health status
+          description: TAS (Trusted Artifact Signer) health status
           example: healthy
         rekorStatus:
           type: string
