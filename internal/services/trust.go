@@ -45,7 +45,8 @@ type TrustService interface {
 	GetTarget(ctx context.Context, tufRepoUrl string, target string) (content models.TargetContent, statusCode int, err error)
 	GetCertificatesInfo(ctx context.Context, tufRepoUrl string) (certs models.CertificateInfoList, statusCode int, err error)
 	GetAllTargets(ctx context.Context, tufRepoUrl string) (targets models.TargetsList, statusCode int, err error)
-	GetTrustCoverage(ctx context.Context) (coverage models.TrustCoverageResponse, statusCode int, err error)
+	GetTrustCoverage(ctx context.Context, timeWindow string, environment *string, tufRepoUrl string) (coverage models.TrustCoverageResponse, statusCode int, err error)
+	GetSystemHealth(ctx context.Context) (health models.SystemHealthResponse, statusCode int, err error)
 	CloseDB() error
 }
 
@@ -333,7 +334,7 @@ func (s *trustService) GetAllTargets(ctx context.Context, tufRepoUrl string) (mo
 	return result, http.StatusOK, nil
 }
 
-func (s *trustService) GetTrustCoverage(ctx context.Context) (models.TrustCoverageResponse, int, error) {
+func (s *trustService) GetTrustCoverage(ctx context.Context, timeWindow string, environment *string, tufRepoUrl string) (models.TrustCoverageResponse, int, error) {
 	mockMode := os.Getenv("MOCK_MODE")
 	if mockMode != "true" {
 		return models.TrustCoverageResponse{}, http.StatusServiceUnavailable, fmt.Errorf("coverage data not available - set MOCK_MODE=true for mock data")
@@ -345,14 +346,36 @@ func (s *trustService) GetTrustCoverage(ctx context.Context) (models.TrustCovera
 func getMockTrustCoverage() models.TrustCoverageResponse {
 	totalArtifacts := 1000
 	attestedCount := 610
-	unattestedCount := totalArtifacts - attestedCount
 
 	return models.TrustCoverageResponse{
 		TotalArtifacts:        totalArtifacts,
 		AttestedCount:         attestedCount,
-		UnattestedCount:       unattestedCount,
-		AttestationPercentage: float32(attestedCount) / float32(totalArtifacts) * 100,
+		SignedPercentage:      float32(attestedCount) / float32(totalArtifacts) * 100,
+		VerifiedPercentage:    float32(attestedCount) / float32(totalArtifacts) * 100,
+		AttestedPercentage:    float32(attestedCount) / float32(totalArtifacts) * 100,
 		UpdatedAt:             time.Now().UTC(),
+	}
+}
+
+func (s *trustService) GetSystemHealth(ctx context.Context) (models.SystemHealthResponse, int, error) {
+	mockMode := os.Getenv("MOCK_MODE")
+	if mockMode != "true" {
+		return models.SystemHealthResponse{}, http.StatusServiceUnavailable, fmt.Errorf("health data not available - set MOCK_MODE=true for mock data")
+	}
+
+	return getMockSystemHealth(), http.StatusOK, nil
+}
+
+func getMockSystemHealth() models.SystemHealthResponse {
+	// Mock implementation returns all services as healthy
+	// Production implementation would check actual service health
+
+	return models.SystemHealthResponse{
+		OverallStatus: models.SystemHealthResponseOverallStatusHealthy,
+		TasStatus:     models.SystemHealthResponseTasStatusHealthy,
+		RekorStatus:   models.SystemHealthResponseRekorStatusHealthy,
+		TufStatus:     models.SystemHealthResponseTufStatusHealthy,
+		UpdatedAt:     time.Now().UTC(),
 	}
 }
 

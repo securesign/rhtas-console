@@ -13,6 +13,8 @@ tags:
     description: Operations for interacting with Rekor transparency log
   - name: Trust
     description: Operations for trust configuration and TUF targets
+  - name: System
+    description: Operations for system health and status monitoring
 paths:
   /healthz:
     get:
@@ -393,6 +395,40 @@ paths:
                 $ref: "#/components/schemas/Error"
         "503":
           description: Service unavailable (MOCK_MODE not enabled)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/system/health:
+    get:
+      summary: Get System Health Status
+      description: |
+        Returns the health status of the RHTAS Console and its downstream dependencies
+        including TAS, Rekor, and TUF services. Useful for monitoring and operational dashboards.
+      tags:
+        - System
+      operationId: GetApiV1SystemHealth
+      responses:
+        "200":
+          description: System health status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SystemHealthResponse"
+              example:
+                overallStatus: healthy
+                tasStatus: healthy
+                rekorStatus: healthy
+                tufStatus: healthy
+                updatedAt: "2026-03-18T12:00:00Z"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: Service unavailable (health data unavailable or MOCK_MODE not enabled)
           content:
             application/json:
               schema:
@@ -1085,11 +1121,21 @@ components:
           type: integer
           description: Number of attested artifacts
           example: 610
-        unattestedCount:
-          type: integer
-          description: Number of unattested artifacts
-          example: 390
-        attestationPercentage:
+        signedPercentage:
+          type: number
+          format: float
+          description: Percentage of artifacts that are signed
+          minimum: 0
+          maximum: 100
+          example: 61.0
+        verifiedPercentage:
+          type: number
+          format: float
+          description: Percentage of artifacts that are verified
+          minimum: 0
+          maximum: 100
+          example: 61.0
+        attestedPercentage:
           type: number
           format: float
           description: Percentage of artifacts that are attested
@@ -1103,6 +1149,41 @@ components:
       required:
         - totalArtifacts
         - attestedCount
-        - unattestedCount
-        - attestationPercentage
+        - signedPercentage
+        - verifiedPercentage
+        - attestedPercentage
+        - updatedAt
+    SystemHealthResponse:
+      type: object
+      properties:
+        overallStatus:
+          type: string
+          enum: ["healthy", "degraded", "unhealthy", "unknown"]
+          description: Overall system health status aggregated across all components
+          example: healthy
+        tasStatus:
+          type: string
+          enum: ["healthy", "unhealthy", "unknown"]
+          description: TAS (Timestamp Authority Service) health status
+          example: healthy
+        rekorStatus:
+          type: string
+          enum: ["healthy", "unhealthy", "unknown"]
+          description: Rekor transparency log service health status
+          example: healthy
+        tufStatus:
+          type: string
+          enum: ["healthy", "unhealthy", "unknown"]
+          description: TUF repository health status
+          example: healthy
+        updatedAt:
+          type: string
+          format: date-time
+          description: Timestamp when the health status was last updated
+          example: "2026-03-18T12:00:00Z"
+      required:
+        - overallStatus
+        - tasStatus
+        - rekorStatus
+        - tufStatus
         - updatedAt
