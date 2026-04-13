@@ -27,6 +27,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
 	"github.com/securesign/rhtas-console/internal/models"
 	"github.com/sigstore/sigstore/pkg/signature"
 	"github.com/theupdateframework/go-tuf/v2/metadata/fetcher"
@@ -47,6 +48,20 @@ import (
 var (
 	TufPublicGoodInstance = "https://tuf-repo-cdn.sigstore.dev"
 )
+
+// isNotFoundError checks if an error is a 404 Not Found error from the registry.
+// Returns true for legitimate "not found" cases (e.g., no signatures exist),
+// false for actual failures (network, auth, etc.) that should be propagated.
+func isNotFoundError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var terr *transport.Error
+	if errors.As(err, &terr) {
+		return terr.StatusCode == http.StatusNotFound
+	}
+	return false
+}
 
 // VerifyOptions defines configuration parameters for artifact verification.
 type VerifyOptions struct {
@@ -382,7 +397,9 @@ func VerifyAndGetSignatureView(verifyOpts VerifyOptions, layer *v1.Descriptor) (
 		rekorStatus = models.SignatureStatusRekorFailed
 	}
 
-	if !isCertChainValid(signatureView.CertificateChain) {
+	// For cosign v3+, chain validation is done by sigstore-go during VerifyLayer
+	// If we have a certificate chain, validate it. If not, trust the verification result.
+	if len(signatureView.CertificateChain) > 0 && !isCertChainValid(signatureView.CertificateChain) {
 		chainStatus = models.SignatureStatusChainFailed
 	}
 
@@ -436,7 +453,9 @@ func VerifyAndGetAttestationView(verifyOpts VerifyOptions, layer *v1.Descriptor)
 		rekorStatus = models.AttestationStatusRekorFailed
 	}
 
-	if !isCertChainValid(*attestationView.CertificateChain) {
+	// For cosign v3+, chain validation is done by sigstore-go during VerifyLayer
+	// If we have a certificate chain, validate it. If not, trust the verification result.
+	if attestationView.CertificateChain != nil && len(*attestationView.CertificateChain) > 0 && !isCertChainValid(*attestationView.CertificateChain) {
 		chainStatus = models.AttestationStatusChainFailed
 	}
 
@@ -561,11 +580,20 @@ func extractSignatureViewFromLayer(layer *v1.Descriptor, b *bundle.Bundle) (sign
 	}
 
 	certChain := ""
+	// Try to get certificate chain from annotations first (cosign v2)
 	if chain, ok := layer.Annotations["dev.sigstore.cosign/chain"]; ok && chain != "" {
 		certChain = chain
+	} else {
+		// If not in annotations, extract from bundle (cosign v3)
+		certChain, err = extractCertificateChainFromBundle(b)
+		if err != nil {
+			// It's okay if there's no chain - some bundles only have the leaf cert
+			certChain = ""
+		}
 	}
 
-	var parsedCerts []models.ParsedCertificate
+	// Initialize as empty array instead of nil for better API consistency
+	parsedCerts := []models.ParsedCertificate{}
 
 	if certChain != "" {
 		chainCerts, err := parsePEMCertificates(certChain)
@@ -680,11 +708,20 @@ func extractAttestationViewFromLayer(layer *v1.Descriptor, b *bundle.Bundle) (at
 
 	// Certificate chain
 	certChain := ""
+	// Try to get certificate chain from annotations first (cosign v2)
 	if chain, ok := layer.Annotations["dev.sigstore.cosign/chain"]; ok && chain != "" {
 		certChain = chain
+	} else {
+		// If not in annotations, extract from bundle (cosign v3)
+		certChain, err = extractCertificateChainFromBundle(b)
+		if err != nil {
+			// It's okay if there's no chain - some bundles only have the leaf cert
+			certChain = ""
+		}
 	}
 
-	var parsedCerts []models.ParsedCertificate
+	// Initialize as empty array instead of nil for better API consistency
+	parsedCerts := []models.ParsedCertificate{}
 
 	if certChain != "" {
 		chainCerts, err := parsePEMCertificates(certChain)
@@ -929,6 +966,42 @@ func bundleFromSigstoreBundleLayer(imageRef string, layer *v1.Descriptor) (*bund
 	return bun, artifactDigest, nil
 }
 
+// extractCertificateChainFromBundle extracts the full certificate chain from a bundle (cosign v3)
+func extractCertificateChainFromBundle(b *bundle.Bundle) (string, error) {
+	if b == nil || b.VerificationMaterial == nil {
+		return "", fmt.Errorf("bundle or verification material is nil")
+	}
+
+	var pemChain strings.Builder
+
+	// Try to get x509 certificate chain
+	if x509CertChain := b.VerificationMaterial.GetX509CertificateChain(); x509CertChain != nil {
+		certs := x509CertChain.Certificates
+		// Skip the first cert (leaf/signing cert) and get the rest of the chain
+		for i := 1; i < len(certs); i++ {
+			cert := certs[i]
+			if cert != nil && len(cert.RawBytes) > 0 {
+				// Convert DER to PEM
+				pemBlock := &pem.Block{
+					Type:  "CERTIFICATE",
+					Bytes: cert.RawBytes,
+				}
+				pemBytes := pem.EncodeToMemory(pemBlock)
+				if pemBytes != nil {
+					pemChain.Write(pemBytes)
+				}
+			}
+		}
+	}
+
+	chainStr := pemChain.String()
+	if chainStr == "" {
+		return "", fmt.Errorf("no certificate chain found in bundle")
+	}
+
+	return chainStr, nil
+}
+
 // extractCertificateFromBundle extracts the signing certificate from a bundle (cosign v3)
 func extractCertificateFromBundle(b *bundle.Bundle) (string, error) {
 	if b == nil || b.VerificationMaterial == nil {
@@ -1090,20 +1163,31 @@ func signingLayersFromOCIImage(imageRef string) ([]*v1.Descriptor, error) {
 			// Convert []Descriptor to []*Descriptor
 			layers := make([]*v1.Descriptor, 0, len(sigManifest.Layers))
 			for i := range sigManifest.Layers {
-				d := sigManifest.Layers[i]
-				layers = append(layers, &d)
+				layers = append(layers, &sigManifest.Layers[i])
 			}
 			return layers, nil
 		}
+	} else if !isNotFoundError(err) {
+		// Tag-based approach failed with non-404 error (network, auth, etc.)
+		return nil, fmt.Errorf("error fetching signature tag: %w", err)
 	}
 
 	// 5. Try OCI 1.1 Referrers API (cosign v3+ compatibility)
 	layers, err := getSigningLayersFromReferrers(digest)
-	if err == nil && len(layers) > 0 {
+	if err != nil {
+		// Referrers API failed - check if it's a real error or just "not found"
+		if !isNotFoundError(err) {
+			return nil, fmt.Errorf("error fetching referrers: %w", err)
+		}
+		// 404 means no signatures found
+		return []*v1.Descriptor{}, nil
+	}
+
+	if len(layers) > 0 {
 		return layers, nil
 	}
 
-	// 6. No signatures found via either method
+	// 6. No signatures found via either method (both returned successfully but empty)
 	return []*v1.Descriptor{}, nil
 }
 
@@ -1497,15 +1581,27 @@ func attestationLayersFromOCIImage(imageRef string) ([]*v1.Descriptor, error) {
 				return layers, nil
 			}
 		}
+	} else if !isNotFoundError(err) {
+		// Tag-based approach failed with non-404 error (network, auth, etc.)
+		return nil, fmt.Errorf("error fetching attestation tag: %w", err)
 	}
 
 	// Try OCI 1.1 Referrers API (cosign v3+ compatibility)
 	layers, err := getAttestationLayersFromReferrers(digest)
-	if err == nil && len(layers) > 0 {
+	if err != nil {
+		// Referrers API failed - check if it's a real error or just "not found"
+		if !isNotFoundError(err) {
+			return nil, fmt.Errorf("error fetching attestation referrers: %w", err)
+		}
+		// 404 means no attestations found
+		return []*v1.Descriptor{}, nil
+	}
+
+	if len(layers) > 0 {
 		return layers, nil
 	}
 
-	// No attestations found via either method
+	// No attestations found via either method (both returned successfully but empty)
 	return []*v1.Descriptor{}, nil
 }
 
