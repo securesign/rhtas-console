@@ -37,12 +37,12 @@ import (
 	protocommon "github.com/sigstore/protobuf-specs/gen/pb-go/common/v1"
 	protodsse "github.com/sigstore/protobuf-specs/gen/pb-go/dsse"
 	protorekor "github.com/sigstore/protobuf-specs/gen/pb-go/rekor/v1"
-	"google.golang.org/protobuf/encoding/protojson"
 	"github.com/sigstore/sigstore-go/pkg/bundle"
 	"github.com/sigstore/sigstore-go/pkg/root"
 	"github.com/sigstore/sigstore-go/pkg/tuf"
 	"github.com/sigstore/sigstore-go/pkg/util"
 	"github.com/sigstore/sigstore-go/pkg/verify"
+	"google.golang.org/protobuf/encoding/protojson"
 )
 
 var (
@@ -435,9 +435,23 @@ func VerifyAndGetAttestationView(verifyOpts VerifyOptions, layer *v1.Descriptor)
 		Rekor:       models.AttestationStatusRekorFailed,
 	}}
 
-	b, verifyOpts.ArtifactDigest, err = bundleFromAttestationLayer(verifyOpts.OCIImage, layer, verifyOpts.RequireTLog, verifyOpts.RequireTimestamp)
-	if err != nil {
-		return invalidAttestationView, []models.ArtifactIdentity{}, fmt.Errorf("failed to get bundle from attestation layer: %w", err)
+	// Check if this is a cosign v3 bundle or cosign v2 DSSE envelope
+	isBundleFormat := layer.MediaType == "application/vnd.dev.sigstore.bundle.v0.3+json" ||
+		layer.MediaType == "application/vnd.dev.sigstore.bundle.v0.2+json" ||
+		layer.MediaType == "application/vnd.dev.sigstore.bundle.v0.1+json"
+
+	if isBundleFormat {
+		// Cosign v3 - bundle is already complete
+		b, verifyOpts.ArtifactDigest, err = bundleFromSigstoreBundleLayer(verifyOpts.OCIImage, layer)
+		if err != nil {
+			return invalidAttestationView, []models.ArtifactIdentity{}, fmt.Errorf("failed to get bundle from attestation layer: %w", err)
+		}
+	} else {
+		// Cosign v2 - need to construct bundle from DSSE envelope + annotations
+		b, verifyOpts.ArtifactDigest, err = bundleFromAttestationLayer(verifyOpts.OCIImage, layer, verifyOpts.RequireTLog, verifyOpts.RequireTimestamp)
+		if err != nil {
+			return invalidAttestationView, []models.ArtifactIdentity{}, fmt.Errorf("failed to get bundle from attestation layer: %w", err)
+		}
 	}
 
 	attestationView, identities, err = extractAttestationViewFromLayer(layer, b)
@@ -465,7 +479,14 @@ func VerifyAndGetAttestationView(verifyOpts VerifyOptions, layer *v1.Descriptor)
 	// Get SAN from attestation signing certificate
 	signingCertificate := ""
 	if certificate, ok := layer.Annotations["dev.sigstore.cosign/certificate"]; ok && certificate != "" {
+		// Cosign v2 - certificate in annotations
 		signingCertificate = certificate
+	} else if isBundleFormat {
+		// Cosign v3 - certificate in bundle
+		signingCertificate, err = extractCertificateFromBundle(b)
+		if err != nil {
+			return invalidAttestationView, []models.ArtifactIdentity{}, fmt.Errorf("failed to extract signing certificate from bundle: %w", err)
+		}
 	} else {
 		return invalidAttestationView, []models.ArtifactIdentity{}, errors.New("missing signing certificate annotation 'dev.sigstore.cosign/certificate'")
 	}
@@ -753,7 +774,15 @@ func extractAttestationViewFromLayer(layer *v1.Descriptor, b *bundle.Bundle) (at
 	var parsedSigningCert models.ParsedCertificate
 	var signingCertStr string
 	if cert, ok := layer.Annotations["dev.sigstore.cosign/certificate"]; ok && cert != "" {
+		// Cosign v2 - certificate in annotations
 		signingCertStr = cert
+	} else {
+		// Cosign v3 - extract from bundle
+		signingCertStr, err = extractCertificateFromBundle(b)
+		if err != nil {
+			// It's okay if we can't extract - some older bundles might not have it
+			signingCertStr = ""
+		}
 	}
 
 	if signingCertStr != "" {
@@ -762,7 +791,7 @@ func extractAttestationViewFromLayer(layer *v1.Descriptor, b *bundle.Bundle) (at
 			return models.AttestationView{}, []models.ArtifactIdentity{}, fmt.Errorf("failed parsing signing certificate: %w", err)
 		}
 		if len(certs) == 0 {
-			return models.AttestationView{}, []models.ArtifactIdentity{}, fmt.Errorf("no signing certificate found in annotations")
+			return models.AttestationView{}, []models.ArtifactIdentity{}, fmt.Errorf("no signing certificate found")
 		}
 
 		c := certs[0]
@@ -813,12 +842,8 @@ func extractAttestationViewFromLayer(layer *v1.Descriptor, b *bundle.Bundle) (at
 	}
 
 	// Extract identities from signing certificate
-	signingCertificate := ""
-	if certStr, ok := layer.Annotations["dev.sigstore.cosign/certificate"]; ok && certStr != "" {
-		signingCertificate = certStr
-	}
-
-	certs, err := parsePEMCertificates(signingCertificate)
+	// Use the same signingCertStr we extracted earlier
+	certs, err := parsePEMCertificates(signingCertStr)
 	if err != nil {
 		return attestationView, []models.ArtifactIdentity{}, fmt.Errorf("failed parsing signing certificate: %w", err)
 	}
@@ -1148,24 +1173,23 @@ func signingLayersFromOCIImage(imageRef string) ([]*v1.Descriptor, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error getting hash: %w", err)
 	}
-	// 4. Try legacy tag-based approach first (cosign v2 compatibility)
+	// 4. Collect signatures from both legacy tag-based (cosign v2) and Referrers API (cosign v3+)
+	var allLayers []*v1.Descriptor
+
+	// Try legacy tag-based approach (cosign v2 compatibility)
 	sigTag := digest.Context().Tag(fmt.Sprint(h.Algorithm, "-", h.Hex, ".sig"))
 	mf, err := crane.Manifest(sigTag.Name())
 
-	// If tag-based approach works, use it
 	if err == nil {
 		sigManifest, err := v1.ParseManifest(bytes.NewReader(mf))
 		if err != nil {
 			return nil, fmt.Errorf("error parsing signature manifest: %w", err)
 		}
-		// Ensure there is at least one layer and it is a simple signing layer
+		// Collect cosign v2 simple signing layers
 		if len(sigManifest.Layers) > 0 && sigManifest.Layers[0].MediaType == "application/vnd.dev.cosign.simplesigning.v1+json" {
-			// Convert []Descriptor to []*Descriptor
-			layers := make([]*v1.Descriptor, 0, len(sigManifest.Layers))
 			for i := range sigManifest.Layers {
-				layers = append(layers, &sigManifest.Layers[i])
+				allLayers = append(allLayers, &sigManifest.Layers[i])
 			}
-			return layers, nil
 		}
 	} else if !isNotFoundError(err) {
 		// Tag-based approach failed with non-404 error (network, auth, etc.)
@@ -1173,22 +1197,20 @@ func signingLayersFromOCIImage(imageRef string) ([]*v1.Descriptor, error) {
 	}
 
 	// 5. Try OCI 1.1 Referrers API (cosign v3+ compatibility)
-	layers, err := getSigningLayersFromReferrers(digest)
+	referrerLayers, err := getSigningLayersFromReferrers(digest)
 	if err != nil {
 		// Referrers API failed - check if it's a real error or just "not found"
 		if !isNotFoundError(err) {
 			return nil, fmt.Errorf("error fetching referrers: %w", err)
 		}
-		// 404 means no signatures found
-		return []*v1.Descriptor{}, nil
+		// 404 is okay - just means no cosign v3 signatures
+	} else {
+		// Append cosign v3 signature layers
+		allLayers = append(allLayers, referrerLayers...)
 	}
 
-	if len(layers) > 0 {
-		return layers, nil
-	}
-
-	// 6. No signatures found via either method (both returned successfully but empty)
-	return []*v1.Descriptor{}, nil
+	// 6. Return all signatures found (may be empty if none exist)
+	return allLayers, nil
 }
 
 // getSigningLayersFromReferrers retrieves signing layers using the OCI 1.1 Referrers API (cosign v3+)
@@ -1226,6 +1248,47 @@ func getSigningLayersFromReferrers(digest name.Digest) ([]*v1.Descriptor, error)
 	return layers, nil
 }
 
+// isBundleSignature determines if a sigstore bundle layer is a signature (not an attestation)
+// by parsing the DSSE envelope payload and checking the predicateType.
+// Signature predicateType: "https://sigstore.dev/cosign/sign/v1"
+// Attestation predicateType: "https://cosign.sigstore.dev/attestation/v1" or other attestation types
+func isBundleSignature(imageRef string, layer *v1.Descriptor) (bool, error) {
+	bundleJSON, err := fetchLayerBlob(imageRef, layer)
+	if err != nil {
+		return false, fmt.Errorf("error fetching bundle blob: %w", err)
+	}
+
+	var bundleData struct {
+		DsseEnvelope struct {
+			Payload string `json:"payload"`
+		} `json:"dsseEnvelope"`
+	}
+
+	if err := json.Unmarshal(bundleJSON, &bundleData); err != nil {
+		return false, fmt.Errorf("error parsing bundle JSON: %w", err)
+	}
+
+	if bundleData.DsseEnvelope.Payload == "" {
+		return false, fmt.Errorf("bundle has empty DSSE payload")
+	}
+
+	payloadBytes, err := base64.StdEncoding.DecodeString(bundleData.DsseEnvelope.Payload)
+	if err != nil {
+		return false, fmt.Errorf("error decoding DSSE payload: %w", err)
+	}
+
+	var statement struct {
+		PredicateType string `json:"predicateType"`
+	}
+
+	if err := json.Unmarshal(payloadBytes, &statement); err != nil {
+		return false, fmt.Errorf("error parsing DSSE payload: %w", err)
+	}
+
+	// Signature predicateType is "https://sigstore.dev/cosign/sign/v1"
+	return statement.PredicateType == "https://sigstore.dev/cosign/sign/v1", nil
+}
+
 // fetchManifestLayers fetches the layers from a manifest descriptor
 func fetchManifestLayers(repo name.Repository, manifestDesc *v1.Descriptor) ([]*v1.Descriptor, error) {
 	// Construct digest reference for the manifest
@@ -1247,12 +1310,29 @@ func fetchManifestLayers(repo name.Repository, manifestDesc *v1.Descriptor) ([]*
 	layers := make([]*v1.Descriptor, 0, len(parsedManifest.Layers))
 	for i := range parsedManifest.Layers {
 		d := parsedManifest.Layers[i]
-		// Include both old (cosign v2) and new (cosign v3+) signature layer formats
-		if d.MediaType == "application/vnd.dev.cosign.simplesigning.v1+json" ||
-			d.MediaType == "application/vnd.dev.sigstore.bundle.v0.3+json" ||
+
+		// Cosign v2 simple signing - always a signature
+		if d.MediaType == "application/vnd.dev.cosign.simplesigning.v1+json" {
+			layers = append(layers, &parsedManifest.Layers[i])
+			continue
+		}
+
+		// Sigstore bundle (cosign v3+) - need to check if it's a signature or attestation
+		if d.MediaType == "application/vnd.dev.sigstore.bundle.v0.3+json" ||
 			d.MediaType == "application/vnd.dev.sigstore.bundle.v0.2+json" ||
 			d.MediaType == "application/vnd.dev.sigstore.bundle.v0.1+json" {
-			layers = append(layers, &d)
+
+			imageRef := repo.String()
+			isSignature, err := isBundleSignature(imageRef, &d)
+			if err != nil {
+				// Log error but continue - we don't want one bad layer to block others
+				log.Printf("warning: failed to determine bundle type for layer %s: %v", d.Digest, err)
+				continue
+			}
+
+			if isSignature {
+				layers = append(layers, &parsedManifest.Layers[i])
+			}
 		}
 	}
 
@@ -1557,28 +1637,26 @@ func attestationLayersFromOCIImage(imageRef string) ([]*v1.Descriptor, error) {
 		return nil, fmt.Errorf("error getting hash: %w", err)
 	}
 
-	// Try legacy tag-based approach first (cosign v2 compatibility)
+	// Collect attestations from both legacy tag-based (cosign v2) and Referrers API (cosign v3+)
+	var allLayers []*v1.Descriptor
+
+	// Try legacy tag-based approach (cosign v2 compatibility)
 	attTag := digest.Context().Tag(fmt.Sprint(h.Algorithm, "-", h.Hex, ".att"))
 	mf, err := crane.Manifest(attTag.Name())
 
-	// If tag-based approach works, use it
 	if err == nil {
 		attManifest, err := v1.ParseManifest(bytes.NewReader(mf))
 		if err != nil {
 			return nil, fmt.Errorf("error parsing attestation manifest: %w", err)
 		}
 
-		// Look for DSSE attestation layers
+		// Collect cosign v2 DSSE attestation layers
 		if len(attManifest.Layers) > 0 {
-			layers := []*v1.Descriptor{}
 			for i := range attManifest.Layers {
 				layer := &attManifest.Layers[i]
 				if layer.MediaType == "application/vnd.dsse.envelope.v1+json" {
-					layers = append(layers, layer)
+					allLayers = append(allLayers, layer)
 				}
-			}
-			if len(layers) > 0 {
-				return layers, nil
 			}
 		}
 	} else if !isNotFoundError(err) {
@@ -1587,22 +1665,20 @@ func attestationLayersFromOCIImage(imageRef string) ([]*v1.Descriptor, error) {
 	}
 
 	// Try OCI 1.1 Referrers API (cosign v3+ compatibility)
-	layers, err := getAttestationLayersFromReferrers(digest)
+	referrerLayers, err := getAttestationLayersFromReferrers(digest)
 	if err != nil {
 		// Referrers API failed - check if it's a real error or just "not found"
 		if !isNotFoundError(err) {
 			return nil, fmt.Errorf("error fetching attestation referrers: %w", err)
 		}
-		// 404 means no attestations found
-		return []*v1.Descriptor{}, nil
+		// 404 is okay - just means no cosign v3 attestations
+	} else {
+		// Append cosign v3 attestation layers
+		allLayers = append(allLayers, referrerLayers...)
 	}
 
-	if len(layers) > 0 {
-		return layers, nil
-	}
-
-	// No attestations found via either method (both returned successfully but empty)
-	return []*v1.Descriptor{}, nil
+	// Return all attestations found (may be empty if none exist)
+	return allLayers, nil
 }
 
 // getAttestationLayersFromReferrers retrieves attestation layers using the OCI 1.1 Referrers API (cosign v3+)
@@ -1661,9 +1737,30 @@ func fetchAttestationManifestLayers(repo name.Repository, manifestDesc *v1.Descr
 	layers := make([]*v1.Descriptor, 0, len(parsedManifest.Layers))
 	for i := range parsedManifest.Layers {
 		d := parsedManifest.Layers[i]
-		// Only include DSSE envelope layers
+
+		// Cosign v2 DSSE envelope - always an attestation
 		if d.MediaType == "application/vnd.dsse.envelope.v1+json" {
-			layers = append(layers, &d)
+			layers = append(layers, &parsedManifest.Layers[i])
+			continue
+		}
+
+		// Sigstore bundle (cosign v3+) - need to check if it's an attestation
+		if d.MediaType == "application/vnd.dev.sigstore.bundle.v0.3+json" ||
+			d.MediaType == "application/vnd.dev.sigstore.bundle.v0.2+json" ||
+			d.MediaType == "application/vnd.dev.sigstore.bundle.v0.1+json" {
+
+			imageRef := repo.String()
+			isSignature, err := isBundleSignature(imageRef, &d)
+			if err != nil {
+				// Log error but continue
+				log.Printf("warning: failed to determine bundle type for layer %s: %v", d.Digest, err)
+				continue
+			}
+
+			if !isSignature {
+				// It's an attestation
+				layers = append(layers, &parsedManifest.Layers[i])
+			}
 		}
 	}
 
