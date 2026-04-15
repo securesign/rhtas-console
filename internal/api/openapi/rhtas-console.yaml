@@ -367,34 +367,11 @@ paths:
     get:
       summary: Get Trust Coverage
       description: |
-        Returns aggregated signing and verification posture data across environments.
-        Supports filtering by time window and deployment environment.
+        Returns attestation coverage for artifacts already processed by TAS.
+        This endpoint is intentionally limited in scope and does not imply coverage
+        of all artifacts in a registry, cluster, environment, or across multiple clusters.
       tags:
         - Trust
-      parameters:
-        - name: timeWindow
-          in: query
-          required: false
-          schema:
-            type: string
-            description: Time window for filtering coverage data
-            enum: [24h, 7d, 30d, 90d, all]
-            default: 7d
-            example: 7d
-        - name: environment
-          in: query
-          required: false
-          schema:
-            type: string
-            description: Deployment environment filter (e.g., production, staging, development)
-            example: production
-        - name: tufRepositoryUrl
-          in: query
-          required: false
-          schema:
-            type: string
-            description: URL of the TUF repository
-            example: https://tuf-repo-cdn.sigstore.dev/
       responses:
         "200":
           description: Trust coverage data
@@ -403,62 +380,11 @@ paths:
               schema:
                 $ref: "#/components/schemas/TrustCoverageResponse"
               example:
-                totals:
-                  totalArtifacts: 1000
-                  signedArtifacts: 845
-                  verifiedArtifacts: 795
-                  attestedArtifacts: 610
-                  rekorEntries: 845
-                percentages:
-                  signedPercentage: 84.5
-                  verifiedPercentage: 79.5
-                  attestedPercentage: 61.0
-                environmentBreakdown:
-                  - environment: production
-                    totals:
-                      totalArtifacts: 500
-                      signedArtifacts: 475
-                      verifiedArtifacts: 450
-                      attestedArtifacts: 400
-                      rekorEntries: 475
-                    percentages:
-                      signedPercentage: 95.0
-                      verifiedPercentage: 90.0
-                      attestedPercentage: 80.0
-                  - environment: staging
-                    totals:
-                      totalArtifacts: 300
-                      signedArtifacts: 240
-                      verifiedArtifacts: 225
-                      attestedArtifacts: 150
-                      rekorEntries: 240
-                    percentages:
-                      signedPercentage: 80.0
-                      verifiedPercentage: 75.0
-                      attestedPercentage: 50.0
-                  - environment: development
-                    totals:
-                      totalArtifacts: 200
-                      signedArtifacts: 130
-                      verifiedArtifacts: 120
-                      attestedArtifacts: 60
-                      rekorEntries: 130
-                    percentages:
-                      signedPercentage: 65.0
-                      verifiedPercentage: 60.0
-                      attestedPercentage: 30.0
-                trendData: []
-                appliedFilters:
-                  timeWindow: 7d
-                  environment: null
-                  tufRepositoryUrl: https://tuf-repo-cdn.sigstore.dev
-                generatedAt: "2024-03-10T15:30:00Z"
-        "400":
-          description: Invalid input
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
+                totalArtifacts: 1000
+                attestedCount: 610
+                unattestedCount: 390
+                attestationPercentage: 61.0
+                updatedAt: "2024-03-10T15:30:00Z"
         "500":
           description: Internal server error
           content:
@@ -1151,171 +1077,32 @@ components:
     TrustCoverageResponse:
       type: object
       properties:
-        totals:
-          $ref: "#/components/schemas/CoverageTotals"
-          description: Aggregate coverage totals across all environments
-        percentages:
-          $ref: "#/components/schemas/CoveragePercentages"
-          description: Coverage percentages across all environments
-        environmentBreakdown:
-          type: array
-          description: Coverage breakdown by deployment environment
-          items:
-            $ref: "#/components/schemas/EnvironmentCoverage"
-        trendData:
-          type: array
-          description: Historical trend data for coverage metrics
-          items:
-            $ref: "#/components/schemas/TrendDataPoint"
-          default: []
-        appliedFilters:
-          $ref: "#/components/schemas/AppliedCoverageFilters"
-          description: The filters that were applied to generate this coverage data
-        generatedAt:
-          type: string
-          format: date-time
-          description: Timestamp when the coverage report was generated
-      required:
-        - totals
-        - percentages
-        - environmentBreakdown
-        - trendData
-        - appliedFilters
-        - generatedAt
-    AppliedCoverageFilters:
-      type: object
-      properties:
-        timeWindow:
-          type: string
-          description: Time window that was applied
-          example: 7d
-        environment:
-          type: string
-          nullable: true
-          description: Environment filter that was applied (null if not filtered)
-          example: production
-        tufRepositoryUrl:
-          type: string
-          description: TUF repository URL that was used as the data source
-          example: https://tuf-repo-cdn.sigstore.dev
-      required:
-        - timeWindow
-        - tufRepositoryUrl
-    CoverageTotals:
-      type: object
-      properties:
         totalArtifacts:
           type: integer
-          description: Total number of artifacts
+          description: Total number of artifacts processed by TAS
           example: 1000
-        signedArtifacts:
-          type: integer
-          description: Number of signed artifacts
-          example: 850
-        verifiedArtifacts:
-          type: integer
-          description: Number of verified artifacts
-          example: 800
-        attestedArtifacts:
-          type: integer
-          description: Number of artifacts with attestations
-          example: 600
-        rekorEntries:
-          type: integer
-          description: Total number of Rekor transparency log entries
-          example: 850
-      required:
-        - totalArtifacts
-        - signedArtifacts
-        - verifiedArtifacts
-        - attestedArtifacts
-        - rekorEntries
-    CoveragePercentages:
-      type: object
-      properties:
-        signedPercentage:
-          type: number
-          format: float
-          description: Percentage of artifacts that are signed
-          minimum: 0
-          maximum: 100
-          example: 85.0
-        verifiedPercentage:
-          type: number
-          format: float
-          description: Percentage of artifacts that are verified
-          minimum: 0
-          maximum: 100
-          example: 80.0
-        attestedPercentage:
-          type: number
-          format: float
-          description: Percentage of artifacts with attestations
-          minimum: 0
-          maximum: 100
-          example: 60.0
-      required:
-        - signedPercentage
-        - verifiedPercentage
-        - attestedPercentage
-    EnvironmentCoverage:
-      type: object
-      properties:
-        environment:
-          type: string
-          description: Environment name
-          example: production
-        totals:
-          $ref: "#/components/schemas/CoverageTotals"
-        percentages:
-          $ref: "#/components/schemas/CoveragePercentages"
-      required:
-        - environment
-        - totals
-        - percentages
-    TrendDataPoint:
-      type: object
-      properties:
-        timestamp:
-          type: string
-          format: date-time
-          description: Time point
-        totalArtifacts:
-          type: integer
-          description: Total number of artifacts at this time point
-        signedCount:
-          type: integer
-          description: Number of signed artifacts at this time point
-        verifiedCount:
-          type: integer
-          description: Number of verified artifacts at this time point
         attestedCount:
           type: integer
-          description: Number of attested artifacts at this time point
-        signedPercentage:
+          description: Number of attested artifacts
+          example: 610
+        unattestedCount:
+          type: integer
+          description: Number of unattested artifacts
+          example: 390
+        attestationPercentage:
           type: number
           format: float
-          description: Percentage of artifacts that are signed at this time point
+          description: Percentage of artifacts that are attested
           minimum: 0
           maximum: 100
-        verifiedPercentage:
-          type: number
-          format: float
-          description: Percentage of artifacts that are verified at this time point
-          minimum: 0
-          maximum: 100
-        attestedPercentage:
-          type: number
-          format: float
-          description: Percentage of artifacts with attestations at this time point
-          minimum: 0
-          maximum: 100
+          example: 61.0
+        updatedAt:
+          type: string
+          format: date-time
+          description: Timestamp when the coverage data was last updated
       required:
-        - timestamp
         - totalArtifacts
-        - signedCount
-        - verifiedCount
         - attestedCount
-        - signedPercentage
-        - verifiedPercentage
-        - attestedPercentage
+        - unattestedCount
+        - attestationPercentage
+        - updatedAt
