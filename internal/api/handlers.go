@@ -41,6 +41,11 @@ func (h *Handler) GetHealthz(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) PostApiV1ArtifactsVerify(w http.ResponseWriter, r *http.Request) {
 	var req models.VerifyArtifactRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		var maxBytesError *http.MaxBytesError
+		if errors.As(err, &maxBytesError) {
+			writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
+			return
+		}
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}

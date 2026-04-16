@@ -40,11 +40,23 @@ func main() {
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			req.Body = http.MaxBytesReader(w, req.Body, 1<<20)
+			next.ServeHTTP(w, req)
+		})
+	})
+
 	api.RegisterRoutes(r, artifactService, rekorService, trustService)
 
 	server := &http.Server{
-		Addr:    ":" + strconv.Itoa(*serverPort),
-		Handler: r,
+		Addr:              ":" + strconv.Itoa(*serverPort),
+		Handler:           r,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    1 << 20,
 	}
 
 	go func() {
