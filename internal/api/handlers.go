@@ -146,7 +146,16 @@ func (h *Handler) GetApiV1TrustTargetsCertificates(w http.ResponseWriter, r *htt
 }
 
 func (h *Handler) GetApiV1TrustCoverage(w http.ResponseWriter, r *http.Request) {
-	resp, statusCode, err := h.trustService.GetTrustCoverage(r.Context())
+	resp, statusCode, err := h.trustService.GetTrustCoverage(r.Context(), "", nil, "")
+	if err != nil {
+		writeError(w, statusCode, err.Error())
+		return
+	}
+	writeJSON(w, statusCode, resp)
+}
+
+func (h *Handler) GetApiV1SystemHealth(w http.ResponseWriter, r *http.Request) {
+	resp, statusCode, err := h.trustService.GetSystemHealth(r.Context())
 	if err != nil {
 		writeError(w, statusCode, err.Error())
 		return

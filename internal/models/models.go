@@ -39,6 +39,35 @@ const (
 	CertificateRoleUnknown      CertificateRole = "unknown"
 )
 
+// Defines values for SystemHealthResponseOverallStatus.
+const (
+	SystemHealthResponseOverallStatusDegraded  SystemHealthResponseOverallStatus = "degraded"
+	SystemHealthResponseOverallStatusHealthy   SystemHealthResponseOverallStatus = "healthy"
+	SystemHealthResponseOverallStatusUnhealthy SystemHealthResponseOverallStatus = "unhealthy"
+	SystemHealthResponseOverallStatusUnknown   SystemHealthResponseOverallStatus = "unknown"
+)
+
+// Defines values for SystemHealthResponseRekorStatus.
+const (
+	SystemHealthResponseRekorStatusHealthy   SystemHealthResponseRekorStatus = "healthy"
+	SystemHealthResponseRekorStatusUnhealthy SystemHealthResponseRekorStatus = "unhealthy"
+	SystemHealthResponseRekorStatusUnknown   SystemHealthResponseRekorStatus = "unknown"
+)
+
+// Defines values for SystemHealthResponseTasStatus.
+const (
+	SystemHealthResponseTasStatusHealthy   SystemHealthResponseTasStatus = "healthy"
+	SystemHealthResponseTasStatusUnhealthy SystemHealthResponseTasStatus = "unhealthy"
+	SystemHealthResponseTasStatusUnknown   SystemHealthResponseTasStatus = "unknown"
+)
+
+// Defines values for SystemHealthResponseTufStatus.
+const (
+	SystemHealthResponseTufStatusHealthy   SystemHealthResponseTufStatus = "healthy"
+	SystemHealthResponseTufStatusUnhealthy SystemHealthResponseTufStatus = "unhealthy"
+	SystemHealthResponseTufStatusUnknown   SystemHealthResponseTufStatus = "unknown"
+)
+
 // Defines values for TimeCoherenceSummaryStatus.
 const (
 	TimeCoherenceSummaryStatusError   TimeCoherenceSummaryStatus = "error"
@@ -328,6 +357,36 @@ type SignatureView struct {
 	Timestamp *time.Time `json:"timestamp,omitempty"`
 }
 
+// SystemHealthResponse defines model for SystemHealthResponse.
+type SystemHealthResponse struct {
+	// OverallStatus Overall system health status aggregated across all components
+	OverallStatus SystemHealthResponseOverallStatus `json:"overallStatus"`
+
+	// RekorStatus Rekor transparency log service health status
+	RekorStatus SystemHealthResponseRekorStatus `json:"rekorStatus"`
+
+	// TasStatus TAS (Trusted Artifact Signer) health status
+	TasStatus SystemHealthResponseTasStatus `json:"tasStatus"`
+
+	// TufStatus TUF repository health status
+	TufStatus SystemHealthResponseTufStatus `json:"tufStatus"`
+
+	// UpdatedAt Timestamp when the health status was last updated
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+// SystemHealthResponseOverallStatus Overall system health status aggregated across all components
+type SystemHealthResponseOverallStatus string
+
+// SystemHealthResponseRekorStatus Rekor transparency log service health status
+type SystemHealthResponseRekorStatus string
+
+// SystemHealthResponseTasStatus TAS (Trusted Artifact Signer) health status
+type SystemHealthResponseTasStatus string
+
+// SystemHealthResponseTufStatus TUF repository health status
+type SystemHealthResponseTufStatus string
+
 // TargetContent defines model for TargetContent.
 type TargetContent struct {
 	Content string `json:"content"`
@@ -389,20 +448,20 @@ type TrustConfig struct {
 
 // TrustCoverageResponse defines model for TrustCoverageResponse.
 type TrustCoverageResponse struct {
-	// AttestationPercentage Percentage of artifacts that are attested
-	AttestationPercentage float32 `json:"attestationPercentage"`
-
 	// AttestedCount Number of attested artifacts
 	AttestedCount int `json:"attestedCount"`
+
+	// AttestedPercentage Percentage of artifacts that are attested
+	AttestedPercentage float32 `json:"attestedPercentage"`
 
 	// TotalArtifacts Total number of artifacts processed by TAS
 	TotalArtifacts int `json:"totalArtifacts"`
 
-	// UnattestedCount Number of unattested artifacts
-	UnattestedCount int `json:"unattestedCount"`
-
 	// UpdatedAt Timestamp when the coverage data was last updated
 	UpdatedAt time.Time `json:"updatedAt"`
+
+	// VerifiedPercentage Percentage of artifacts that are verified
+	VerifiedPercentage float32 `json:"verifiedPercentage"`
 }
 
 // VerifyArtifactRequest Parameters for verifying a signed artifact or container image using Sigstore and related trust sources. Fields correspond to common verification inputs such as issuer expectations, trusted roots, and TUF configuration.
@@ -545,6 +604,9 @@ type ServerInterface interface {
 	// Get Rekor public key
 	// (GET /api/v1/rekor/public-key)
 	GetApiV1RekorPublicKey(w http.ResponseWriter, r *http.Request)
+	// Get System Health Status
+	// (GET /api/v1/system/health)
+	GetApiV1SystemHealth(w http.ResponseWriter, r *http.Request)
 	// Get Fulcio and Rekor metadata from TUF targets
 	// (GET /api/v1/trust/config)
 	GetApiV1TrustConfig(w http.ResponseWriter, r *http.Request, params GetApiV1TrustConfigParams)
@@ -599,6 +661,12 @@ func (_ Unimplemented) GetApiV1RekorEntriesUuid(w http.ResponseWriter, r *http.R
 // Get Rekor public key
 // (GET /api/v1/rekor/public-key)
 func (_ Unimplemented) GetApiV1RekorPublicKey(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Get System Health Status
+// (GET /api/v1/system/health)
+func (_ Unimplemented) GetApiV1SystemHealth(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -761,6 +829,20 @@ func (siw *ServerInterfaceWrapper) GetApiV1RekorPublicKey(w http.ResponseWriter,
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetApiV1RekorPublicKey(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetApiV1SystemHealth operation middleware
+func (siw *ServerInterfaceWrapper) GetApiV1SystemHealth(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetApiV1SystemHealth(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1075,6 +1157,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/rekor/public-key", wrapper.GetApiV1RekorPublicKey)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/system/health", wrapper.GetApiV1SystemHealth)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/trust/config", wrapper.GetApiV1TrustConfig)
