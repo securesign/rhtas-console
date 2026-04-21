@@ -365,7 +365,7 @@ type SystemHealthResponse struct {
 	// RekorStatus Rekor transparency log service health status
 	RekorStatus SystemHealthResponseRekorStatus `json:"rekorStatus"`
 
-	// TasStatus TAS (Timestamp Authority Service) health status
+	// TasStatus TAS (Trusted Artifact Signer) health status
 	TasStatus SystemHealthResponseTasStatus `json:"tasStatus"`
 
 	// TufStatus TUF repository health status
@@ -381,7 +381,7 @@ type SystemHealthResponseOverallStatus string
 // SystemHealthResponseRekorStatus Rekor transparency log service health status
 type SystemHealthResponseRekorStatus string
 
-// SystemHealthResponseTasStatus TAS (Timestamp Authority Service) health status
+// SystemHealthResponseTasStatus TAS (Trusted Artifact Signer) health status
 type SystemHealthResponseTasStatus string
 
 // SystemHealthResponseTufStatus TUF repository health status
@@ -453,9 +453,6 @@ type TrustCoverageResponse struct {
 
 	// AttestedPercentage Percentage of artifacts that are attested
 	AttestedPercentage float32 `json:"attestedPercentage"`
-
-	// SignedPercentage Percentage of artifacts that are signed
-	SignedPercentage float32 `json:"signedPercentage"`
 
 	// TotalArtifacts Total number of artifacts processed by TAS
 	TotalArtifacts int `json:"totalArtifacts"`

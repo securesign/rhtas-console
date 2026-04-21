@@ -350,7 +350,6 @@ func getMockTrustCoverage() models.TrustCoverageResponse {
 	return models.TrustCoverageResponse{
 		TotalArtifacts:        totalArtifacts,
 		AttestedCount:         attestedCount,
-		SignedPercentage:      float32(attestedCount) / float32(totalArtifacts) * 100,
 		VerifiedPercentage:    float32(attestedCount) / float32(totalArtifacts) * 100,
 		AttestedPercentage:    float32(attestedCount) / float32(totalArtifacts) * 100,
 		UpdatedAt:             time.Now().UTC(),

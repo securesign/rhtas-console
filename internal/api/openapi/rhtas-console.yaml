@@ -1121,13 +1121,6 @@ components:
           type: integer
           description: Number of attested artifacts
           example: 610
-        signedPercentage:
-          type: number
-          format: float
-          description: Percentage of artifacts that are signed
-          minimum: 0
-          maximum: 100
-          example: 61.0
         verifiedPercentage:
           type: number
           format: float
@@ -1149,7 +1142,6 @@ components:
       required:
         - totalArtifacts
         - attestedCount
-        - signedPercentage
         - verifiedPercentage
         - attestedPercentage
         - updatedAt
