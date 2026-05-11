@@ -19,7 +19,7 @@ require (
 require (
 	cloud.google.com/go/iam v1.9.0 // indirect
 	cloud.google.com/go/kms v1.28.0 // indirect
-	cloud.google.com/go/longrunning v0.11.0 // indirect
+	cloud.google.com/go/longrunning v1.0.0 // indirect
 	filippo.io/edwards25519 v1.2.0 // indirect
 	github.com/apapsch/go-jsonmerge/v2 v2.0.0 // indirect
 	github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2 // indirect
