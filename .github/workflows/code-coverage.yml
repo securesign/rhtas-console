@@ -8,18 +8,22 @@ on:
 jobs:
   coverage:
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
     steps:
       - name: Check out code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Install Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: 'go.mod'
       - name: Run tests with coverage
         run: go test -coverprofile=coverage.out ./...
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v6
         with:
           files: coverage.out
-          token: ${{ secrets.CODECOV_TOKEN }}
+          use_oidc: true
+          flags: unit-tests
           fail_ci_if_error: false
