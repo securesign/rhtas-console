@@ -8,3 +8,7 @@ coverage:
       default:
         target: 70%
         threshold: 5%
+
+flags:
+  unit-tests:
+    carryforward: true
