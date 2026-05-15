@@ -8,7 +8,8 @@ coverage:
       default:
         target: 70%
         threshold: 5%
+        informational: true
 
-flags:
-  unit-tests:
+flag_management:
+  default_rules:
     carryforward: true
