@@ -25,5 +25,5 @@ jobs:
         with:
           files: coverage.out
           use_oidc: true
-          flags: unit-tests
+          flags: unit
           fail_ci_if_error: false
