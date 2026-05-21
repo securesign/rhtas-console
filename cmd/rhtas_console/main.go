@@ -18,7 +18,9 @@ import (
 )
 
 var (
-	serverPort = flag.Int("port", 8080, "RHTAS console server port")
+	serverPort  = flag.Int("port", 8080, "RHTAS console server port")
+	tlsCertFile = flag.String("tls-cert", "", "Path to TLS certificate file")
+	tlsKeyFile  = flag.String("tls-key", "", "Path to TLS private key file")
 )
 
 func main() {
@@ -61,7 +63,17 @@ func main() {
 
 	go func() {
 		log.Printf("Starting server on %s", server.Addr)
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+
+		var err error
+		if *tlsCertFile != "" && *tlsKeyFile != "" {
+			log.Printf("TLS enabled: cert=%s, key=%s", *tlsCertFile, *tlsKeyFile)
+			err = server.ListenAndServeTLS(*tlsCertFile, *tlsKeyFile)
+		} else {
+			log.Println("TLS not configured, serving HTTP")
+			err = server.ListenAndServe()
+		}
+
+		if err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Server failed: %v", err)
 		}
 	}()
