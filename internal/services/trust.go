@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -335,24 +336,42 @@ func (s *trustService) GetAllTargets(ctx context.Context, tufRepoUrl string) (mo
 }
 
 func (s *trustService) GetTrustCoverage(ctx context.Context, timeWindow string, environment *string, tufRepoUrl string) (models.TrustCoverageResponse, int, error) {
-	mockMode := os.Getenv("MOCK_MODE")
-	if mockMode != "true" {
-		return models.TrustCoverageResponse{}, http.StatusServiceUnavailable, fmt.Errorf("coverage data not available - set MOCK_MODE=true for mock data")
+	rekorURL := os.Getenv("REKOR_URL")
+	if rekorURL == "" {
+		mockMode := os.Getenv("MOCK_MODE")
+		if mockMode == "true" {
+			return getMockTrustCoverage(), http.StatusOK, nil
+		}
+		return models.TrustCoverageResponse{}, http.StatusServiceUnavailable, fmt.Errorf("REKOR_URL not configured")
 	}
 
-	return getMockTrustCoverage(), http.StatusOK, nil
+	// Get log info to determine total entries
+	logInfo, err := s.getRekorLogInfo(ctx, rekorURL)
+	if err != nil {
+		return models.TrustCoverageResponse{}, http.StatusInternalServerError, fmt.Errorf("failed to get Rekor log info: %w", err)
+	}
+
+	// Query entries and calculate coverage
+	coverage, err := s.calculateCoverageFromRekor(ctx, rekorURL, logInfo.TreeSize)
+	if err != nil {
+		return models.TrustCoverageResponse{}, http.StatusInternalServerError, fmt.Errorf("failed to calculate coverage: %w", err)
+	}
+
+	return coverage, http.StatusOK, nil
 }
 
 func getMockTrustCoverage() models.TrustCoverageResponse {
 	totalArtifacts := 1000
 	attestedCount := 610
+	unattestedCount := totalArtifacts - attestedCount
 
 	return models.TrustCoverageResponse{
-		TotalArtifacts:        totalArtifacts,
-		AttestedCount:         attestedCount,
-		VerifiedPercentage:    float32(attestedCount) / float32(totalArtifacts) * 100,
-		AttestedPercentage:    float32(attestedCount) / float32(totalArtifacts) * 100,
-		UpdatedAt:             time.Now().UTC(),
+		TotalArtifacts:     totalArtifacts,
+		AttestedCount:      attestedCount,
+		UnattestedCount:    unattestedCount,
+		VerifiedPercentage: float32(attestedCount) / float32(totalArtifacts) * 100,
+		AttestedPercentage: float32(attestedCount) / float32(totalArtifacts) * 100,
+		UpdatedAt:          time.Now().UTC(),
 	}
 }
 
@@ -974,4 +993,166 @@ func (s *trustService) populateTargets(ctx context.Context, repo *tufRepository)
 	}
 
 	return http.StatusOK, nil
+}
+
+// rekorLogInfo represents the Rekor log metadata
+type rekorLogInfo struct {
+	TreeSize int64 `json:"treeSize"`
+}
+
+// rekorEntry represents a Rekor log entry response
+type rekorEntry struct {
+	Body            string `json:"body"`
+	IntegratedTime  int64  `json:"integratedTime"`
+	LogID           string `json:"logID"`
+	LogIndex        int64  `json:"logIndex"`
+	Verification    interface{} `json:"verification,omitempty"`
+}
+
+// rekorEntryBody represents the decoded body of a Rekor entry
+type rekorEntryBody struct {
+	APIVersion string `json:"apiVersion"`
+	Kind       string `json:"kind"`
+}
+
+// getRekorLogInfo queries the Rekor /api/v1/log endpoint for log metadata
+func (s *trustService) getRekorLogInfo(ctx context.Context, rekorURL string) (*rekorLogInfo, error) {
+	url := strings.TrimRight(rekorURL, "/") + "/api/v1/log"
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query Rekor log endpoint: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status code %d from Rekor", resp.StatusCode)
+	}
+
+	var info rekorLogInfo
+	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+		return nil, fmt.Errorf("failed to decode log info: %w", err)
+	}
+
+	return &info, nil
+}
+
+// calculateCoverageFromRekor queries Rekor entries and calculates attestation coverage
+func (s *trustService) calculateCoverageFromRekor(ctx context.Context, rekorURL string, treeSize int64) (models.TrustCoverageResponse, error) {
+	if treeSize == 0 {
+		// No entries in Rekor
+		return models.TrustCoverageResponse{
+			TotalArtifacts:     0,
+			AttestedCount:      0,
+			UnattestedCount:    0,
+			VerifiedPercentage: 0,
+			AttestedPercentage: 0,
+			UpdatedAt:          time.Now().UTC(),
+		}, nil
+	}
+
+	var attestedCount int64
+	var totalArtifacts int64
+
+	// Limit the scan for performance (can be made configurable)
+	maxEntriesToScan := treeSize
+	if envLimit := os.Getenv("REKOR_SCAN_LIMIT"); envLimit != "" {
+		if limit, err := strconv.ParseInt(envLimit, 10, 64); err == nil && limit > 0 {
+			maxEntriesToScan = limit
+			if maxEntriesToScan > treeSize {
+				maxEntriesToScan = treeSize
+			}
+		}
+	}
+
+	// Scan entries to count attested vs unattested
+	for i := int64(0); i < maxEntriesToScan; i++ {
+		entry, err := s.getRekorEntry(ctx, rekorURL, i)
+		if err != nil {
+			log.Printf("Warning: failed to get entry at index %d: %v", i, err)
+			continue
+		}
+
+		totalArtifacts++
+
+		// Decode the entry body to check the kind
+		if isAttested, err := s.isEntryAttested(entry); err == nil && isAttested {
+			attestedCount++
+		}
+	}
+
+	if totalArtifacts == 0 {
+		totalArtifacts = 1 // Avoid division by zero
+	}
+
+	unattestedCount := totalArtifacts - attestedCount
+	attestedPercentage := float32(attestedCount) / float32(totalArtifacts) * 100
+	verifiedPercentage := attestedPercentage // For now, attested implies verified
+
+	return models.TrustCoverageResponse{
+		TotalArtifacts:     int(totalArtifacts),
+		AttestedCount:      int(attestedCount),
+		UnattestedCount:    int(unattestedCount),
+		VerifiedPercentage: verifiedPercentage,
+		AttestedPercentage: attestedPercentage,
+		UpdatedAt:          time.Now().UTC(),
+	}, nil
+}
+
+// getRekorEntry fetches a single entry from Rekor by log index
+func (s *trustService) getRekorEntry(ctx context.Context, rekorURL string, logIndex int64) (*rekorEntry, error) {
+	url := fmt.Sprintf("%s/api/v1/log/entries?logIndex=%d", strings.TrimRight(rekorURL, "/"), logIndex)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query Rekor entry: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status code %d from Rekor", resp.StatusCode)
+	}
+
+	// Rekor returns a map with UUID as key
+	var entries map[string]rekorEntry
+	if err := json.NewDecoder(resp.Body).Decode(&entries); err != nil {
+		return nil, fmt.Errorf("failed to decode entry: %w", err)
+	}
+
+	// Get the first (and only) entry
+	for _, entry := range entries {
+		return &entry, nil
+	}
+
+	return nil, fmt.Errorf("no entry found at index %d", logIndex)
+}
+
+// isEntryAttested checks if a Rekor entry represents an attested artifact
+func (s *trustService) isEntryAttested(entry *rekorEntry) (bool, error) {
+	// Decode base64 body
+	bodyBytes, err := base64.StdEncoding.DecodeString(entry.Body)
+	if err != nil {
+		return false, fmt.Errorf("failed to decode entry body: %w", err)
+	}
+
+	var body rekorEntryBody
+	if err := json.Unmarshal(bodyBytes, &body); err != nil {
+		return false, fmt.Errorf("failed to unmarshal entry body: %w", err)
+	}
+
+	// Check if the kind indicates an attestation
+	// "dsse" and "intoto" are attestation types
+	// "hashedrekord" is a signature without attestation
+	kind := strings.ToLower(body.Kind)
+	return kind == "dsse" || kind == "intoto", nil
 }

@@ -385,7 +385,8 @@ paths:
                 totalArtifacts: 1000
                 attestedCount: 610
                 unattestedCount: 390
-                attestationPercentage: 61.0
+                verifiedPercentage: 61.0
+                attestedPercentage: 61.0
                 updatedAt: "2024-03-10T15:30:00Z"
         "500":
           description: Internal server error
@@ -1121,6 +1122,10 @@ components:
           type: integer
           description: Number of attested artifacts
           example: 610
+        unattestedCount:
+          type: integer
+          description: Number of unattested artifacts
+          example: 390
         verifiedPercentage:
           type: number
           format: float
@@ -1142,6 +1147,7 @@ components:
       required:
         - totalArtifacts
         - attestedCount
+        - unattestedCount
         - verifiedPercentage
         - attestedPercentage
         - updatedAt

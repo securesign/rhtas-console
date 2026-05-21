@@ -457,6 +457,9 @@ type TrustCoverageResponse struct {
 	// TotalArtifacts Total number of artifacts processed by TAS
 	TotalArtifacts int `json:"totalArtifacts"`
 
+	// UnattestedCount Number of unattested artifacts
+	UnattestedCount int `json:"unattestedCount"`
+
 	// UpdatedAt Timestamp when the coverage data was last updated
 	UpdatedAt time.Time `json:"updatedAt"`
 
