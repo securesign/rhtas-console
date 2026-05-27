@@ -99,11 +99,24 @@ func NewTrustService() TrustService {
 		}
 	}
 
-	// DB connection string
-	// example: user:password@tcp(localhost:3306)/tuf_trust
+	// DB connection string - construct from individual env vars
+	// Supports both explicit DB_DSN and individual MYSQL_* vars
 	DB_DSN := os.Getenv("DB_DSN")
 	if DB_DSN == "" {
-		log.Fatal("DB_DSN env variable must be non-empty")
+		// Construct DSN from individual environment variables
+		mysqlUser := os.Getenv("MYSQL_USER")
+		mysqlPassword := os.Getenv("MYSQL_PASSWORD")
+		mysqlHost := os.Getenv("MYSQL_HOST")
+		mysqlPort := os.Getenv("MYSQL_PORT")
+		mysqlDatabase := os.Getenv("MYSQL_DATABASE")
+
+		if mysqlUser == "" || mysqlPassword == "" || mysqlHost == "" || mysqlPort == "" || mysqlDatabase == "" {
+			log.Fatal("Either DB_DSN or all of (MYSQL_USER, MYSQL_PASSWORD, MYSQL_HOST, MYSQL_PORT, MYSQL_DATABASE) must be set")
+		}
+
+		// Construct DSN: user:password@tcp(host:port)/database
+		DB_DSN = fmt.Sprintf("%s:%s@tcp(%s:%s)/%s", mysqlUser, mysqlPassword, mysqlHost, mysqlPort, mysqlDatabase)
+		log.Printf("Constructed DB_DSN from individual MYSQL_* environment variables")
 	}
 
 	// TUF repository URL
@@ -348,11 +361,11 @@ func getMockTrustCoverage() models.TrustCoverageResponse {
 	attestedCount := 610
 
 	return models.TrustCoverageResponse{
-		TotalArtifacts:        totalArtifacts,
-		AttestedCount:         attestedCount,
-		VerifiedPercentage:    float32(attestedCount) / float32(totalArtifacts) * 100,
-		AttestedPercentage:    float32(attestedCount) / float32(totalArtifacts) * 100,
-		UpdatedAt:             time.Now().UTC(),
+		TotalArtifacts:     totalArtifacts,
+		AttestedCount:      attestedCount,
+		VerifiedPercentage: float32(attestedCount) / float32(totalArtifacts) * 100,
+		AttestedPercentage: float32(attestedCount) / float32(totalArtifacts) * 100,
+		UpdatedAt:          time.Now().UTC(),
 	}
 }
 
