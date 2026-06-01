@@ -1,6 +1,6 @@
 module github.com/securesign/rhtas-console
 
-go 1.25.8
+go 1.26.0
 
 require (
 	github.com/go-chi/chi/v5 v5.3.0
@@ -11,7 +11,7 @@ require (
 	github.com/sigstore/protobuf-specs v0.5.1
 	github.com/sigstore/sigstore v1.10.8
 	github.com/sigstore/sigstore-go v1.1.4
-	github.com/theupdateframework/go-tuf/v2 v2.4.2
+	github.com/theupdateframework/go-tuf v0.7.0
 	github.com/theupdateframework/go-tuf/v2 v2.4.2
 	google.golang.org/protobuf v1.36.11
 )
@@ -72,6 +72,7 @@ require (
 	github.com/sigstore/timestamp-authority/v2 v2.1.0 // indirect
 	github.com/transparency-dev/formats v0.1.0 // indirect
 	github.com/transparency-dev/merkle v0.0.2 // indirect
+	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.69.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.69.0 // indirect
