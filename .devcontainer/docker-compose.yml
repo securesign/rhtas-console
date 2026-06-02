@@ -10,9 +10,8 @@ services:
     security_opt:
       - "label=disable"
     userns_mode: "keep-id"
-    environment:
-      DB_DSN: rootuser:root@tcp(rhtas-console-db:3306)/tuf_trust
-      TUF_REPO_URL: https://tuf-repo-cdn.sigstore.dev
+    # For development, the container just sleeps and you run the console manually with:
+    # ./bin/rhtas_console --mysql-uri="rootuser:root@tcp(rhtas-console-db:3306)/tuf_trust" --tuf-repo-url="https://tuf-repo-cdn.sigstore.dev"
     command: /bin/sh -c "while sleep 1000; do :; done"
     volumes:
       - ..:/workspace:cached
