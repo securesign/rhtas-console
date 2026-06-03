@@ -8,7 +8,7 @@ COPY . .
 RUN go build -buildvcs=false -o rhtas_console ./cmd/rhtas_console
 
 # Final stage
-FROM registry.access.redhat.com/ubi9/ubi-minimal:9.8-1779809423
+FROM registry.access.redhat.com/ubi9/ubi-minimal:9.8-1780378819
 
 # Set a writable working directory
 WORKDIR /tmp
