@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
@@ -20,9 +21,9 @@ import (
 
 	"database/sql"
 
-	_ "github.com/go-sql-driver/mysql"
+	"github.com/go-sql-driver/mysql"
 	"github.com/golang-migrate/migrate/v4"
-	"github.com/golang-migrate/migrate/v4/database/mysql"
+	migrateMysql "github.com/golang-migrate/migrate/v4/database/mysql"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/securesign/rhtas-console/internal/models"
 	"github.com/sigstore/sigstore-go/pkg/tuf"
@@ -117,6 +118,18 @@ func NewTrustService() TrustService {
 		// Construct DSN: user:password@tcp(host:port)/database
 		DB_DSN = fmt.Sprintf("%s:%s@tcp(%s:%s)/%s", mysqlUser, mysqlPassword, mysqlHost, mysqlPort, mysqlDatabase)
 		log.Printf("Constructed DB_DSN from individual MYSQL_* environment variables")
+	}
+
+	if os.Getenv("DB_TLS_CA") != "" {
+		if err := registerMySQLTLSConfig(); err != nil {
+			log.Fatalf("failed to configure MySQL TLS: %v", err)
+		}
+		if strings.Contains(DB_DSN, "?") {
+			DB_DSN += "&tls=custom"
+		} else {
+			DB_DSN += "?tls=custom"
+		}
+		log.Printf("DB TLS enabled")
 	}
 
 	// TUF repository URL
@@ -870,7 +883,7 @@ func (s *trustService) syncDatabaseWithTargets(repo *tufRepository) error {
 
 // runMigrations applies database migrations using golang-migrate
 func (s *trustService) runMigrations() error {
-	driver, err := mysql.WithInstance(s.db, &mysql.Config{})
+	driver, err := migrateMysql.WithInstance(s.db, &migrateMysql.Config{})
 	if err != nil {
 		return fmt.Errorf("failed to initialize migration driver: %w", err)
 	}
@@ -987,4 +1000,31 @@ func (s *trustService) populateTargets(ctx context.Context, repo *tufRepository)
 	}
 
 	return http.StatusOK, nil
+}
+
+// registerMySQLTLSConfig registers a custom TLS configuration for MySQL connections
+// if DB_TLS_CA environment variable is set.
+func registerMySQLTLSConfig() error {
+	tlsCAPath := os.Getenv("DB_TLS_CA")
+	if tlsCAPath == "" {
+		return nil
+	}
+
+	rootCertPool := x509.NewCertPool()
+	pem, err := os.ReadFile(tlsCAPath)
+	if err != nil {
+		return fmt.Errorf("failed to read DB TLS CA certificate: %w", err)
+	}
+	if ok := rootCertPool.AppendCertsFromPEM(pem); !ok {
+		return errors.New("failed to append PEM")
+	}
+
+	tlsConfig := &tls.Config{
+		RootCAs: rootCertPool,
+	}
+	if tlsServerName := os.Getenv("DB_TLS_SERVER_NAME"); tlsServerName != "" {
+		tlsConfig.ServerName = tlsServerName
+	}
+
+	return mysql.RegisterTLSConfig("custom", tlsConfig)
 }
