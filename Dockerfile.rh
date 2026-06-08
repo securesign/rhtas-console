@@ -5,7 +5,7 @@ WORKDIR /app
 
 COPY . .
 
-RUN go build -buildvcs=false -o rhtas_console ./cmd/rhtas_console
+RUN GOFIPS140=v1.0.0 go build -tags=no_openssl -buildvcs=false -o rhtas_console ./cmd/rhtas_console
 
 # Final stage
 FROM registry.access.redhat.com/ubi9/ubi-minimal@sha256:5b74fce9d6e629942a0c6dc0f546c193e70d7f974d999a48c948c53dd3d36362

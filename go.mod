@@ -2,6 +2,8 @@ module github.com/securesign/rhtas-console
 
 go 1.26.0
 
+godebug fips140=auto
+
 require (
 	github.com/go-chi/chi/v5 v5.3.0
 	github.com/go-sql-driver/mysql v1.10.0

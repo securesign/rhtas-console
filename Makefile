@@ -27,7 +27,7 @@ generate-openapi:
 build: generate-openapi deps
 	@echo "Building $(BINARY_NAME)..."
 	@mkdir -p $(BUILD_DIR)
-	go build -v -o $(BUILD_DIR)/$(BINARY_NAME) ./$(CMD_DIR)
+	go build -tags=no_openssl -v -o $(BUILD_DIR)/$(BINARY_NAME) ./$(CMD_DIR)
 
 .PHONY: run
 run: build deploy-mariadb
