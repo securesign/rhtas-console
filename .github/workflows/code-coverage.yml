@@ -18,6 +18,10 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version-file: 'go.mod'
+
+      - name: Remove RHTAS FIPS godebug for upstream Go # RHTAS FIPS - DO NOT REMOVE
+        run: go mod edit -dropgodebug=fips140
+
       - name: Run tests with coverage
         run: go test -coverprofile=coverage.out ./...
       - name: Upload coverage to Codecov
