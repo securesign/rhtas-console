@@ -21,7 +21,8 @@ metadata:
   name: rhtas-console-on-pull-request
   namespace: rhtas-tenant
 spec:
-  params:
+  params:- name: fips-check
+    value: "true"
   - name: git-url
     value: '{{source_url}}'
   - name: revision
@@ -44,6 +45,8 @@ spec:
     value: true
   - name: go_base_image
     value: registry.redhat.io/ubi9/go-toolset:9.8-1779959429@sha256:23c19e009965fac24c91d9df0135feb876051615918af74c9b1dc0f0c511b33b
+  - name: fips-check
+    value: "true"
   pipelineRef:
     resolver: git
     params:
