@@ -21,8 +21,7 @@ metadata:
   name: rhtas-console-on-pull-request
   namespace: rhtas-tenant
 spec:
-  params:- name: fips-check
-    value: "true"
+  params:
   - name: git-url
     value: '{{source_url}}'
   - name: revision
