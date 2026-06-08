@@ -2,12 +2,10 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
-	"os"
 
 	_ "embed"
-
-	"errors"
 
 	"github.com/go-chi/chi/v5"
 	console_errors "github.com/securesign/rhtas-console/internal/errors"
@@ -95,7 +93,7 @@ func (h *Handler) GetApiV1ArtifactsArtifactPolicies(w http.ResponseWriter, r *ht
 }
 
 func (h *Handler) GetApiV1TrustConfig(w http.ResponseWriter, r *http.Request) {
-	tufRepoUrl := os.Getenv("TUF_REPO_URL")
+	tufRepoUrl := h.trustService.GetTUFRepoURL()
 	resp, statusCode, err := h.trustService.GetTrustConfig(r.Context(), tufRepoUrl)
 	if err != nil {
 		writeError(w, statusCode, err.Error())
@@ -105,7 +103,7 @@ func (h *Handler) GetApiV1TrustConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) GetApiV1TrustRootMetadata(w http.ResponseWriter, r *http.Request) {
-	tufRepoUrl := os.Getenv("TUF_REPO_URL")
+	tufRepoUrl := h.trustService.GetTUFRepoURL()
 	resp, statusCode, err := h.trustService.GetTrustRootMetadataInfo(r.Context(), tufRepoUrl)
 	if err != nil {
 		writeError(w, statusCode, err.Error())
@@ -115,7 +113,7 @@ func (h *Handler) GetApiV1TrustRootMetadata(w http.ResponseWriter, r *http.Reque
 }
 
 func (h *Handler) GetApiV1TrustTargets(w http.ResponseWriter, r *http.Request) {
-	tufRepoUrl := os.Getenv("TUF_REPO_URL")
+	tufRepoUrl := h.trustService.GetTUFRepoURL()
 	resp, statusCode, err := h.trustService.GetAllTargets(r.Context(), tufRepoUrl)
 	if err != nil {
 		writeError(w, statusCode, err.Error())
@@ -125,7 +123,7 @@ func (h *Handler) GetApiV1TrustTargets(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) GetApiV1TrustTarget(w http.ResponseWriter, r *http.Request) {
-	tufRepoUrl := os.Getenv("TUF_REPO_URL")
+	tufRepoUrl := h.trustService.GetTUFRepoURL()
 	target := r.URL.Query().Get("target")
 	resp, statusCode, err := h.trustService.GetTarget(r.Context(), tufRepoUrl, target)
 	if err != nil {
@@ -136,7 +134,7 @@ func (h *Handler) GetApiV1TrustTarget(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) GetApiV1TrustTargetsCertificates(w http.ResponseWriter, r *http.Request) {
-	tufRepoUrl := os.Getenv("TUF_REPO_URL")
+	tufRepoUrl := h.trustService.GetTUFRepoURL()
 	resp, statusCode, err := h.trustService.GetCertificatesInfo(r.Context(), tufRepoUrl)
 	if err != nil {
 		writeError(w, statusCode, err.Error())

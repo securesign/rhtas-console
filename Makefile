@@ -38,9 +38,9 @@ run: build deploy-mariadb
 	done
 	@echo "MariaDB is up."
 	@echo "Running $(BINARY_NAME)..."
-	@DB_DSN="$(DB_DSN)" \
-	TUF_REPO_URL="$(TUF_PUBLIC_INSTANCE)" \
-	"./$(BUILD_DIR)/$(BINARY_NAME)"
+	@"./$(BUILD_DIR)/$(BINARY_NAME)" \
+		--mysql-uri="$(DB_DSN)" \
+		--tuf-repo-url="$(TUF_PUBLIC_INSTANCE)"
 
 .PHONY: deps
 deps:
