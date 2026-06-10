@@ -81,12 +81,12 @@ restart-mariadb: stop-mariadb deploy-mariadb
 .PHONY: test
 test:
 	@echo "Running tests..."
-	go test ./...
+	GODEBUG=fips140=off go test ./...
 
 .PHONY: coverage
 coverage:
 	@echo "Running tests with coverage..."
-	go test -coverprofile=coverage.out ./...
+	GODEBUG=fips140=off go test -coverprofile=coverage.out ./...
 	go tool cover -func=coverage.out
 
 .PHONY: clean
