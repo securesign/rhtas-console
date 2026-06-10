@@ -227,7 +227,11 @@ func (h *healthService) checkHTTPHealth(ctx context.Context, url string) bool {
 	if err != nil {
 		return false
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil {
+			log.Printf("Failed to close response body: %v", cerr)
+		}
+	}()
 
 	return resp.StatusCode == http.StatusOK
 }
