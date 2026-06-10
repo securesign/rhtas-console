@@ -91,6 +91,7 @@ The backend exposes the following RESTful endpoints, as defined in the OpenAPI s
 | GET    | `/api/v1/trust/targets`                     | Retrieves all TUF targets. |
 | GET    | `/api/v1/trust/target`                      | Retrieves a specific TUF target. |
 | GET    | `/api/v1/trust/targets/certificates`        | Retrieves certificates for TUF targets. |
+| GET    | `/api/v1/system/health`                     | Retrieves the aggregated health status of RHTAS components (TAS, Rekor, TUF). |
 
 #### Example: Verify an artifact
 
@@ -320,6 +321,22 @@ Response:
 - Standard Go libraries (`context`, `net/http`, etc.).
 
 Run `go mod tidy` to install dependencies defined in `go.mod`.
+
+## Kubernetes Deployment
+
+### RBAC Permissions
+
+When deploying the console backend in a Kubernetes cluster, the ServiceAccount needs permissions to check the health of RHTAS components. Apply the RBAC configuration:
+
+```bash
+kubectl apply -f config/rbac/health-role.yaml
+```
+
+This grants the console backend read access to:
+- Custom Resources: `securesigns`, `rekors`, `tufs` (for checking CR status)
+- Deployments: (for checking pod health)
+
+See `config/rbac/health-role.yaml` for the complete RBAC configuration required for the `/api/v1/system/health` endpoint.
 
 ## Development
 

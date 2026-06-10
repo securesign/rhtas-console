@@ -383,26 +383,14 @@ func getMockTrustCoverage() models.TrustCoverageResponse {
 }
 
 func (s *trustService) GetSystemHealth(ctx context.Context) (models.SystemHealthResponse, int, error) {
-	mockMode := os.Getenv("MOCK_MODE")
-	if mockMode != "true" {
-		return models.SystemHealthResponse{}, http.StatusServiceUnavailable, fmt.Errorf("health data not available - set MOCK_MODE=true for mock data")
+	healthService, err := NewHealthService()
+	if err != nil {
+		return models.SystemHealthResponse{}, http.StatusServiceUnavailable, fmt.Errorf("failed to initialize health service: %w", err)
 	}
 
-	return getMockSystemHealth(), http.StatusOK, nil
+	return healthService.GetSystemHealth(ctx)
 }
 
-func getMockSystemHealth() models.SystemHealthResponse {
-	// Mock implementation returns all services as healthy
-	// Production implementation would check actual service health
-
-	return models.SystemHealthResponse{
-		OverallStatus: models.SystemHealthResponseOverallStatusHealthy,
-		TasStatus:     models.SystemHealthResponseTasStatusHealthy,
-		RekorStatus:   models.SystemHealthResponseRekorStatusHealthy,
-		TufStatus:     models.SystemHealthResponseTufStatusHealthy,
-		UpdatedAt:     time.Now().UTC(),
-	}
-}
 
 // getOrCreateUpdater retrieves or initializes a TUF updater for the given repository URL.
 func (s *trustService) getOrCreateUpdater(ctx context.Context, tufRepoUrl string) (*tufRepository, int, error) {
