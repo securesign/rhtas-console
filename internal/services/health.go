@@ -63,6 +63,10 @@ func getKubeConfig() (*rest.Config, error) {
 }
 
 func (h *healthService) GetSystemHealth(ctx context.Context) (models.SystemHealthResponse, int, error) {
+	// Add timeout to prevent hanging on slow/hung Kubernetes API calls
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
 	tasStatus := h.checkTASHealth(ctx)
 	rekorStatus := h.checkRekorHealth(ctx)
 	tufStatus := h.checkTUFHealth(ctx)
