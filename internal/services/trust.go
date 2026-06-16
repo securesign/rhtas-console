@@ -24,7 +24,11 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/golang-migrate/migrate/v4"
 	migrateMysql "github.com/golang-migrate/migrate/v4/database/mysql"
+	migratePostgres "github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
+	"github.com/golang-migrate/migrate/v4/source/iofs"
+	_ "github.com/lib/pq"
+	"github.com/securesign/rhtas-console/internal/db"
 	"github.com/securesign/rhtas-console/internal/models"
 	"github.com/sigstore/sigstore-go/pkg/tuf"
 	"github.com/sigstore/sigstore-go/pkg/util"
@@ -40,6 +44,50 @@ var (
 	TufPublicGoodInstance = "https://tuf-repo-cdn.sigstore.dev"
 )
 
+// TrustServiceFlags holds all configuration from command-line flags
+type TrustServiceFlags struct {
+	MySQLURI        string
+	PostgreSQLURI   string
+	TLSCA           string
+	TLSServerName   string
+	TUFRepoURL      string
+	RefreshInterval time.Duration
+}
+
+// dbConfig holds database configuration
+type dbConfig struct {
+	dsn    string
+	dbType string // "mysql" or "postgres"
+}
+
+// constructDatabaseDSN builds the database connection string from command-line flags
+// and detects the database type.
+func constructDatabaseDSN(flags *TrustServiceFlags) (*dbConfig, error) {
+	if flags == nil {
+		return nil, fmt.Errorf("database flags are required")
+	}
+
+	var dbDSN string
+	var dbType string
+
+	if flags.PostgreSQLURI != "" {
+		dbDSN = flags.PostgreSQLURI
+		dbType = "postgres"
+		log.Printf("Using PostgreSQL URI from --postgresql-uri flag")
+	} else if flags.MySQLURI != "" {
+		dbDSN = flags.MySQLURI
+		dbType = "mysql"
+		log.Printf("Using MySQL URI from --mysql-uri flag")
+	} else {
+		return nil, fmt.Errorf("either --mysql-uri or --postgresql-uri flag must be provided")
+	}
+
+	return &dbConfig{
+		dsn:    dbDSN,
+		dbType: dbType,
+	}, nil
+}
+
 type TrustService interface {
 	GetTrustConfig(ctx context.Context, tufRepoUrl string) (cfg models.TrustConfig, statusCode int, err error)
 	GetTrustRootMetadataInfo(ctx context.Context, tufRepoUrl string) (info models.RootMetadataInfoList, statusCode int, err error)
@@ -48,6 +96,7 @@ type TrustService interface {
 	GetAllTargets(ctx context.Context, tufRepoUrl string) (targets models.TargetsList, statusCode int, err error)
 	GetTrustCoverage(ctx context.Context, timeWindow string, environment *string, tufRepoUrl string) (coverage models.TrustCoverageResponse, statusCode int, err error)
 	GetSystemHealth(ctx context.Context) (health models.SystemHealthResponse, statusCode int, err error)
+	GetTUFRepoURL() string
 	CloseDB() error
 }
 
@@ -59,8 +108,31 @@ type trustService struct {
 	refreshInterval time.Duration
 	tufRepoUrl      string
 	db              *sql.DB
+	dbType          string // "mysql" or "postgres"
 	ctx             context.Context
 	cancel          context.CancelFunc
+}
+
+// convertPlaceholders converts MySQL-style ? placeholders to database-specific placeholders.
+// For PostgreSQL: ? -> $1, $2, $3, ...
+// For MySQL: returns query unchanged
+func (s *trustService) convertPlaceholders(query string) string {
+	if s.dbType == "mysql" {
+		return query
+	}
+
+	// Convert ? to $1, $2, $3, etc. for PostgreSQL
+	result := strings.Builder{}
+	paramCount := 0
+	for i := 0; i < len(query); i++ {
+		if query[i] == '?' {
+			paramCount++
+			fmt.Fprintf(&result, "$%d", paramCount)
+		} else {
+			result.WriteByte(query[i])
+		}
+	}
+	return result.String()
 }
 
 // tufRepository holds the TUF updater and associated metadata for a single repository
@@ -91,66 +163,61 @@ var (
 	rootFetchGroup singleflight.Group
 )
 
-func NewTrustService() TrustService {
-	// Environment variables
-	refreshInterval := 1 * time.Minute
-	if envInterval := os.Getenv("TUF_REFRESH_INTERVAL"); envInterval != "" {
-		if parsed, err := time.ParseDuration(envInterval); err == nil && parsed > 0 {
-			refreshInterval = parsed
-		}
+func NewTrustService(flags *TrustServiceFlags) TrustService {
+	if flags == nil {
+		log.Fatal("TrustServiceFlags are required")
 	}
 
-	// DB connection string - construct from individual env vars
-	// Supports both explicit DB_DSN and individual MYSQL_* vars
-	DB_DSN := os.Getenv("DB_DSN")
-	if DB_DSN == "" {
-		// Construct DSN from individual environment variables
-		mysqlUser := os.Getenv("MYSQL_USER")
-		mysqlPassword := os.Getenv("MYSQL_PASSWORD")
-		mysqlHost := os.Getenv("MYSQL_HOST")
-		mysqlPort := os.Getenv("MYSQL_PORT")
-		mysqlDatabase := os.Getenv("MYSQL_DATABASE")
-
-		if mysqlUser == "" || mysqlPassword == "" || mysqlHost == "" || mysqlPort == "" || mysqlDatabase == "" {
-			log.Fatal("Either DB_DSN or all of (MYSQL_USER, MYSQL_PASSWORD, MYSQL_HOST, MYSQL_PORT, MYSQL_DATABASE) must be set")
-		}
-
-		// Construct DSN: user:password@tcp(host:port)/database
-		DB_DSN = fmt.Sprintf("%s:%s@tcp(%s:%s)/%s", mysqlUser, mysqlPassword, mysqlHost, mysqlPort, mysqlDatabase)
-		log.Printf("Constructed DB_DSN from individual MYSQL_* environment variables")
+	if flags.TUFRepoURL == "" {
+		log.Fatal("--tuf-repo-url flag must be non-empty")
 	}
 
-	if os.Getenv("DB_TLS_CA") != "" {
-		if err := registerMySQLTLSConfig(); err != nil {
-			log.Fatalf("failed to configure MySQL TLS: %v", err)
-		}
-		if strings.Contains(DB_DSN, "?") {
-			DB_DSN += "&tls=custom"
-		} else {
-			DB_DSN += "?tls=custom"
+	refreshInterval := flags.RefreshInterval
+	if refreshInterval <= 0 {
+		refreshInterval = 1 * time.Minute
+	}
+
+	dbCfg, err := constructDatabaseDSN(flags)
+	if err != nil {
+		log.Fatalf("failed to construct database DSN: %v", err)
+	}
+
+	if flags.TLSCA != "" {
+		tlsCA := flags.TLSCA
+		tlsServerName := flags.TLSServerName
+		switch dbCfg.dbType {
+		case "mysql":
+			if err := registerMySQLTLSConfig(tlsCA, tlsServerName); err != nil {
+				log.Fatalf("failed to configure MySQL TLS: %v", err)
+			}
+			if strings.Contains(dbCfg.dsn, "?") {
+				dbCfg.dsn += "&tls=custom"
+			} else {
+				dbCfg.dsn += "?tls=custom"
+			}
+		case "postgres":
+			if err := registerPostgresTLSConfig(&dbCfg.dsn, tlsCA); err != nil {
+				log.Fatalf("failed to configure PostgreSQL TLS: %v", err)
+			}
 		}
 		log.Printf("DB TLS enabled")
 	}
 
-	// TUF repository URL
-	tufRepoUrl := os.Getenv("TUF_REPO_URL")
-	if tufRepoUrl == "" {
-		log.Fatal("TUF_REPO_URL env variable must be non-empty")
-	}
+	tufRepoUrl := flags.TUFRepoURL
 
-	// Initialize MariaDB connection
-	db, err := sql.Open("mysql", DB_DSN)
+	db, err := sql.Open(dbCfg.dbType, dbCfg.dsn)
 	if err != nil {
-		log.Fatalf("failed to connect to MariaDB: %v", err)
+		log.Fatalf("failed to connect to database (%s): %v", dbCfg.dbType, err)
 	}
 	if err = db.Ping(); err != nil {
-		log.Fatalf("failed to ping MariaDB: %v", err)
+		log.Fatalf("failed to ping database (%s): %v", dbCfg.dbType, err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &trustService{
 		refreshInterval: refreshInterval,
 		db:              db,
+		dbType:          dbCfg.dbType,
 		ctx:             ctx,
 		cancel:          cancel,
 	}
@@ -160,7 +227,6 @@ func NewTrustService() TrustService {
 		log.Fatalf("failed to run migrations: %v", err)
 	}
 
-	// Perform initial targets population
 	repo, statusCode, err := s.getOrCreateUpdater(ctx, tufRepoUrl)
 	if err != nil {
 		log.Fatalf("failed to initialize default TUF repository %s (statusCode=%d): %v", tufRepoUrl, statusCode, err)
@@ -245,9 +311,7 @@ func (s *trustService) GetTrustRootMetadataInfo(ctx context.Context, tufRepoUrl 
 
 func (s *trustService) GetTarget(ctx context.Context, tufRepoUrl string, target string) (models.TargetContent, int, error) {
 	// Get target content from database
-	query := `
-		SELECT content FROM targets WHERE target_name = ? AND repo_url = ?
-	`
+	query := s.convertPlaceholders(`SELECT content FROM targets WHERE target_name = ? AND repo_url = ?`)
 	row, err := s.db.QueryContext(ctx, query, target, tufRepoUrl)
 	if err != nil {
 		log.Printf("Failed to query DB (repo=%s, target=%s): %v", tufRepoUrl, target, err)
@@ -275,9 +339,7 @@ func (s *trustService) GetTarget(ctx context.Context, tufRepoUrl string, target 
 
 func (s *trustService) GetCertificatesInfo(ctx context.Context, tufRepoUrl string) (models.CertificateInfoList, int, error) {
 	// Get targets from database
-	query := `
-		SELECT target_name, type, status, content FROM targets WHERE repo_url = ?
-	`
+	query := s.convertPlaceholders(`SELECT target_name, type, status, content FROM targets WHERE repo_url = ?`)
 	rows, err := s.db.QueryContext(ctx, query, tufRepoUrl)
 	if err != nil {
 		log.Printf("Failed to query DB (repo=%s): %v", tufRepoUrl, err)
@@ -329,9 +391,7 @@ func (s *trustService) GetCertificatesInfo(ctx context.Context, tufRepoUrl strin
 
 func (s *trustService) GetAllTargets(ctx context.Context, tufRepoUrl string) (models.TargetsList, int, error) {
 	// Get targets from database
-	query := `
-		SELECT target_name, type, status, content FROM targets WHERE repo_url = ?
-	`
+	query := s.convertPlaceholders(`SELECT target_name, type, status, content FROM targets WHERE repo_url = ?`)
 	rows, err := s.db.QueryContext(ctx, query, tufRepoUrl)
 	if err != nil {
 		log.Printf("Failed to query DB (repo=%s): %v", tufRepoUrl, err)
@@ -540,6 +600,11 @@ func (s *trustService) CloseDB() error {
 		return s.db.Close()
 	}
 	return nil
+}
+
+// GetTUFRepoURL returns the configured TUF repository URL
+func (s *trustService) GetTUFRepoURL() string {
+	return s.tufRepoUrl
 }
 
 // buildTufOptions returns TUF options with the provided or default repository URL.
@@ -847,7 +912,8 @@ func (s *trustService) syncDatabaseWithTargets(repo *tufRepository) error {
 	}
 
 	// Get current targets in database (excluding already revoked)
-	rows, err := s.db.Query("SELECT target_name FROM targets WHERE repo_url = ? AND status IN ('Active', 'Expired')", repo.remoteMetadataURL)
+	selectQuery := s.convertPlaceholders("SELECT target_name FROM targets WHERE repo_url = ? AND status IN ('Active', 'Expired')")
+	rows, err := s.db.Query(selectQuery, repo.remoteMetadataURL)
 	if err != nil {
 		log.Printf("Failed to query database targets (repo=%s): %v", repo.remoteMetadataURL, err)
 		return fmt.Errorf("could not query database targets")
@@ -872,7 +938,8 @@ func (s *trustService) syncDatabaseWithTargets(repo *tufRepository) error {
 	// Mark removed targets as revoked
 	for target := range dbTargets {
 		if _, exists := targetMetadataSpecs[target]; !exists {
-			_, err := s.db.Exec("UPDATE targets SET status = 'Revoked', updated_at = NOW() WHERE repo_url = ? AND target_name = ?", repo.remoteMetadataURL, target)
+			updateQuery := s.convertPlaceholders("UPDATE targets SET status = 'Revoked', updated_at = CURRENT_TIMESTAMP WHERE repo_url = ? AND target_name = ?")
+			_, err := s.db.Exec(updateQuery, repo.remoteMetadataURL, target)
 			if err != nil {
 				log.Printf("failed to mark target %s as Revoked: %v", target, err)
 			}
@@ -881,46 +948,88 @@ func (s *trustService) syncDatabaseWithTargets(repo *tufRepository) error {
 	return nil
 }
 
-// runMigrations applies database migrations using golang-migrate
+// runMigrations applies database migrations using golang-migrate with embedded migration files
 func (s *trustService) runMigrations() error {
-	driver, err := migrateMysql.WithInstance(s.db, &migrateMysql.Config{})
-	if err != nil {
-		return fmt.Errorf("failed to initialize migration driver: %w", err)
-	}
+	var driverName string
+	var m *migrate.Migrate
 
-	m, err := migrate.NewWithDatabaseInstance(
-		"file://internal/db/migrations",
-		"mysql",
-		driver,
-	)
-	if err != nil {
-		return fmt.Errorf("failed to initialize migrations: %w", err)
+	if s.dbType == "postgres" {
+		driver, err := migratePostgres.WithInstance(s.db, &migratePostgres.Config{})
+		if err != nil {
+			return fmt.Errorf("failed to initialize PostgreSQL migration driver: %w", err)
+		}
+
+		// Use embedded migrations for PostgreSQL
+		sourceDriver, err := iofs.New(db.MigrationsFS, "migrations/postgres")
+		if err != nil {
+			return fmt.Errorf("failed to create PostgreSQL migration source: %w", err)
+		}
+
+		driverName = "postgres"
+		m, err = migrate.NewWithInstance("iofs", sourceDriver, driverName, driver)
+		if err != nil {
+			return fmt.Errorf("failed to initialize PostgreSQL migrations: %w", err)
+		}
+	} else {
+		driver, err := migrateMysql.WithInstance(s.db, &migrateMysql.Config{})
+		if err != nil {
+			return fmt.Errorf("failed to initialize MySQL migration driver: %w", err)
+		}
+
+		// Use embedded migrations for MySQL
+		sourceDriver, err := iofs.New(db.MigrationsFS, "migrations/mysql")
+		if err != nil {
+			return fmt.Errorf("failed to create MySQL migration source: %w", err)
+		}
+
+		driverName = "mysql"
+		m, err = migrate.NewWithInstance("iofs", sourceDriver, driverName, driver)
+		if err != nil {
+			return fmt.Errorf("failed to initialize MySQL migrations: %w", err)
+		}
 	}
 
 	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
 		return fmt.Errorf("failed to apply migrations: %w", err)
 	}
 
+	log.Printf("Database migrations completed successfully")
 	return nil
 }
 
 // storeTarget inserts or updates a target's metadata and content in the database.
 func (s *trustService) storeTarget(ctx context.Context, target models.TargetInfo, repoUrl string) error {
-	query := `
-		INSERT INTO targets (
-			repo_url, target_name, type, status, content, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, NOW(), NOW())
-		ON DUPLICATE KEY UPDATE
-			type = VALUES(type),
-			status = VALUES(status),
-			content = VALUES(content),
-			updated_at = NOW()
-	`
+	var query string
 	status := target.Status
 	// It happens when "status": ""
 	if status != "Active" && status != "Expired" {
 		status = "Active"
 	}
+
+	if s.dbType == "postgres" {
+		query = `
+			INSERT INTO targets (
+				repo_url, target_name, type, status, content, created_at, updated_at
+			) VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+			ON CONFLICT (repo_url, target_name) DO UPDATE SET
+				type = EXCLUDED.type,
+				status = EXCLUDED.status,
+				content = EXCLUDED.content,
+				updated_at = CURRENT_TIMESTAMP
+		`
+	} else {
+		query = `
+			INSERT INTO targets (
+				repo_url, target_name, type, status, content, created_at, updated_at
+			) VALUES (?, ?, ?, ?, ?, NOW(), NOW())
+			ON DUPLICATE KEY UPDATE
+				type = VALUES(type),
+				status = VALUES(status),
+				content = VALUES(content),
+				updated_at = NOW()
+		`
+	}
+
 	_, err := s.db.ExecContext(ctx, query, repoUrl, target.Name, target.Type, status, target.Content)
 	return err
 }
@@ -1003,9 +1112,7 @@ func (s *trustService) populateTargets(ctx context.Context, repo *tufRepository)
 }
 
 // registerMySQLTLSConfig registers a custom TLS configuration for MySQL connections
-// if DB_TLS_CA environment variable is set.
-func registerMySQLTLSConfig() error {
-	tlsCAPath := os.Getenv("DB_TLS_CA")
+func registerMySQLTLSConfig(tlsCAPath, tlsServerName string) error {
 	if tlsCAPath == "" {
 		return nil
 	}
@@ -1022,9 +1129,37 @@ func registerMySQLTLSConfig() error {
 	tlsConfig := &tls.Config{
 		RootCAs: rootCertPool,
 	}
-	if tlsServerName := os.Getenv("DB_TLS_SERVER_NAME"); tlsServerName != "" {
+	if tlsServerName != "" {
 		tlsConfig.ServerName = tlsServerName
 	}
 
 	return mysql.RegisterTLSConfig("custom", tlsConfig)
+}
+
+// registerPostgresTLSConfig updates the PostgreSQL DSN to enable TLS
+func registerPostgresTLSConfig(dsn *string, tlsCAPath string) error {
+	if tlsCAPath == "" {
+		return nil
+	}
+
+	if _, err := os.Stat(tlsCAPath); err != nil {
+		return fmt.Errorf("postgresql CA file error: %w", err)
+	}
+
+	u, err := url.Parse(*dsn)
+	if err != nil {
+		return fmt.Errorf("invalid postgresql URI %q: %w", *dsn, err)
+	}
+
+	q := u.Query()
+	q.Set("sslrootcert", tlsCAPath)
+
+	if q.Get("sslmode") == "" {
+		q.Set("sslmode", "verify-ca")
+	}
+
+	u.RawQuery = q.Encode()
+	*dsn = u.String()
+
+	return nil
 }

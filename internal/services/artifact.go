@@ -3,7 +3,6 @@ package services
 import (
 	"context"
 	"fmt"
-	"os"
 	"time"
 
 	"github.com/securesign/rhtas-console/internal/models"
@@ -16,10 +15,14 @@ type ArtifactService interface {
 	GetImageMetadata(ctx context.Context, image string, username string, password string) (models.ImageMetadataResponse, error)
 }
 
-type artifactService struct{}
+type artifactService struct{
+	tufRepoURL string
+}
 
-func NewArtifactService() ArtifactService {
-	return &artifactService{}
+func NewArtifactService(tufRepoURL string) ArtifactService {
+	return &artifactService{
+		tufRepoURL: tufRepoURL,
+	}
 }
 
 func (s *artifactService) VerifyArtifact(req models.VerifyArtifactRequest) (models.VerifyArtifactResponse, error) {
@@ -50,11 +53,11 @@ func (s *artifactService) VerifyArtifact(req models.VerifyArtifactRequest) (mode
 	if req.TufRepoUrl != nil {
 		tufRepoUrl = *req.TufRepoUrl
 	} else {
-		tufRepoUrl = os.Getenv("TUF_REPO_URL")
+		tufRepoUrl = s.tufRepoURL
 	}
 
 	if tufRepoUrl == "" {
-		return models.VerifyArtifactResponse{}, fmt.Errorf("tufRepoUrl is a required parameter and cannot be empty. Provide it either in request or as the TUF_REPO_URL environment variable")
+		return models.VerifyArtifactResponse{}, fmt.Errorf("tufRepoUrl is a required parameter and cannot be empty. Provide it in the request")
 	}
 	verifyOpts.TUFRootURL = tufRepoUrl
 
