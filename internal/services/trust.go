@@ -113,6 +113,28 @@ type trustService struct {
 	cancel          context.CancelFunc
 }
 
+// convertPlaceholders converts MySQL-style ? placeholders to database-specific placeholders.
+// For PostgreSQL: ? -> $1, $2, $3, ...
+// For MySQL: returns query unchanged
+func (s *trustService) convertPlaceholders(query string) string {
+	if s.dbType == "mysql" {
+		return query
+	}
+
+	// Convert ? to $1, $2, $3, etc. for PostgreSQL
+	result := strings.Builder{}
+	paramCount := 0
+	for i := 0; i < len(query); i++ {
+		if query[i] == '?' {
+			paramCount++
+			result.WriteString(fmt.Sprintf("$%d", paramCount))
+		} else {
+			result.WriteByte(query[i])
+		}
+	}
+	return result.String()
+}
+
 // tufRepository holds the TUF updater and associated metadata for a single repository
 type tufRepository struct {
 	updater           *updater.Updater
@@ -289,12 +311,7 @@ func (s *trustService) GetTrustRootMetadataInfo(ctx context.Context, tufRepoUrl 
 
 func (s *trustService) GetTarget(ctx context.Context, tufRepoUrl string, target string) (models.TargetContent, int, error) {
 	// Get target content from database
-	var query string
-	if s.dbType == "postgres" {
-		query = `SELECT content FROM targets WHERE target_name = $1 AND repo_url = $2`
-	} else {
-		query = `SELECT content FROM targets WHERE target_name = ? AND repo_url = ?`
-	}
+	query := s.convertPlaceholders(`SELECT content FROM targets WHERE target_name = ? AND repo_url = ?`)
 	row, err := s.db.QueryContext(ctx, query, target, tufRepoUrl)
 	if err != nil {
 		log.Printf("Failed to query DB (repo=%s, target=%s): %v", tufRepoUrl, target, err)
@@ -322,12 +339,7 @@ func (s *trustService) GetTarget(ctx context.Context, tufRepoUrl string, target 
 
 func (s *trustService) GetCertificatesInfo(ctx context.Context, tufRepoUrl string) (models.CertificateInfoList, int, error) {
 	// Get targets from database
-	var query string
-	if s.dbType == "postgres" {
-		query = `SELECT target_name, type, status, content FROM targets WHERE repo_url = $1`
-	} else {
-		query = `SELECT target_name, type, status, content FROM targets WHERE repo_url = ?`
-	}
+	query := s.convertPlaceholders(`SELECT target_name, type, status, content FROM targets WHERE repo_url = ?`)
 	rows, err := s.db.QueryContext(ctx, query, tufRepoUrl)
 	if err != nil {
 		log.Printf("Failed to query DB (repo=%s): %v", tufRepoUrl, err)
@@ -379,12 +391,7 @@ func (s *trustService) GetCertificatesInfo(ctx context.Context, tufRepoUrl strin
 
 func (s *trustService) GetAllTargets(ctx context.Context, tufRepoUrl string) (models.TargetsList, int, error) {
 	// Get targets from database
-	var query string
-	if s.dbType == "postgres" {
-		query = `SELECT target_name, type, status, content FROM targets WHERE repo_url = $1`
-	} else {
-		query = `SELECT target_name, type, status, content FROM targets WHERE repo_url = ?`
-	}
+	query := s.convertPlaceholders(`SELECT target_name, type, status, content FROM targets WHERE repo_url = ?`)
 	rows, err := s.db.QueryContext(ctx, query, tufRepoUrl)
 	if err != nil {
 		log.Printf("Failed to query DB (repo=%s): %v", tufRepoUrl, err)
@@ -905,12 +912,7 @@ func (s *trustService) syncDatabaseWithTargets(repo *tufRepository) error {
 	}
 
 	// Get current targets in database (excluding already revoked)
-	var selectQuery string
-	if s.dbType == "postgres" {
-		selectQuery = "SELECT target_name FROM targets WHERE repo_url = $1 AND status IN ('Active', 'Expired')"
-	} else {
-		selectQuery = "SELECT target_name FROM targets WHERE repo_url = ? AND status IN ('Active', 'Expired')"
-	}
+	selectQuery := s.convertPlaceholders("SELECT target_name FROM targets WHERE repo_url = ? AND status IN ('Active', 'Expired')")
 	rows, err := s.db.Query(selectQuery, repo.remoteMetadataURL)
 	if err != nil {
 		log.Printf("Failed to query database targets (repo=%s): %v", repo.remoteMetadataURL, err)
@@ -936,12 +938,7 @@ func (s *trustService) syncDatabaseWithTargets(repo *tufRepository) error {
 	// Mark removed targets as revoked
 	for target := range dbTargets {
 		if _, exists := targetMetadataSpecs[target]; !exists {
-			var updateQuery string
-			if s.dbType == "postgres" {
-				updateQuery = "UPDATE targets SET status = 'Revoked', updated_at = CURRENT_TIMESTAMP WHERE repo_url = $1 AND target_name = $2"
-			} else {
-				updateQuery = "UPDATE targets SET status = 'Revoked', updated_at = NOW() WHERE repo_url = ? AND target_name = ?"
-			}
+			updateQuery := s.convertPlaceholders("UPDATE targets SET status = 'Revoked', updated_at = CURRENT_TIMESTAMP WHERE repo_url = ? AND target_name = ?")
 			_, err := s.db.Exec(updateQuery, repo.remoteMetadataURL, target)
 			if err != nil {
 				log.Printf("failed to mark target %s as Revoked: %v", target, err)
