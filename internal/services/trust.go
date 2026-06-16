@@ -127,7 +127,7 @@ func (s *trustService) convertPlaceholders(query string) string {
 	for i := 0; i < len(query); i++ {
 		if query[i] == '?' {
 			paramCount++
-			result.WriteString(fmt.Sprintf("$%d", paramCount))
+			fmt.Fprintf(&result, "$%d", paramCount)
 		} else {
 			result.WriteByte(query[i])
 		}
