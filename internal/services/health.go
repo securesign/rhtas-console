@@ -67,22 +67,19 @@ func (h *healthService) GetSystemHealth(ctx context.Context) (models.SystemHealt
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	tasStatus := h.checkTASHealth(ctx)
+	sigstoreServices := h.checkSigstoreServicesHealth(ctx)
 	rekorStatus := h.checkRekorHealth(ctx)
 	tufStatus := h.checkTUFHealth(ctx)
 
-	overallStatus := h.deriveOverallStatus(tasStatus, rekorStatus, tufStatus)
-
 	return models.SystemHealthResponse{
-		OverallStatus: overallStatus,
-		TasStatus:     tasStatus,
-		RekorStatus:   rekorStatus,
-		TufStatus:     tufStatus,
-		UpdatedAt:     time.Now().UTC(),
+		SigstoreServices: sigstoreServices,
+		RekorStatus:      rekorStatus,
+		TufStatus:        tufStatus,
+		UpdatedAt:        time.Now().UTC(),
 	}, http.StatusOK, nil
 }
 
-func (h *healthService) checkTASHealth(ctx context.Context) models.SystemHealthResponseTasStatus {
+func (h *healthService) checkSigstoreServicesHealth(ctx context.Context) models.SystemHealthResponseSigstoreServices {
 	deploymentName := os.Getenv("TAS_DEPLOYMENT_NAME")
 	if deploymentName == "" {
 		deploymentName = "securesign-sample"
@@ -90,10 +87,10 @@ func (h *healthService) checkTASHealth(ctx context.Context) models.SystemHealthR
 
 	crHealthy, err := h.checkCustomResourceHealth(ctx, "securesigns", deploymentName)
 	if err != nil || !crHealthy {
-		return models.SystemHealthResponseTasStatusUnhealthy
+		return models.SystemHealthResponseSigstoreServicesUnhealthy
 	}
 
-	return models.SystemHealthResponseTasStatusHealthy
+	return models.SystemHealthResponseSigstoreServicesHealthy
 }
 
 func (h *healthService) checkRekorHealth(ctx context.Context) models.SystemHealthResponseRekorStatus {
@@ -240,34 +237,6 @@ func (h *healthService) checkHTTPHealth(ctx context.Context, url string) bool {
 	return resp.StatusCode == http.StatusOK
 }
 
-func (h *healthService) deriveOverallStatus(
-	tasStatus models.SystemHealthResponseTasStatus,
-	rekorStatus models.SystemHealthResponseRekorStatus,
-	tufStatus models.SystemHealthResponseTufStatus,
-) models.SystemHealthResponseOverallStatus {
-	healthyCount := 0
-	totalComponents := 3
-
-	if tasStatus == models.SystemHealthResponseTasStatusHealthy {
-		healthyCount++
-	}
-	if rekorStatus == models.SystemHealthResponseRekorStatusHealthy {
-		healthyCount++
-	}
-	if tufStatus == models.SystemHealthResponseTufStatusHealthy {
-		healthyCount++
-	}
-
-	if healthyCount == totalComponents {
-		return models.SystemHealthResponseOverallStatusHealthy
-	}
-
-	if healthyCount > 0 {
-		return models.SystemHealthResponseOverallStatusDegraded
-	}
-
-	return models.SystemHealthResponseOverallStatusUnhealthy
-}
 
 func getNestedField(obj map[string]interface{}, fields ...string) (interface{}, bool, error) {
 	current := obj

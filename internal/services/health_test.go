@@ -2,72 +2,7 @@ package services
 
 import (
 	"testing"
-
-	"github.com/securesign/rhtas-console/internal/models"
 )
-
-func TestDeriveOverallStatus(t *testing.T) {
-	tests := []struct {
-		name           string
-		tasStatus      models.SystemHealthResponseTasStatus
-		rekorStatus    models.SystemHealthResponseRekorStatus
-		tufStatus      models.SystemHealthResponseTufStatus
-		expectedStatus models.SystemHealthResponseOverallStatus
-	}{
-		{
-			name:           "All components healthy",
-			tasStatus:      models.SystemHealthResponseTasStatusHealthy,
-			rekorStatus:    models.SystemHealthResponseRekorStatusHealthy,
-			tufStatus:      models.SystemHealthResponseTufStatusHealthy,
-			expectedStatus: models.SystemHealthResponseOverallStatusHealthy,
-		},
-		{
-			name:           "TAS unhealthy, others healthy - degraded",
-			tasStatus:      models.SystemHealthResponseTasStatusUnhealthy,
-			rekorStatus:    models.SystemHealthResponseRekorStatusHealthy,
-			tufStatus:      models.SystemHealthResponseTufStatusHealthy,
-			expectedStatus: models.SystemHealthResponseOverallStatusDegraded,
-		},
-		{
-			name:           "Rekor unhealthy, others healthy - degraded",
-			tasStatus:      models.SystemHealthResponseTasStatusHealthy,
-			rekorStatus:    models.SystemHealthResponseRekorStatusUnhealthy,
-			tufStatus:      models.SystemHealthResponseTufStatusHealthy,
-			expectedStatus: models.SystemHealthResponseOverallStatusDegraded,
-		},
-		{
-			name:           "TUF unhealthy, others healthy - degraded",
-			tasStatus:      models.SystemHealthResponseTasStatusHealthy,
-			rekorStatus:    models.SystemHealthResponseRekorStatusHealthy,
-			tufStatus:      models.SystemHealthResponseTufStatusUnhealthy,
-			expectedStatus: models.SystemHealthResponseOverallStatusDegraded,
-		},
-		{
-			name:           "All components unhealthy",
-			tasStatus:      models.SystemHealthResponseTasStatusUnhealthy,
-			rekorStatus:    models.SystemHealthResponseRekorStatusUnhealthy,
-			tufStatus:      models.SystemHealthResponseTufStatusUnhealthy,
-			expectedStatus: models.SystemHealthResponseOverallStatusUnhealthy,
-		},
-		{
-			name:           "Only TAS healthy - degraded",
-			tasStatus:      models.SystemHealthResponseTasStatusHealthy,
-			rekorStatus:    models.SystemHealthResponseRekorStatusUnhealthy,
-			tufStatus:      models.SystemHealthResponseTufStatusUnhealthy,
-			expectedStatus: models.SystemHealthResponseOverallStatusDegraded,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			h := &healthService{}
-			result := h.deriveOverallStatus(tt.tasStatus, tt.rekorStatus, tt.tufStatus)
-			if result != tt.expectedStatus {
-				t.Errorf("deriveOverallStatus() = %v, want %v", result, tt.expectedStatus)
-			}
-		})
-	}
-}
 
 func TestGetNestedField(t *testing.T) {
 	tests := []struct {
