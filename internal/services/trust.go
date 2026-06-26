@@ -95,7 +95,6 @@ type TrustService interface {
 	GetCertificatesInfo(ctx context.Context, tufRepoUrl string) (certs models.CertificateInfoList, statusCode int, err error)
 	GetAllTargets(ctx context.Context, tufRepoUrl string) (targets models.TargetsList, statusCode int, err error)
 	GetTrustCoverage(ctx context.Context, timeWindow string, environment *string, tufRepoUrl string) (coverage models.TrustCoverageResponse, statusCode int, err error)
-	GetSystemHealth(ctx context.Context) (health models.SystemHealthResponse, statusCode int, err error)
 	GetTUFRepoURL() string
 	CloseDB() error
 }
@@ -441,16 +440,6 @@ func getMockTrustCoverage() models.TrustCoverageResponse {
 		UpdatedAt:          time.Now().UTC(),
 	}
 }
-
-func (s *trustService) GetSystemHealth(ctx context.Context) (models.SystemHealthResponse, int, error) {
-	healthService, err := NewHealthService()
-	if err != nil {
-		return models.SystemHealthResponse{}, http.StatusServiceUnavailable, fmt.Errorf("failed to initialize health service: %w", err)
-	}
-
-	return healthService.GetSystemHealth(ctx)
-}
-
 
 // getOrCreateUpdater retrieves or initializes a TUF updater for the given repository URL.
 func (s *trustService) getOrCreateUpdater(ctx context.Context, tufRepoUrl string) (*tufRepository, int, error) {

@@ -10,6 +10,7 @@ import (
 
 	"github.com/securesign/rhtas-console/internal/models"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
@@ -22,8 +23,9 @@ type HealthService interface {
 }
 
 type healthService struct {
-	clientset *kubernetes.Clientset
-	namespace string
+	clientset     *kubernetes.Clientset
+	dynamicClient dynamic.Interface
+	namespace     string
 }
 
 func NewHealthService() (HealthService, error) {
@@ -37,14 +39,20 @@ func NewHealthService() (HealthService, error) {
 		return nil, fmt.Errorf("failed to create kubernetes clientset: %w", err)
 	}
 
+	dynamicClient, err := dynamic.NewForConfig(config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create dynamic client: %w", err)
+	}
+
 	namespace := os.Getenv("NAMESPACE")
 	if namespace == "" {
 		namespace = "trusted-artifact-signer"
 	}
 
 	return &healthService{
-		clientset: clientset,
-		namespace: namespace,
+		clientset:     clientset,
+		dynamicClient: dynamicClient,
+		namespace:     namespace,
 	}, nil
 }
 
@@ -149,35 +157,23 @@ func (h *healthService) checkTUFHealth(ctx context.Context) models.SystemHealthR
 }
 
 func (h *healthService) checkCustomResourceHealth(ctx context.Context, resourceType, name string) (bool, error) {
-	config, err := getKubeConfig()
-	if err != nil {
-		return false, err
-	}
-
-	dynamicClient, err := dynamic.NewForConfig(config)
-	if err != nil {
-		return false, err
-	}
-
 	gvr := schema.GroupVersionResource{
 		Group:    "rhtas.redhat.com",
 		Version:  "v1alpha1",
 		Resource: resourceType,
 	}
 
-	resource, err := dynamicClient.Resource(gvr).Namespace(h.namespace).Get(ctx, name, metav1.GetOptions{})
+	resource, err := h.dynamicClient.Resource(gvr).Namespace(h.namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		return false, err
 	}
 
-	status, found, err := getNestedField(resource.Object, "status", "conditions")
-	if err != nil || !found {
-		return false, fmt.Errorf("conditions not found in status")
+	conditions, found, err := unstructured.NestedSlice(resource.Object, "status", "conditions")
+	if err != nil {
+		return false, fmt.Errorf("failed to get conditions: %w", err)
 	}
-
-	conditions, ok := status.([]interface{})
-	if !ok {
-		return false, fmt.Errorf("conditions is not an array")
+	if !found {
+		return false, fmt.Errorf("conditions not found in status")
 	}
 
 	for _, condition := range conditions {
@@ -235,27 +231,4 @@ func (h *healthService) checkHTTPHealth(ctx context.Context, url string) bool {
 	}()
 
 	return resp.StatusCode == http.StatusOK
-}
-
-
-func getNestedField(obj map[string]interface{}, fields ...string) (interface{}, bool, error) {
-	current := obj
-	for i, field := range fields {
-		if i == len(fields)-1 {
-			val, found := current[field]
-			return val, found, nil
-		}
-
-		next, found := current[field]
-		if !found {
-			return nil, false, nil
-		}
-
-		nextMap, ok := next.(map[string]interface{})
-		if !ok {
-			return nil, false, fmt.Errorf("field %s is not a map", field)
-		}
-		current = nextMap
-	}
-	return nil, false, nil
 }

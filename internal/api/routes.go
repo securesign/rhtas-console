@@ -5,8 +5,8 @@ import (
 	"github.com/securesign/rhtas-console/internal/services"
 )
 
-func RegisterRoutes(r *chi.Mux, as services.ArtifactService, rs services.RekorService, ts services.TrustService) {
-	handler := NewHandler(as, rs, ts)
+func RegisterRoutes(r *chi.Mux, as services.ArtifactService, rs services.RekorService, ts services.TrustService, hs services.HealthService) {
+	handler := NewHandler(as, rs, ts, hs)
 
 	r.Get("/healthz", handler.GetHealthz)
 	r.Post("/api/v1/artifacts/verify", handler.PostApiV1ArtifactsVerify)
