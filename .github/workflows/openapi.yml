@@ -36,7 +36,7 @@ jobs:
         with:
           token: ${{ secrets.GH_PAT }}
           path: ./rhtas-console-ui
-          commit-message: "update client/openapi/console.yaml"
+          commit-message: "chore(openapi): update client/openapi/console.yaml"
           signoff: true
           branch-suffix: short-commit-hash
           title: "[${{ github.ref_name }}] update client/openapi/console.yaml"
