@@ -416,8 +416,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/SystemHealthResponse"
               example:
-                overallStatus: healthy
-                tasStatus: healthy
+                sigstoreServices: healthy
                 rekorStatus: healthy
                 tufStatus: healthy
                 updatedAt: "2026-03-18T12:00:00Z"
@@ -428,7 +427,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "503":
-          description: Service unavailable (health data unavailable or MOCK_MODE not enabled)
+          description: Service unavailable (Kubernetes health service cannot be initialized)
           content:
             application/json:
               schema:
@@ -1148,15 +1147,10 @@ components:
     SystemHealthResponse:
       type: object
       properties:
-        overallStatus:
-          type: string
-          enum: ["healthy", "degraded", "unhealthy", "unknown"]
-          description: Overall system health status aggregated across all components
-          example: healthy
-        tasStatus:
+        sigstoreServices:
           type: string
           enum: ["healthy", "unhealthy", "unknown"]
-          description: TAS (Trusted Artifact Signer) health status
+          description: Sigstore services health status
           example: healthy
         rekorStatus:
           type: string
@@ -1174,8 +1168,7 @@ components:
           description: Timestamp when the health status was last updated
           example: "2026-03-18T12:00:00Z"
       required:
-        - overallStatus
-        - tasStatus
+        - sigstoreServices
         - rekorStatus
         - tufStatus
         - updatedAt

@@ -39,14 +39,6 @@ const (
 	CertificateRoleUnknown      CertificateRole = "unknown"
 )
 
-// Defines values for SystemHealthResponseOverallStatus.
-const (
-	SystemHealthResponseOverallStatusDegraded  SystemHealthResponseOverallStatus = "degraded"
-	SystemHealthResponseOverallStatusHealthy   SystemHealthResponseOverallStatus = "healthy"
-	SystemHealthResponseOverallStatusUnhealthy SystemHealthResponseOverallStatus = "unhealthy"
-	SystemHealthResponseOverallStatusUnknown   SystemHealthResponseOverallStatus = "unknown"
-)
-
 // Defines values for SystemHealthResponseRekorStatus.
 const (
 	SystemHealthResponseRekorStatusHealthy   SystemHealthResponseRekorStatus = "healthy"
@@ -54,11 +46,11 @@ const (
 	SystemHealthResponseRekorStatusUnknown   SystemHealthResponseRekorStatus = "unknown"
 )
 
-// Defines values for SystemHealthResponseTasStatus.
+// Defines values for SystemHealthResponseSigstoreServices.
 const (
-	SystemHealthResponseTasStatusHealthy   SystemHealthResponseTasStatus = "healthy"
-	SystemHealthResponseTasStatusUnhealthy SystemHealthResponseTasStatus = "unhealthy"
-	SystemHealthResponseTasStatusUnknown   SystemHealthResponseTasStatus = "unknown"
+	SystemHealthResponseSigstoreServicesHealthy   SystemHealthResponseSigstoreServices = "healthy"
+	SystemHealthResponseSigstoreServicesUnhealthy SystemHealthResponseSigstoreServices = "unhealthy"
+	SystemHealthResponseSigstoreServicesUnknown   SystemHealthResponseSigstoreServices = "unknown"
 )
 
 // Defines values for SystemHealthResponseTufStatus.
@@ -359,14 +351,11 @@ type SignatureView struct {
 
 // SystemHealthResponse defines model for SystemHealthResponse.
 type SystemHealthResponse struct {
-	// OverallStatus Overall system health status aggregated across all components
-	OverallStatus SystemHealthResponseOverallStatus `json:"overallStatus"`
-
 	// RekorStatus Rekor transparency log service health status
 	RekorStatus SystemHealthResponseRekorStatus `json:"rekorStatus"`
 
-	// TasStatus TAS (Trusted Artifact Signer) health status
-	TasStatus SystemHealthResponseTasStatus `json:"tasStatus"`
+	// SigstoreServices Sigstore services health status
+	SigstoreServices SystemHealthResponseSigstoreServices `json:"sigstoreServices"`
 
 	// TufStatus TUF repository health status
 	TufStatus SystemHealthResponseTufStatus `json:"tufStatus"`
@@ -375,14 +364,11 @@ type SystemHealthResponse struct {
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
-// SystemHealthResponseOverallStatus Overall system health status aggregated across all components
-type SystemHealthResponseOverallStatus string
-
 // SystemHealthResponseRekorStatus Rekor transparency log service health status
 type SystemHealthResponseRekorStatus string
 
-// SystemHealthResponseTasStatus TAS (Trusted Artifact Signer) health status
-type SystemHealthResponseTasStatus string
+// SystemHealthResponseSigstoreServices Sigstore services health status
+type SystemHealthResponseSigstoreServices string
 
 // SystemHealthResponseTufStatus TUF repository health status
 type SystemHealthResponseTufStatus string

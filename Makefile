@@ -38,7 +38,8 @@ run: build deploy-mariadb
 	done
 	@echo "MariaDB is up."
 	@echo "Running $(BINARY_NAME)..."
-	@"./$(BUILD_DIR)/$(BINARY_NAME)" \
+	@GODEBUG=fips140=off \
+	"./$(BUILD_DIR)/$(BINARY_NAME)" \
 		--mysql-uri="$(DB_DSN)" \
 		--tuf-repo-url="$(TUF_PUBLIC_INSTANCE)"
 
@@ -81,12 +82,12 @@ restart-mariadb: stop-mariadb deploy-mariadb
 .PHONY: test
 test:
 	@echo "Running tests..."
-	go test ./...
+	GODEBUG=fips140=off go test ./...
 
 .PHONY: coverage
 coverage:
 	@echo "Running tests with coverage..."
-	go test -coverprofile=coverage.out ./...
+	GODEBUG=fips140=off go test -coverprofile=coverage.out ./...
 	go tool cover -func=coverage.out
 
 .PHONY: clean

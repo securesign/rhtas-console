@@ -18,15 +18,15 @@ import (
 )
 
 var (
-	serverPort     = flag.Int("port", 8080, "RHTAS console server port")
-	tlsCertFile    = flag.String("tls-cert", "", "Path to TLS certificate file")
-	tlsKeyFile     = flag.String("tls-key", "", "Path to TLS private key file")
-	mysqlURI       = flag.String("mysql-uri", "", "MySQL connection URI")
-	postgresqlURI  = flag.String("postgresql-uri", "", "PostgreSQL connection URI")
-	dbTLSCA        = flag.String("db-tls-ca", "", "Path to database TLS CA certificate")
-	dbTLSServer    = flag.String("db-tls-server-name", "", "Database TLS server name for validation")
-	tufRepoURL     = flag.String("tuf-repo-url", "", "TUF repository URL")
-	tufRefreshInt  = flag.Duration("tuf-refresh-interval", 1*time.Minute, "TUF refresh interval")
+	serverPort    = flag.Int("port", 8080, "RHTAS console server port")
+	tlsCertFile   = flag.String("tls-cert", "", "Path to TLS certificate file")
+	tlsKeyFile    = flag.String("tls-key", "", "Path to TLS private key file")
+	mysqlURI      = flag.String("mysql-uri", "", "MySQL connection URI")
+	postgresqlURI = flag.String("postgresql-uri", "", "PostgreSQL connection URI")
+	dbTLSCA       = flag.String("db-tls-ca", "", "Path to database TLS CA certificate")
+	dbTLSServer   = flag.String("db-tls-server-name", "", "Database TLS server name for validation")
+	tufRepoURL    = flag.String("tuf-repo-url", "", "TUF repository URL")
+	tufRefreshInt = flag.Duration("tuf-refresh-interval", 1*time.Minute, "TUF refresh interval")
 )
 
 func main() {
@@ -47,6 +47,12 @@ func main() {
 	rekorService := services.NewRekorService()
 	trustService := services.NewTrustService(trustFlags)
 
+	healthService, err := services.NewHealthService()
+	if err != nil {
+		log.Printf("Warning: Failed to initialize health service: %v. Health endpoint will be unavailable.", err)
+		healthService = nil
+	}
+
 	r := chi.NewRouter()
 
 	r.Use(cors.Handler(cors.Options{
@@ -66,7 +72,7 @@ func main() {
 		})
 	})
 
-	api.RegisterRoutes(r, artifactService, rekorService, trustService)
+	api.RegisterRoutes(r, artifactService, rekorService, trustService, healthService)
 
 	server := &http.Server{
 		Addr:              ":" + strconv.Itoa(*serverPort),

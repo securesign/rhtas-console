@@ -18,16 +18,18 @@ type Handler struct {
 	artifactService services.ArtifactService
 	rekorService    services.RekorService
 	trustService    services.TrustService
+	healthService   services.HealthService
 }
 
 //go:embed openapi/rhtas-console.yaml
 var openAPIYaml []byte
 
-func NewHandler(as services.ArtifactService, rs services.RekorService, ts services.TrustService) *Handler {
+func NewHandler(as services.ArtifactService, rs services.RekorService, ts services.TrustService, hs services.HealthService) *Handler {
 	return &Handler{
 		artifactService: as,
 		rekorService:    rs,
 		trustService:    ts,
+		healthService:   hs,
 	}
 }
 
@@ -153,7 +155,12 @@ func (h *Handler) GetApiV1TrustCoverage(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *Handler) GetApiV1SystemHealth(w http.ResponseWriter, r *http.Request) {
-	resp, statusCode, err := h.trustService.GetSystemHealth(r.Context())
+	if h.healthService == nil {
+		writeError(w, http.StatusServiceUnavailable, "Health service not available")
+		return
+	}
+
+	resp, statusCode, err := h.healthService.GetSystemHealth(r.Context())
 	if err != nil {
 		writeError(w, statusCode, err.Error())
 		return
