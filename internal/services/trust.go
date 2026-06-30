@@ -885,20 +885,3 @@ func (s *trustService) GetTargetFromTUFRepo(ctx context.Context, tufRepoUrl stri
 
 	return models.TargetContent{Content: string(tb)}, http.StatusOK, nil
 }
-
-// maxTargetFetchConcurrency limits the number of concurrent target fetch operations.
-const maxTargetFetchConcurrency = 5
-
-// targetFetchError wraps an error with the corresponding HTTP status code.
-type targetFetchError struct {
-	status int
-	err    error
-}
-
-func (e *targetFetchError) Error() string {
-	return e.err.Error()
-}
-
-func (e *targetFetchError) Unwrap() error {
-	return e.err
-}

@@ -2,6 +2,7 @@ package services
 
 import (
 	"encoding/json"
+	"log"
 	"os"
 	"sync"
 	"time"
@@ -44,7 +45,11 @@ func (a *TargetAuditLog) LogEvent(event TargetAuditEvent) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() {
+		if cerr := f.Close(); cerr != nil {
+			log.Printf("failed to close audit log file: %v", cerr)
+		}
+	}()
 
 	return json.NewEncoder(f).Encode(event)
 }
@@ -65,7 +70,11 @@ func (a *TargetAuditLog) GetRevokedTargets(repoURL string, since time.Time) ([]T
 		}
 		return nil, err
 	}
-	defer f.Close()
+	defer func() {
+		if cerr := f.Close(); cerr != nil {
+			log.Printf("failed to close audit log file: %v", cerr)
+		}
+	}()
 
 	var revoked []TargetAuditEvent
 	decoder := json.NewDecoder(f)
