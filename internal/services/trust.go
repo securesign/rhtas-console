@@ -221,12 +221,17 @@ func (s *trustService) GetCertificatesInfo(ctx context.Context, tufRepoUrl strin
 		return models.CertificateInfoList{}, http.StatusServiceUnavailable, fmt.Errorf("TUF repository not ready")
 	}
 
+	// Acquire repo.lock to safely access repo.updater
+	repo.lock.RLock()
 	targetsMeta := repo.updater.GetTrustedMetadataSet().Targets["targets"]
 	if targetsMeta == nil {
+		repo.lock.RUnlock()
 		return models.CertificateInfoList{}, http.StatusInternalServerError, fmt.Errorf("targets metadata not available")
 	}
 
 	targetsBytes, err := targetsMeta.ToBytes(true)
+	repo.lock.RUnlock()
+
 	if err != nil {
 		return models.CertificateInfoList{}, http.StatusInternalServerError, fmt.Errorf("failed to get targets bytes: %w", err)
 	}
@@ -286,12 +291,17 @@ func (s *trustService) GetAllTargets(ctx context.Context, tufRepoUrl string) (mo
 		return models.TargetsList{}, http.StatusServiceUnavailable, fmt.Errorf("TUF repository not ready")
 	}
 
+	// Acquire repo.lock to safely access repo.updater
+	repo.lock.RLock()
 	targetsMeta := repo.updater.GetTrustedMetadataSet().Targets["targets"]
 	if targetsMeta == nil {
+		repo.lock.RUnlock()
 		return models.TargetsList{}, http.StatusInternalServerError, fmt.Errorf("targets metadata not available")
 	}
 
 	targetsBytes, err := targetsMeta.ToBytes(true)
+	repo.lock.RUnlock()
+
 	if err != nil {
 		return models.TargetsList{}, http.StatusInternalServerError, fmt.Errorf("failed to get targets bytes: %w", err)
 	}
