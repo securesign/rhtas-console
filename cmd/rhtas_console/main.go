@@ -23,7 +23,6 @@ var (
 	tlsKeyFile    = flag.String("tls-key", "", "Path to TLS private key file")
 	tufRepoURL    = flag.String("tuf-repo-url", "", "TUF repository URL")
 	tufRefreshInt = flag.Duration("tuf-refresh-interval", 1*time.Minute, "TUF refresh interval")
-	auditLogPath  = flag.String("audit-log-path", "", "Path to target audit log file (optional)")
 )
 
 func main() {
@@ -34,7 +33,6 @@ func main() {
 	trustFlags := &services.TrustServiceFlags{
 		TUFRepoURL:      *tufRepoURL,
 		RefreshInterval: *tufRefreshInt,
-		AuditLogPath:    *auditLogPath,
 	}
 
 	artifactService := services.NewArtifactService(*tufRepoURL)

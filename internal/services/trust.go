@@ -36,7 +36,6 @@ var (
 type TrustServiceFlags struct {
 	TUFRepoURL      string
 	RefreshInterval time.Duration
-	AuditLogPath    string // Optional path for target audit log
 }
 
 type TrustService interface {
@@ -57,8 +56,6 @@ type trustService struct {
 	repoReady       bool
 	refreshInterval time.Duration
 	tufRepoUrl      string
-	auditLog        *TargetAuditLog
-	firstRefresh    bool // Track if this is the first refresh
 	ctx             context.Context
 	cancel          context.CancelFunc
 }
@@ -105,18 +102,9 @@ func NewTrustService(flags *TrustServiceFlags) TrustService {
 		refreshInterval = 1 * time.Minute
 	}
 
-	// Initialize audit log if path provided
-	var auditLog *TargetAuditLog
-	if flags.AuditLogPath != "" {
-		auditLog = NewTargetAuditLog(flags.AuditLogPath)
-		log.Printf("Target audit log enabled: %s", flags.AuditLogPath)
-	}
-
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &trustService{
 		refreshInterval: refreshInterval,
-		auditLog:        auditLog,
-		firstRefresh:    true,
 		ctx:             ctx,
 		cancel:          cancel,
 	}
@@ -466,133 +454,12 @@ func (s *trustService) runBackgroundRefresh() {
 					return
 				}
 
-				// Track target changes if audit log is enabled
-				if s.auditLog != nil {
-					s.trackTargetChanges(repo.updater, newUpdater, url)
-				}
-
 				repo.updater = newUpdater
 				repo.lastRefresh = time.Now().UTC()
 				repo.lock.Unlock()
 
 				log.Printf("TUF: Successfully refreshed repository %s", url)
 			}(repo, url)
-		}
-	}
-}
-
-// trackTargetChanges compares old and new TUF metadata and logs target lifecycle events
-func (s *trustService) trackTargetChanges(oldUpdater, newUpdater *updater.Updater, repoURL string) {
-	// Get new targets
-	newTargetsMeta := newUpdater.GetTrustedMetadataSet().Targets["targets"]
-	if newTargetsMeta == nil {
-		return
-	}
-	newTargetsBytes, err := newTargetsMeta.ToBytes(true)
-	if err != nil {
-		log.Printf("Failed to get new targets bytes: %v", err)
-		return
-	}
-	newTargets, err := extractTargetMetadataInfo(newTargetsBytes)
-	if err != nil {
-		log.Printf("Failed to extract new target metadata: %v", err)
-		return
-	}
-
-	// On first refresh, log all current targets as "added"
-	if s.firstRefresh {
-		s.firstRefresh = false
-		for targetName, spec := range newTargets {
-			event := TargetAuditEvent{
-				Timestamp:  time.Now().UTC(),
-				EventType:  "added",
-				RepoURL:    repoURL,
-				TargetName: targetName,
-				TargetType: spec["type"],
-				NewStatus:  spec["status"],
-			}
-			if err := s.auditLog.LogEvent(event); err != nil {
-				log.Printf("Failed to log initial target: %v", err)
-			} else {
-				log.Printf("Initial target: %s (type=%s, status=%s)", targetName, spec["type"], spec["status"])
-			}
-		}
-		return
-	}
-
-	// Get old targets for subsequent refreshes
-	oldTargetsMeta := oldUpdater.GetTrustedMetadataSet().Targets["targets"]
-	if oldTargetsMeta == nil {
-		return
-	}
-	oldTargetsBytes, err := oldTargetsMeta.ToBytes(true)
-	if err != nil {
-		log.Printf("Failed to get old targets bytes: %v", err)
-		return
-	}
-	oldTargets, err := extractTargetMetadataInfo(oldTargetsBytes)
-	if err != nil {
-		log.Printf("Failed to extract old target metadata: %v", err)
-		return
-	}
-
-	// Track added targets
-	for targetName, newSpec := range newTargets {
-		if _, existedBefore := oldTargets[targetName]; !existedBefore {
-			event := TargetAuditEvent{
-				Timestamp:  time.Now().UTC(),
-				EventType:  "added",
-				RepoURL:    repoURL,
-				TargetName: targetName,
-				TargetType: newSpec["type"],
-				NewStatus:  newSpec["status"],
-			}
-			if err := s.auditLog.LogEvent(event); err != nil {
-				log.Printf("Failed to log target added event: %v", err)
-			} else {
-				log.Printf("Target added: %s (type=%s, status=%s)", targetName, newSpec["type"], newSpec["status"])
-			}
-		}
-	}
-
-	// Track revoked targets (disappeared from metadata)
-	for targetName, oldSpec := range oldTargets {
-		if _, stillExists := newTargets[targetName]; !stillExists {
-			event := TargetAuditEvent{
-				Timestamp:  time.Now().UTC(),
-				EventType:  "revoked",
-				RepoURL:    repoURL,
-				TargetName: targetName,
-				TargetType: oldSpec["type"],
-				OldStatus:  oldSpec["status"],
-			}
-			if err := s.auditLog.LogEvent(event); err != nil {
-				log.Printf("Failed to log target revoked event: %v", err)
-			} else {
-				log.Printf("Target revoked: %s (type=%s)", targetName, oldSpec["type"])
-			}
-		}
-	}
-
-	// Track status changes
-	for targetName, newSpec := range newTargets {
-		if oldSpec, existed := oldTargets[targetName]; existed {
-			if oldSpec["status"] != newSpec["status"] {
-				event := TargetAuditEvent{
-					Timestamp:  time.Now().UTC(),
-					EventType:  "status_changed",
-					RepoURL:    repoURL,
-					TargetName: targetName,
-					TargetType: newSpec["type"],
-					OldStatus:  oldSpec["status"],
-					NewStatus:  newSpec["status"],
-				}
-				if err := s.auditLog.LogEvent(event); err != nil {
-					log.Printf("Failed to log status change event: %v", err)
-				} else {
-					log.Printf("Target status changed: %s (%s -> %s)", targetName, oldSpec["status"], newSpec["status"])
-				}
-			}
 		}
 	}
 }
