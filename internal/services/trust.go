@@ -247,13 +247,13 @@ func (s *trustService) GetCertificatesInfo(ctx context.Context, tufRepoUrl strin
 			targetContent, statusCode, err := s.GetTargetFromTUFRepo(ctx, tufRepoUrl, targetName)
 			if err != nil {
 				errMsg := fmt.Sprintf("failed to get target %s: %v", targetName, err)
-				log.Printf(errMsg)
+				log.Print(errMsg)
 				fetchErrors = append(fetchErrors, errMsg)
 				continue
 			}
 			if statusCode != http.StatusOK {
 				errMsg := fmt.Sprintf("failed to get target %s: status code %d", targetName, statusCode)
-				log.Printf(errMsg)
+				log.Print(errMsg)
 				fetchErrors = append(fetchErrors, errMsg)
 				continue
 			}
@@ -261,7 +261,7 @@ func (s *trustService) GetCertificatesInfo(ctx context.Context, tufRepoUrl strin
 			certInfoList, err := extractCertDetails(targetContent.Content)
 			if err != nil {
 				errMsg := fmt.Sprintf("failed to extract certificate details from target %s: %v", targetName, err)
-				log.Printf(errMsg)
+				log.Print(errMsg)
 				fetchErrors = append(fetchErrors, errMsg)
 				continue
 			}
@@ -328,13 +328,13 @@ func (s *trustService) GetAllTargets(ctx context.Context, tufRepoUrl string) (mo
 		targetContent, statusCode, err := s.GetTargetFromTUFRepo(ctx, tufRepoUrl, targetName)
 		if err != nil {
 			errMsg := fmt.Sprintf("failed to get target %s: %v", targetName, err)
-			log.Printf(errMsg)
+			log.Print(errMsg)
 			fetchErrors = append(fetchErrors, errMsg)
 			continue
 		}
 		if statusCode != http.StatusOK {
 			errMsg := fmt.Sprintf("failed to get target %s: status code %d", targetName, statusCode)
-			log.Printf(errMsg)
+			log.Print(errMsg)
 			fetchErrors = append(fetchErrors, errMsg)
 			continue
 		}
