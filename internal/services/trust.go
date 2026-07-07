@@ -115,9 +115,15 @@ func NewTrustService(flags *TrustServiceFlags) TrustService {
 		log.Fatalf("failed to initialize TUF repository %s (statusCode=%d): %v", flags.TUFRepoURL, statusCode, err)
 	}
 
+	// Acquire lock before setting repo fields to prevent race conditions
+	s.repoLock.Lock()
 	s.repo = repo
 	s.tufRepoUrl = repo.remoteMetadataURL
 	s.repoReady = true
+	s.repoLock.Unlock()
+
+	// Pre-fetch all targets in parallel to improve first-request latency
+	go s.preFetchAllTargets(ctx, repo)
 
 	go s.runBackgroundRefresh()
 	return s
@@ -230,6 +236,8 @@ func (s *trustService) GetCertificatesInfo(ctx context.Context, tufRepoUrl strin
 	}
 
 	result := models.CertificateInfoList{}
+	var fetchErrors []string
+
 	for targetName, spec := range targetMetadataSpecs {
 		// Only certificate-related targets
 		targetType := spec["type"]
@@ -238,16 +246,23 @@ func (s *trustService) GetCertificatesInfo(ctx context.Context, tufRepoUrl strin
 			// Fetch target content from TUF cache
 			targetContent, statusCode, err := s.GetTargetFromTUFRepo(ctx, tufRepoUrl, targetName)
 			if err != nil {
-				log.Printf("Failed to get target %s: %v", targetName, err)
+				errMsg := fmt.Sprintf("failed to get target %s: %v", targetName, err)
+				log.Printf(errMsg)
+				fetchErrors = append(fetchErrors, errMsg)
 				continue
 			}
 			if statusCode != http.StatusOK {
+				errMsg := fmt.Sprintf("failed to get target %s: status code %d", targetName, statusCode)
+				log.Printf(errMsg)
+				fetchErrors = append(fetchErrors, errMsg)
 				continue
 			}
 
 			certInfoList, err := extractCertDetails(targetContent.Content)
 			if err != nil {
-				log.Printf("Failed to get target certificate content (repo=%s, target=%s): %v", tufRepoUrl, targetName, err)
+				errMsg := fmt.Sprintf("failed to extract certificate details from target %s: %v", targetName, err)
+				log.Printf(errMsg)
+				fetchErrors = append(fetchErrors, errMsg)
 				continue
 			}
 
@@ -263,6 +278,12 @@ func (s *trustService) GetCertificatesInfo(ctx context.Context, tufRepoUrl strin
 				})
 			}
 		}
+	}
+
+	// If there were errors fetching all certificate targets, return an error
+	if len(fetchErrors) > 0 && len(result.Data) == 0 {
+		return models.CertificateInfoList{}, http.StatusInternalServerError,
+			fmt.Errorf("failed to fetch all certificate targets: %s", strings.Join(fetchErrors, "; "))
 	}
 
 	return result, http.StatusOK, nil
@@ -300,14 +321,21 @@ func (s *trustService) GetAllTargets(ctx context.Context, tufRepoUrl string) (mo
 	}
 
 	result := models.TargetsList{}
+	var fetchErrors []string
+
 	for targetName, spec := range targetMetadataSpecs {
 		// Fetch target content from TUF cache
 		targetContent, statusCode, err := s.GetTargetFromTUFRepo(ctx, tufRepoUrl, targetName)
 		if err != nil {
-			log.Printf("Failed to get target %s: %v", targetName, err)
+			errMsg := fmt.Sprintf("failed to get target %s: %v", targetName, err)
+			log.Printf(errMsg)
+			fetchErrors = append(fetchErrors, errMsg)
 			continue
 		}
 		if statusCode != http.StatusOK {
+			errMsg := fmt.Sprintf("failed to get target %s: status code %d", targetName, statusCode)
+			log.Printf(errMsg)
+			fetchErrors = append(fetchErrors, errMsg)
 			continue
 		}
 
@@ -317,6 +345,12 @@ func (s *trustService) GetAllTargets(ctx context.Context, tufRepoUrl string) (mo
 			Status:  spec["status"], // Status from TUF metadata (Active, Expired, etc.)
 			Content: targetContent.Content,
 		})
+	}
+
+	// If there were errors fetching all targets, return an error
+	if len(fetchErrors) > 0 && len(result.Data) == 0 {
+		return models.TargetsList{}, http.StatusInternalServerError,
+			fmt.Errorf("failed to fetch all targets: %s", strings.Join(fetchErrors, "; "))
 	}
 
 	return result, http.StatusOK, nil
@@ -395,9 +429,11 @@ func (s *trustService) getOrCreateUpdater(ctx context.Context, tufRepoUrl string
 		lastRefresh:       time.Now().UTC(),
 		remoteMetadataURL: tufCfg.RemoteMetadataURL,
 	}
+	s.repoLock.Lock()
 	s.repo = repo
 	s.tufRepoUrl = s.repo.remoteMetadataURL
 	s.repoReady = true
+	s.repoLock.Unlock()
 	return repo, http.StatusOK, nil
 }
 
@@ -435,6 +471,10 @@ func (s *trustService) runBackgroundRefresh() {
 				repo.lock.Lock()
 				defer func() { repo.refreshInProgress = false }()
 
+				// Create a timeout context for the refresh operation
+				refreshCtx, cancel := context.WithTimeout(s.ctx, 30*time.Second)
+				defer cancel()
+
 				// Create a new updater for each refresh cycle
 				tufCfg, err := buildTufConfig(repo.opts)
 				if err != nil {
@@ -448,8 +488,22 @@ func (s *trustService) runBackgroundRefresh() {
 					repo.lock.Unlock()
 					return
 				}
-				if err := newUpdater.Refresh(); err != nil {
-					log.Printf("TUF: Refresh failed for %s: %v", url, err)
+
+				// Run refresh with timeout by using a channel
+				refreshDone := make(chan error, 1)
+				go func() {
+					refreshDone <- newUpdater.Refresh()
+				}()
+
+				select {
+				case err := <-refreshDone:
+					if err != nil {
+						log.Printf("TUF: Refresh failed for %s: %v", url, err)
+						repo.lock.Unlock()
+						return
+					}
+				case <-refreshCtx.Done():
+					log.Printf("TUF: Refresh timed out for %s", url)
 					repo.lock.Unlock()
 					return
 				}
@@ -462,6 +516,75 @@ func (s *trustService) runBackgroundRefresh() {
 			}(repo, url)
 		}
 	}
+}
+
+// preFetchAllTargets downloads all targets in parallel to warm up the cache
+func (s *trustService) preFetchAllTargets(ctx context.Context, repo *tufRepository) {
+	log.Printf("TUF: Starting pre-fetch of all targets from %s", repo.remoteMetadataURL)
+
+	// Get all target names from metadata
+	repo.lock.RLock()
+	targetsMeta := repo.updater.GetTrustedMetadataSet().Targets["targets"]
+	if targetsMeta == nil {
+		repo.lock.RUnlock()
+		log.Printf("TUF: Pre-fetch skipped - targets metadata not available")
+		return
+	}
+
+	targetsBytes, err := targetsMeta.ToBytes(true)
+	repo.lock.RUnlock()
+
+	if err != nil {
+		log.Printf("TUF: Pre-fetch failed to get targets bytes: %v", err)
+		return
+	}
+
+	targetMetadataSpecs, err := extractTargetMetadataInfo(targetsBytes)
+	if err != nil {
+		log.Printf("TUF: Pre-fetch failed to extract target metadata: %v", err)
+		return
+	}
+
+	// Create a timeout context for pre-fetching
+	prefetchCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+
+	// Use a WaitGroup to parallelize target downloads
+	var wg sync.WaitGroup
+	semaphore := make(chan struct{}, 10) // Limit to 10 concurrent downloads
+
+	successCount := 0
+	failureCount := 0
+	var mu sync.Mutex
+
+	for targetName := range targetMetadataSpecs {
+		wg.Add(1)
+		go func(name string) {
+			defer wg.Done()
+
+			// Acquire semaphore
+			select {
+			case semaphore <- struct{}{}:
+				defer func() { <-semaphore }()
+			case <-prefetchCtx.Done():
+				return
+			}
+
+			// Fetch target
+			_, _, err := s.GetTargetFromTUFRepo(prefetchCtx, repo.remoteMetadataURL, name)
+			mu.Lock()
+			if err != nil {
+				failureCount++
+			} else {
+				successCount++
+			}
+			mu.Unlock()
+		}(targetName)
+	}
+
+	wg.Wait()
+	log.Printf("TUF: Pre-fetch completed - %d succeeded, %d failed out of %d targets",
+		successCount, failureCount, len(targetMetadataSpecs))
 }
 
 // Close cancels the periodic refreshes
