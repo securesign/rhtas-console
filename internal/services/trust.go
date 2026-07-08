@@ -429,11 +429,10 @@ func (s *trustService) getOrCreateUpdater(ctx context.Context, tufRepoUrl string
 		lastRefresh:       time.Now().UTC(),
 		remoteMetadataURL: tufCfg.RemoteMetadataURL,
 	}
-	s.repoLock.Lock()
+	// Lock is already held by the caller (defer at line 393)
 	s.repo = repo
 	s.tufRepoUrl = s.repo.remoteMetadataURL
 	s.repoReady = true
-	s.repoLock.Unlock()
 	return repo, http.StatusOK, nil
 }
 
