@@ -21,10 +21,6 @@ var (
 	serverPort    = flag.Int("port", 8080, "RHTAS console server port")
 	tlsCertFile   = flag.String("tls-cert", "", "Path to TLS certificate file")
 	tlsKeyFile    = flag.String("tls-key", "", "Path to TLS private key file")
-	mysqlURI      = flag.String("mysql-uri", "", "MySQL connection URI")
-	postgresqlURI = flag.String("postgresql-uri", "", "PostgreSQL connection URI")
-	dbTLSCA       = flag.String("db-tls-ca", "", "Path to database TLS CA certificate")
-	dbTLSServer   = flag.String("db-tls-server-name", "", "Database TLS server name for validation")
 	tufRepoURL    = flag.String("tuf-repo-url", "", "TUF repository URL")
 	tufRefreshInt = flag.Duration("tuf-refresh-interval", 1*time.Minute, "TUF refresh interval")
 )
@@ -35,10 +31,6 @@ func main() {
 
 	// Pass flags to trust service
 	trustFlags := &services.TrustServiceFlags{
-		MySQLURI:        *mysqlURI,
-		PostgreSQLURI:   *postgresqlURI,
-		TLSCA:           *dbTLSCA,
-		TLSServerName:   *dbTLSServer,
 		TUFRepoURL:      *tufRepoURL,
 		RefreshInterval: *tufRefreshInt,
 	}
@@ -115,7 +107,7 @@ func main() {
 		log.Printf("Server shutdown failed: %v", err)
 	}
 
-	if err := trustService.CloseDB(); err != nil {
+	if err := trustService.Close(); err != nil {
 		log.Printf("Failed to close trustService: %v", err)
 	}
 

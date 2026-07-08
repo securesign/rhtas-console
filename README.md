@@ -33,7 +33,7 @@ The RHTAS Console is a Go-based RESTful API server, providing functionality for 
 2. **Run the server**:
 
    ```bash
-   # Builds and runs the application, including deploying a MariaDB container.
+   # Builds and runs the application
    make run
    ```
 
@@ -53,14 +53,12 @@ The project includes a Makefile to streamline common development tasks. Below ar
 | Target                          | Description                                      |
 |-----------------------------------|--------------------------------------------------|
 | `make generate-openapi`      | Generates Go code from the OpenAPI specification (`rhtas-console.yaml`). |
-| `make build`                 | Builds the `rhtas_console` binary, placing it in the `bin/` directory. |
-| `make run`                   | Builds and runs the application, including deploying a MariaDB container. |
-| `make deps`                  | Installs Go dependencies and the oapi-codegen tool.                  |
-| `make deploy-mariadb`        | Starts a MariaDB container for the database with configured settings.               |
-| `make stop-mariadb`          | Stops the running MariaDB container. |
-| `make clean-mariadb`         | Removes the MariaDB container. |
-| `make restart-mariadb`       | Restarts the MariaDB container by stopping and redeploying it. |
-| `make clean`                 | Removes build artifacts and the MariaDB container.     |
+| `make build`                 | Builds the `rhtas_console` binary with FIPS 140 compliance, placing it in the `bin/` directory. |
+| `make run`                   | Builds and runs the application. |
+| `make deps`                  | Installs Go dependencies and the oapi-codegen tool. |
+| `make test`                  | Runs the test suite with FIPS 140 compliance. |
+| `make coverage`              | Runs tests with coverage reporting. |
+| `make clean`                 | Removes build artifacts. |
 
 ### Running the Backend server
 

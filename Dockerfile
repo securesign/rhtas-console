@@ -15,7 +15,6 @@ WORKDIR /tmp
 ENV HOME=/tmp
 
 COPY --from=builder /app/rhtas_console /tmp/rhtas_console
-COPY internal/db/migrations /tmp/internal/db/migrations
 
 USER 65532:65532
 
