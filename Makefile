@@ -23,7 +23,6 @@ build: generate-openapi deps
 .PHONY: run
 run: build
 	@echo "Running $(BINARY_NAME)..."
-	@GODEBUG=fips140=off \
 	"./$(BUILD_DIR)/$(BINARY_NAME)" \
 		--tuf-repo-url="$(TUF_PUBLIC_INSTANCE)"
 
@@ -36,12 +35,12 @@ deps:
 .PHONY: test
 test:
 	@echo "Running tests..."
-	GODEBUG=fips140=off go test ./...
+	go test ./...
 
 .PHONY: coverage
 coverage:
 	@echo "Running tests with coverage..."
-	GODEBUG=fips140=off go test -coverprofile=coverage.out ./...
+	go test -coverprofile=coverage.out ./...
 	go tool cover -func=coverage.out
 
 .PHONY: clean
