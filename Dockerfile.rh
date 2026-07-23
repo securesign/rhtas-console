@@ -1,5 +1,5 @@
 # Build stage
-FROM registry.redhat.io/ubi9/go-toolset:9.8-1784076237@sha256:dba8f7f9cc231f4729be36df146684940d2517bab9721f8f90c246915e190a9a AS builder
+FROM registry.redhat.io/ubi9/go-toolset:9.8-1784751462@sha256:682936361f1559a49c23d8bad3fcd534dca1f35e3f092a766dbe72dd6a12beab AS builder
 
 WORKDIR /app
 
@@ -11,7 +11,7 @@ RUN go mod edit -godebug=fips140=auto && \
     GOFIPS140=v1.0.0 go build -tags=no_openssl -buildvcs=false -o rhtas_console ./cmd/rhtas_console
 
 # Final stage
-FROM registry.access.redhat.com/ubi9/ubi-minimal@sha256:463cae32c6f6f5594b11a5c22de275016bd8545ce58a6373388e8b24f13fc15c
+FROM registry.access.redhat.com/ubi9/ubi-minimal@sha256:2e8edce823a48e51858f1fad3ff4cbf6875ce8a3f86b9eecf298bc2050c8652a
 
 # Set a writable working directory
 WORKDIR /tmp
