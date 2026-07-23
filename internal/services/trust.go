@@ -63,6 +63,7 @@ type trustService struct {
 	validForCache   map[string]validForWindow
 	validForExpiry  time.Time
 	validForRepoUrl string
+	validForFlight  singleflight.Group
 	tufRepoUrl      string
 	ctx             context.Context
 	cancel          context.CancelFunc
@@ -879,22 +880,26 @@ type validForWindow struct {
 
 func (s *trustService) getValidForLookup(ctx context.Context, tufRepoUrl string) map[string]validForWindow {
 	s.validForMu.RLock()
-	if s.validForCache != nil && s.validForRepoUrl == tufRepoUrl && time.Now().Before(s.validForExpiry) {
+	if s.validForCache != nil && urlsEqual(s.validForRepoUrl, tufRepoUrl) && time.Now().Before(s.validForExpiry) {
 		cached := s.validForCache
 		s.validForMu.RUnlock()
 		return cached
 	}
 	s.validForMu.RUnlock()
 
-	lookup := buildValidForLookup(ctx, s, tufRepoUrl)
+	v, _, _ := s.validForFlight.Do(tufRepoUrl, func() (interface{}, error) {
+		lookup := buildValidForLookup(ctx, s, tufRepoUrl)
 
-	s.validForMu.Lock()
-	s.validForCache = lookup
-	s.validForRepoUrl = tufRepoUrl
-	s.validForExpiry = time.Now().Add(s.refreshInterval)
-	s.validForMu.Unlock()
+		s.validForMu.Lock()
+		s.validForCache = lookup
+		s.validForRepoUrl = tufRepoUrl
+		s.validForExpiry = time.Now().Add(s.refreshInterval)
+		s.validForMu.Unlock()
 
-	return lookup
+		return lookup, nil
+	})
+
+	return v.(map[string]validForWindow)
 }
 
 func buildValidForLookup(ctx context.Context, s *trustService, tufRepoUrl string) map[string]validForWindow {
