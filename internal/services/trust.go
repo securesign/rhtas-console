@@ -59,9 +59,10 @@ type trustService struct {
 	repoReady       bool
 	refreshInterval time.Duration
 
-	validForMu     sync.RWMutex
-	validForCache  map[string]validForWindow
-	validForExpiry time.Time
+	validForMu      sync.RWMutex
+	validForCache   map[string]validForWindow
+	validForExpiry  time.Time
+	validForRepoUrl string
 	tufRepoUrl      string
 	ctx             context.Context
 	cancel          context.CancelFunc
@@ -852,7 +853,7 @@ func extractCertDetails(certPEM string) ([]parsedCertEntry, error) {
 			info: models.CertificateInfo{
 				Subject:        cert.Subject.String(),
 				Issuer:         cert.Issuer.String(),
-				CertExpiration: cert.NotAfter.String(),
+				CertExpiration: cert.NotAfter.UTC().Format(time.RFC3339),
 				Pem:            string(pemBytes),
 			},
 			fingerprint: certFingerprint(cert.Raw),
@@ -878,7 +879,7 @@ type validForWindow struct {
 
 func (s *trustService) getValidForLookup(ctx context.Context, tufRepoUrl string) map[string]validForWindow {
 	s.validForMu.RLock()
-	if s.validForCache != nil && time.Now().Before(s.validForExpiry) {
+	if s.validForCache != nil && s.validForRepoUrl == tufRepoUrl && time.Now().Before(s.validForExpiry) {
 		cached := s.validForCache
 		s.validForMu.RUnlock()
 		return cached
@@ -889,6 +890,7 @@ func (s *trustService) getValidForLookup(ctx context.Context, tufRepoUrl string)
 
 	s.validForMu.Lock()
 	s.validForCache = lookup
+	s.validForRepoUrl = tufRepoUrl
 	s.validForExpiry = time.Now().Add(s.refreshInterval)
 	s.validForMu.Unlock()
 
@@ -900,7 +902,7 @@ func buildValidForLookup(ctx context.Context, s *trustService, tufRepoUrl string
 
 	targetContent, statusCode, err := s.GetTargetFromTUFRepo(ctx, tufRepoUrl, "trusted_root.json")
 	if err != nil || statusCode != http.StatusOK {
-		log.Printf("failed to fetch trusted_root.json for validFor enrichment: %v", err)
+		log.Printf("failed to fetch trusted_root.json for validFor enrichment (statusCode=%d): %v", statusCode, err)
 		return lookup
 	}
 
