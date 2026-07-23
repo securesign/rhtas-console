@@ -888,13 +888,15 @@ func (s *trustService) getValidForLookup(ctx context.Context, tufRepoUrl string)
 	s.validForMu.RUnlock()
 
 	v, _, _ := s.validForFlight.Do(tufRepoUrl, func() (interface{}, error) {
-		lookup := buildValidForLookup(ctx, s, tufRepoUrl)
+		lookup := buildValidForLookup(context.Background(), s, tufRepoUrl)
 
-		s.validForMu.Lock()
-		s.validForCache = lookup
-		s.validForRepoUrl = tufRepoUrl
-		s.validForExpiry = time.Now().Add(s.refreshInterval)
-		s.validForMu.Unlock()
+		if len(lookup) > 0 {
+			s.validForMu.Lock()
+			s.validForCache = lookup
+			s.validForRepoUrl = tufRepoUrl
+			s.validForExpiry = time.Now().Add(s.refreshInterval)
+			s.validForMu.Unlock()
+		}
 
 		return lookup, nil
 	})
