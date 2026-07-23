@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -216,7 +217,7 @@ func TestGetValidForLookupCaching(t *testing.T) {
 		s.validForRepoUrl = "https://tuf.example.com"
 		s.validForExpiry = time.Now().Add(5 * time.Minute)
 
-		got := s.getValidForLookup(nil, "https://tuf.example.com")
+		got := s.getValidForLookup(context.TODO(), "https://tuf.example.com")
 		if len(got) != 1 {
 			t.Errorf("expected cached map with 1 entry, got %d", len(got))
 		}
@@ -236,7 +237,7 @@ func TestGetValidForLookupCaching(t *testing.T) {
 		s.validForRepoUrl = "https://tuf.example.com"
 		s.validForExpiry = time.Now().Add(5 * time.Minute)
 
-		got := s.getValidForLookup(nil, "https://other.example.com")
+		got := s.getValidForLookup(context.TODO(), "https://other.example.com")
 		if _, ok := got["abc123"]; ok {
 			t.Error("should not return cached result for different URL")
 		}
@@ -253,7 +254,7 @@ func TestGetValidForLookupCaching(t *testing.T) {
 		s.validForRepoUrl = "https://tuf.example.com"
 		s.validForExpiry = time.Now().Add(-1 * time.Minute)
 
-		got := s.getValidForLookup(nil, "https://tuf.example.com")
+		got := s.getValidForLookup(context.TODO(), "https://tuf.example.com")
 		if _, ok := got["abc123"]; ok {
 			t.Error("should not return expired cached result")
 		}
@@ -270,7 +271,7 @@ func TestGetValidForLookupCaching(t *testing.T) {
 		s.validForRepoUrl = "https://tuf.example.com/"
 		s.validForExpiry = time.Now().Add(5 * time.Minute)
 
-		got := s.getValidForLookup(nil, "https://tuf.example.com")
+		got := s.getValidForLookup(context.TODO(), "https://tuf.example.com")
 		if len(got) != 1 {
 			t.Errorf("expected cached map with 1 entry for equivalent URL, got %d", len(got))
 		}
