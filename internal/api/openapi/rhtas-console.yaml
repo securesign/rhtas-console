@@ -748,6 +748,19 @@ components:
         - type
         - status
         - content
+    CertificateStatus:
+      type: string
+      description: >
+        Status of the certificate, derived from trusted_root.json validFor window and X.509 validity.
+        active — in service, cert is valid.
+        expiring — in service, cert expires within 30 days.
+        expired — the X.509 cert has actually expired.
+        revoked — cert still valid but taken out of service.
+      enum:
+        - active
+        - expiring
+        - expired
+        - revoked
     CertificateInfo:
       type: object
       properties:
@@ -761,14 +774,19 @@ components:
           type: string
           description: Target type
         status:
-          type: string
-          description: Status of the target to which the certificate is associated.
+          $ref: "#/components/schemas/CertificateStatus"
         target:
           type: string
           description: The TUF target to which the certificate is associated.
-        expiration:
+        certExpiration:
           type: string
           description: Expiration date and time of the certificate (notAfter).
+        validForStart:
+          type: string
+          description: Start of the service window from trusted_root.json validFor (ISO 8601).
+        validForEnd:
+          type: string
+          description: End of the service window from trusted_root.json validFor (ISO 8601). Absent if still active.
         pem:
           type: string
           description: Certificate in PEM-encoded format.
@@ -778,7 +796,7 @@ components:
         - type
         - status
         - target
-        - expiration
+        - certExpiration
         - pem
     CertificateInfoList:
       type: object

@@ -39,6 +39,14 @@ const (
 	CertificateRoleUnknown      CertificateRole = "unknown"
 )
 
+// Defines values for CertificateStatus.
+const (
+	Active   CertificateStatus = "active"
+	Expired  CertificateStatus = "expired"
+	Expiring CertificateStatus = "expiring"
+	Revoked  CertificateStatus = "revoked"
+)
+
 // Defines values for SystemHealthResponseRekorStatus.
 const (
 	SystemHealthResponseRekorStatusHealthy   SystemHealthResponseRekorStatus = "healthy"
@@ -186,8 +194,8 @@ type AttestationView struct {
 
 // CertificateInfo defines model for CertificateInfo.
 type CertificateInfo struct {
-	// Expiration Expiration date and time of the certificate (notAfter).
-	Expiration string `json:"expiration"`
+	// CertExpiration Expiration date and time of the certificate (notAfter).
+	CertExpiration string `json:"certExpiration"`
 
 	// Issuer Certificate issuer
 	Issuer string `json:"issuer"`
@@ -195,8 +203,8 @@ type CertificateInfo struct {
 	// Pem Certificate in PEM-encoded format.
 	Pem string `json:"pem"`
 
-	// Status Status of the target to which the certificate is associated.
-	Status string `json:"status"`
+	// Status Status of the certificate, derived from trusted_root.json validFor window and X.509 validity. active — in service, cert is valid. expiring — in service, cert expires within 30 days. expired — the X.509 cert has actually expired. revoked — cert still valid but taken out of service.
+	Status CertificateStatus `json:"status"`
 
 	// Subject Certificate subject
 	Subject string `json:"subject"`
@@ -206,6 +214,12 @@ type CertificateInfo struct {
 
 	// Type Target type
 	Type string `json:"type"`
+
+	// ValidForEnd End of the service window from trusted_root.json validFor (ISO 8601). Absent if still active.
+	ValidForEnd *string `json:"validForEnd,omitempty"`
+
+	// ValidForStart Start of the service window from trusted_root.json validFor (ISO 8601).
+	ValidForStart *string `json:"validForStart,omitempty"`
 }
 
 // CertificateInfoList defines model for CertificateInfoList.
@@ -215,6 +229,9 @@ type CertificateInfoList struct {
 
 // CertificateRole defines model for CertificateRole.
 type CertificateRole string
+
+// CertificateStatus Status of the certificate, derived from trusted_root.json validFor window and X.509 validity. active — in service, cert is valid. expiring — in service, cert expires within 30 days. expired — the X.509 cert has actually expired. revoked — cert still valid but taken out of service.
+type CertificateStatus string
 
 // Checkpoint defines model for Checkpoint.
 type Checkpoint struct {

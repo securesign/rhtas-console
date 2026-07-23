@@ -2,7 +2,9 @@ package services
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -19,6 +21,7 @@ import (
 	"time"
 
 	"github.com/securesign/rhtas-console/internal/models"
+	"github.com/sigstore/sigstore-go/pkg/root"
 	"github.com/sigstore/sigstore-go/pkg/tuf"
 	"github.com/sigstore/sigstore-go/pkg/util"
 	"github.com/theupdateframework/go-tuf/data"
@@ -55,6 +58,12 @@ type trustService struct {
 	repo            *tufRepository
 	repoReady       bool
 	refreshInterval time.Duration
+
+	validForMu      sync.RWMutex
+	validForCache   map[string]validForWindow
+	validForExpiry  time.Time
+	validForRepoUrl string
+	validForFlight  singleflight.Group
 	tufRepoUrl      string
 	ctx             context.Context
 	cancel          context.CancelFunc
@@ -235,6 +244,8 @@ func (s *trustService) GetCertificatesInfo(ctx context.Context, tufRepoUrl strin
 		return models.CertificateInfoList{}, http.StatusInternalServerError, fmt.Errorf("extracting target metadata: %w", err)
 	}
 
+	validForLookup := s.getValidForLookup(ctx, tufRepoUrl)
+
 	result := models.CertificateInfoList{}
 	var fetchErrors []string
 
@@ -258,7 +269,7 @@ func (s *trustService) GetCertificatesInfo(ctx context.Context, tufRepoUrl strin
 				continue
 			}
 
-			certInfoList, err := extractCertDetails(targetContent.Content)
+			parsedCerts, err := extractCertDetails(targetContent.Content)
 			if err != nil {
 				errMsg := fmt.Sprintf("failed to extract certificate details from target %s: %v", targetName, err)
 				log.Print(errMsg)
@@ -266,16 +277,31 @@ func (s *trustService) GetCertificatesInfo(ctx context.Context, tufRepoUrl strin
 				continue
 			}
 
-			for _, cert_info := range certInfoList.Data {
-				result.Data = append(result.Data, models.CertificateInfo{
-					Issuer:     cert_info.Issuer,
-					Subject:    cert_info.Subject,
-					Expiration: cert_info.Expiration,
-					Target:     targetName,
-					Status:     spec["status"], // Status from TUF metadata (Active, Expired, etc.)
-					Type:       targetType,
-					Pem:        cert_info.Pem,
-				})
+			now := time.Now()
+			for _, pc := range parsedCerts {
+				var vfPtr *validForWindow
+				if vf, ok := validForLookup[pc.fingerprint]; ok {
+					vfPtr = &vf
+				}
+
+				info := models.CertificateInfo{
+					Issuer:         pc.info.Issuer,
+					Subject:        pc.info.Subject,
+					CertExpiration: pc.info.CertExpiration,
+					Target:         targetName,
+					Status:         computeCertStatus(pc.notAfter, vfPtr, now),
+					Type:           targetType,
+					Pem:            pc.info.Pem,
+				}
+				if vfPtr != nil {
+					start := vfPtr.start.Format(time.RFC3339)
+					info.ValidForStart = &start
+					if !vfPtr.end.IsZero() {
+						end := vfPtr.end.Format(time.RFC3339)
+						info.ValidForEnd = &end
+					}
+				}
+				result.Data = append(result.Data, info)
 			}
 		}
 	}
@@ -791,9 +817,15 @@ func extractTargetMetadataInfo(targetsBytes []byte) (map[string]map[string]strin
 	return targetSpecs, nil
 }
 
+type parsedCertEntry struct {
+	info        models.CertificateInfo
+	fingerprint string
+	notAfter    time.Time
+}
+
 // extractCertDetails extracts subject, issuer & status from a PEM certificate
-func extractCertDetails(certPEM string) (models.CertificateInfoList, error) {
-	var results models.CertificateInfoList
+func extractCertDetails(certPEM string) ([]parsedCertEntry, error) {
+	var results []parsedCertEntry
 	rest := []byte(certPEM)
 	for {
 		block, remaining := pem.Decode(rest)
@@ -807,25 +839,127 @@ func extractCertDetails(certPEM string) (models.CertificateInfoList, error) {
 		}
 		cert, err := x509.ParseCertificate(block.Bytes)
 		if err != nil {
-			return models.CertificateInfoList{}, fmt.Errorf("failed to parse certificate: %w", err)
+			return nil, fmt.Errorf("failed to parse certificate: %w", err)
 		}
 		pemBytes := pem.EncodeToMemory(&pem.Block{
 			Type:  "CERTIFICATE",
 			Bytes: cert.Raw,
 		})
-		entry := models.CertificateInfo{
-			Subject:    cert.Subject.String(),
-			Issuer:     cert.Issuer.String(),
-			Expiration: cert.NotAfter.String(),
-			Pem:        string(pemBytes),
-		}
-		results.Data = append(results.Data, entry)
+		results = append(results, parsedCertEntry{
+			info: models.CertificateInfo{
+				Subject:        cert.Subject.String(),
+				Issuer:         cert.Issuer.String(),
+				CertExpiration: cert.NotAfter.UTC().Format(time.RFC3339),
+				Pem:            string(pemBytes),
+			},
+			fingerprint: certFingerprint(cert.Raw),
+			notAfter:    cert.NotAfter,
+		})
 	}
 
-	if len(results.Data) == 0 {
-		return models.CertificateInfoList{}, fmt.Errorf("no valid certificates found")
+	if len(results) == 0 {
+		return nil, fmt.Errorf("no valid certificates found")
 	}
 	return results, nil
+}
+
+func certFingerprint(raw []byte) string {
+	h := sha256.Sum256(raw)
+	return hex.EncodeToString(h[:])
+}
+
+type validForWindow struct {
+	start time.Time
+	end   time.Time
+}
+
+func computeCertStatus(notAfter time.Time, validFor *validForWindow, now time.Time) models.CertificateStatus {
+	expired := !notAfter.IsZero() && now.After(notAfter)
+	if expired {
+		return models.Expired
+	}
+	if validFor != nil && !validFor.end.IsZero() && now.After(validFor.end) {
+		return models.Revoked
+	}
+	if !notAfter.IsZero() && notAfter.Sub(now) <= 30*24*time.Hour {
+		return models.Expiring
+	}
+	return models.Active
+}
+
+func (s *trustService) getValidForLookup(ctx context.Context, tufRepoUrl string) map[string]validForWindow {
+	s.validForMu.RLock()
+	if s.validForCache != nil && urlsEqual(s.validForRepoUrl, tufRepoUrl) && time.Now().Before(s.validForExpiry) {
+		cached := s.validForCache
+		s.validForMu.RUnlock()
+		return cached
+	}
+	s.validForMu.RUnlock()
+
+	v, _, _ := s.validForFlight.Do(tufRepoUrl, func() (interface{}, error) {
+		lookup := buildValidForLookup(context.Background(), s, tufRepoUrl)
+
+		if len(lookup) > 0 {
+			s.validForMu.Lock()
+			s.validForCache = lookup
+			s.validForRepoUrl = tufRepoUrl
+			s.validForExpiry = time.Now().Add(s.refreshInterval)
+			s.validForMu.Unlock()
+		}
+
+		return lookup, nil
+	})
+
+	return v.(map[string]validForWindow)
+}
+
+func buildValidForLookup(ctx context.Context, s *trustService, tufRepoUrl string) map[string]validForWindow {
+	lookup := make(map[string]validForWindow)
+
+	targetContent, statusCode, err := s.GetTargetFromTUFRepo(ctx, tufRepoUrl, "trusted_root.json")
+	if err != nil || statusCode != http.StatusOK {
+		log.Printf("failed to fetch trusted_root.json for validFor enrichment (statusCode=%d): %v", statusCode, err)
+		return lookup
+	}
+
+	trustedRoot, err := root.NewTrustedRootFromJSON([]byte(targetContent.Content))
+	if err != nil {
+		log.Printf("failed to parse trusted_root.json for validFor enrichment: %v", err)
+		return lookup
+	}
+
+	for _, ca := range trustedRoot.FulcioCertificateAuthorities() {
+		fca, ok := ca.(*root.FulcioCertificateAuthority)
+		if !ok {
+			continue
+		}
+		w := validForWindow{start: fca.ValidityPeriodStart, end: fca.ValidityPeriodEnd}
+		if fca.Root != nil {
+			lookup[certFingerprint(fca.Root.Raw)] = w
+		}
+		for _, intermediate := range fca.Intermediates {
+			lookup[certFingerprint(intermediate.Raw)] = w
+		}
+	}
+
+	for _, tsa := range trustedRoot.TimestampingAuthorities() {
+		sta, ok := tsa.(*root.SigstoreTimestampingAuthority)
+		if !ok {
+			continue
+		}
+		w := validForWindow{start: sta.ValidityPeriodStart, end: sta.ValidityPeriodEnd}
+		if sta.Root != nil {
+			lookup[certFingerprint(sta.Root.Raw)] = w
+		}
+		if sta.Leaf != nil {
+			lookup[certFingerprint(sta.Leaf.Raw)] = w
+		}
+		for _, intermediate := range sta.Intermediates {
+			lookup[certFingerprint(intermediate.Raw)] = w
+		}
+	}
+
+	return lookup
 }
 
 // urlsEqual compares two URLs for logical equivalence, ignoring trailing slashes.
