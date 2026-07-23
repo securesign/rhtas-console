@@ -279,11 +279,9 @@ func (s *trustService) GetCertificatesInfo(ctx context.Context, tufRepoUrl strin
 
 			now := time.Now()
 			for _, pc := range parsedCerts {
-				status := models.Active
-				if !pc.notAfter.IsZero() && now.After(pc.notAfter) {
-					status = models.Expired
-				} else if !pc.notAfter.IsZero() && pc.notAfter.Sub(now) <= 30*24*time.Hour {
-					status = models.Expiring
+				var vfPtr *validForWindow
+				if vf, ok := validForLookup[pc.fingerprint]; ok {
+					vfPtr = &vf
 				}
 
 				info := models.CertificateInfo{
@@ -291,19 +289,16 @@ func (s *trustService) GetCertificatesInfo(ctx context.Context, tufRepoUrl strin
 					Subject:        pc.info.Subject,
 					CertExpiration: pc.info.CertExpiration,
 					Target:         targetName,
-					Status:         status,
+					Status:         computeCertStatus(pc.notAfter, vfPtr, now),
 					Type:           targetType,
 					Pem:            pc.info.Pem,
 				}
-				if vf, ok := validForLookup[pc.fingerprint]; ok {
-					start := vf.start.Format(time.RFC3339)
+				if vfPtr != nil {
+					start := vfPtr.start.Format(time.RFC3339)
 					info.ValidForStart = &start
-					if !vf.end.IsZero() {
-						end := vf.end.Format(time.RFC3339)
+					if !vfPtr.end.IsZero() {
+						end := vfPtr.end.Format(time.RFC3339)
 						info.ValidForEnd = &end
-						if now.After(vf.end) && info.Status != models.Expired {
-							info.Status = models.Revoked
-						}
 					}
 				}
 				result.Data = append(result.Data, info)
@@ -876,6 +871,20 @@ func certFingerprint(raw []byte) string {
 type validForWindow struct {
 	start time.Time
 	end   time.Time
+}
+
+func computeCertStatus(notAfter time.Time, validFor *validForWindow, now time.Time) models.CertificateStatus {
+	expired := !notAfter.IsZero() && now.After(notAfter)
+	if expired {
+		return models.Expired
+	}
+	if validFor != nil && !validFor.end.IsZero() && now.After(validFor.end) {
+		return models.Revoked
+	}
+	if !notAfter.IsZero() && notAfter.Sub(now) <= 30*24*time.Hour {
+		return models.Expiring
+	}
+	return models.Active
 }
 
 func (s *trustService) getValidForLookup(ctx context.Context, tufRepoUrl string) map[string]validForWindow {
