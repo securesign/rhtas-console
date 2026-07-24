@@ -43,7 +43,7 @@ type TrustServiceFlags struct {
 
 type TrustService interface {
 	GetTrustConfig(ctx context.Context, tufRepoUrl string) (cfg models.TrustConfig, statusCode int, err error)
-	GetTrustRootMetadataInfo(ctx context.Context, tufRepoUrl string) (info models.RootMetadataInfoList, statusCode int, err error)
+	GetTrustMetadataInfo(ctx context.Context, tufRepoUrl string) (info models.MetadataInfoResponse, statusCode int, err error)
 	GetTarget(ctx context.Context, tufRepoUrl string, target string) (content models.TargetContent, statusCode int, err error)
 	GetCertificatesInfo(ctx context.Context, tufRepoUrl string) (certs models.CertificateInfoList, statusCode int, err error)
 	GetAllTargets(ctx context.Context, tufRepoUrl string) (targets models.TargetsList, statusCode int, err error)
@@ -153,37 +153,36 @@ func (s *trustService) GetTrustConfig(ctx context.Context, tufRepoUrl string) (m
 	}, http.StatusOK, nil
 }
 
-func (s *trustService) GetTrustRootMetadataInfo(ctx context.Context, tufRepoUrl string) (models.RootMetadataInfoList, int, error) {
+func (s *trustService) GetTrustMetadataInfo(ctx context.Context, tufRepoUrl string) (models.MetadataInfoResponse, int, error) {
 	repo, statusCode, err := s.getOrCreateUpdater(ctx, tufRepoUrl)
 	if err != nil {
-		return models.RootMetadataInfoList{}, statusCode, err
+		return models.MetadataInfoResponse{}, statusCode, err
 	}
 
 	repo.lock.RLock()
 	defer repo.lock.RUnlock()
 
-	// Fetch all root metadata versions
-	latestRootMeta := repo.updater.GetTrustedMetadataSet().Root
-	if latestRootMeta == nil {
-		return models.RootMetadataInfoList{}, http.StatusServiceUnavailable, fmt.Errorf("latest root metadata not available")
+	trustedMeta := repo.updater.GetTrustedMetadataSet()
+
+	// Root: fetch all historical versions
+	if trustedMeta.Root == nil {
+		return models.MetadataInfoResponse{}, http.StatusServiceUnavailable, fmt.Errorf("root metadata not available")
 	}
 
-	latestVersion := latestRootMeta.Signed.Version
+	latestVersion := trustedMeta.Root.Signed.Version
 	var allRootBytes [][]byte
-	latestRootBytes, err := latestRootMeta.ToBytes(true)
+	latestRootBytes, err := trustedMeta.Root.ToBytes(true)
 	if err != nil {
-		return models.RootMetadataInfoList{}, http.StatusInternalServerError, fmt.Errorf("failed to get signed latest root bytes: %w", err)
+		return models.MetadataInfoResponse{}, http.StatusInternalServerError, fmt.Errorf("failed to get signed latest root bytes: %w", err)
 	}
 	allRootBytes = append(allRootBytes, latestRootBytes)
 
-	// Fetch previous versions
 	for version := 1; version < int(latestVersion); version++ {
 		rootFilename := fmt.Sprintf("%d.root.json", version)
 		metadataURL, err := url.JoinPath(repo.remoteMetadataURL, rootFilename)
 		if err != nil {
 			continue
 		}
-
 		rootBytes, err := fetchRootJSON(ctx, metadataURL)
 		if err != nil {
 			continue
@@ -195,17 +194,39 @@ func (s *trustService) GetTrustRootMetadataInfo(ctx context.Context, tufRepoUrl 
 		allRootBytes = append(allRootBytes, rootBytes)
 	}
 
-	var results models.RootMetadataInfoList
+	var rootEntries []models.MetadataInfo
 	for _, rootBytes := range allRootBytes {
 		rootInfo, err := extractRootMetadataInfo(rootBytes)
 		if err != nil {
-			return models.RootMetadataInfoList{}, http.StatusInternalServerError, fmt.Errorf("extracting root metadata info: %w", err)
+			return models.MetadataInfoResponse{}, http.StatusInternalServerError, fmt.Errorf("extracting root metadata info: %w", err)
 		}
-		results.Data = append(results.Data, rootInfo)
+		rootEntries = append(rootEntries, rootInfo)
 	}
 
-	results.RepoUrl = &repo.opts.RepositoryBaseURL
-	return results, http.StatusOK, nil
+	result := models.MetadataInfoResponse{
+		Data:    map[string][]models.MetadataInfo{"root": rootEntries},
+		RepoUrl: &repo.opts.RepositoryBaseURL,
+	}
+
+	if targets := trustedMeta.Targets["targets"]; targets != nil {
+		result.Data["targets"] = []models.MetadataInfo{
+			metadataInfoFromVersionAndExpires(targets.Signed.Version, targets.Signed.Expires),
+		}
+	}
+
+	if trustedMeta.Snapshot != nil {
+		result.Data["snapshot"] = []models.MetadataInfo{
+			metadataInfoFromVersionAndExpires(trustedMeta.Snapshot.Signed.Version, trustedMeta.Snapshot.Signed.Expires),
+		}
+	}
+
+	if trustedMeta.Timestamp != nil {
+		result.Data["timestamp"] = []models.MetadataInfo{
+			metadataInfoFromVersionAndExpires(trustedMeta.Timestamp.Signed.Version, trustedMeta.Timestamp.Signed.Expires),
+		}
+	}
+
+	return result, http.StatusOK, nil
 }
 
 func (s *trustService) GetTarget(ctx context.Context, tufRepoUrl string, target string) (models.TargetContent, int, error) {
@@ -748,8 +769,25 @@ func buildTufConfig(opts *tuf.Options) (*config.UpdaterConfig, error) {
 	return tufCfg, nil
 }
 
-// extractRootMetadataInfo retrieves TUF root metadata info including version, expiration, and status.
-func extractRootMetadataInfo(rootMetadataBytes []byte) (models.RootMetadataInfo, error) {
+func metadataInfoFromVersionAndExpires(version int64, expires time.Time) models.MetadataInfo {
+	now := time.Now().UTC()
+	var status string
+	switch {
+	case expires.Before(now):
+		status = "expired"
+	case expires.Sub(now) < 30*24*time.Hour:
+		status = "expiring"
+	default:
+		status = "valid"
+	}
+	return models.MetadataInfo{
+		Version: strconv.FormatInt(version, 10),
+		Expires: expires.Format(time.RFC3339),
+		Status:  status,
+	}
+}
+
+func extractRootMetadataInfo(rootMetadataBytes []byte) (models.MetadataInfo, error) {
 	var parsed struct {
 		Signed struct {
 			Expired string `json:"expires"`
@@ -758,12 +796,12 @@ func extractRootMetadataInfo(rootMetadataBytes []byte) (models.RootMetadataInfo,
 	}
 
 	if err := json.Unmarshal(rootMetadataBytes, &parsed); err != nil {
-		return models.RootMetadataInfo{}, fmt.Errorf("unmarshal root metadata: %w", err)
+		return models.MetadataInfo{}, fmt.Errorf("unmarshal root metadata: %w", err)
 	}
 
 	expiresTime, err := time.Parse(time.RFC3339, parsed.Signed.Expired)
 	if err != nil {
-		return models.RootMetadataInfo{}, fmt.Errorf("parse expires time: %w", err)
+		return models.MetadataInfo{}, fmt.Errorf("parse expires time: %w", err)
 	}
 
 	now := time.Now().UTC()
@@ -778,13 +816,11 @@ func extractRootMetadataInfo(rootMetadataBytes []byte) (models.RootMetadataInfo,
 		status = "valid"
 	}
 
-	rootMetadataInfo := models.RootMetadataInfo{
+	return models.MetadataInfo{
 		Version: strconv.Itoa(parsed.Signed.Version),
 		Expires: parsed.Signed.Expired,
 		Status:  status,
-	}
-
-	return rootMetadataInfo, nil
+	}, nil
 }
 
 // extractTargetMetadataInfo extracts status & usage of targets
