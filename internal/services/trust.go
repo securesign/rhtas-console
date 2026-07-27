@@ -204,7 +204,12 @@ func (s *trustService) GetTrustMetadataInfo(ctx context.Context, tufRepoUrl stri
 	}
 
 	result := models.MetadataInfoResponse{
-		Data:    map[string][]models.MetadataInfo{"root": rootEntries},
+		Data: map[string][]models.MetadataInfo{
+			"root":      rootEntries,
+			"targets":   {},
+			"snapshot":  {},
+			"timestamp": {},
+		},
 		RepoUrl: &repo.opts.RepositoryBaseURL,
 	}
 
@@ -775,7 +780,7 @@ func metadataInfoFromVersionAndExpires(version int64, expires time.Time) models.
 	switch {
 	case expires.Before(now):
 		status = "expired"
-	case expires.Sub(now) < 30*24*time.Hour:
+	case expires.Sub(now) <= 30*24*time.Hour:
 		status = "expiring"
 	default:
 		status = "valid"
@@ -810,7 +815,7 @@ func extractRootMetadataInfo(rootMetadataBytes []byte) (models.MetadataInfo, err
 	switch {
 	case expiresTime.Before(now):
 		status = "expired"
-	case expiresTime.Sub(now) < 30*24*time.Hour:
+	case expiresTime.Sub(now) <= 30*24*time.Hour:
 		status = "expiring"
 	default:
 		status = "valid"
