@@ -85,7 +85,7 @@ The backend exposes the following RESTful endpoints, as defined in the OpenAPI s
 | GET    | `/api/v1/rekor/entries/{uuid}`              | Retrieves a Rekor transparency log entry by UUID. |
 | GET    | `/api/v1/rekor/public-key`                  | Retrieves the Rekor public key in PEM format.     |
 | GET    | `/api/v1/trust/config`                      | Retrieves Fulcio certificate authorities and Rekor transparency logs. |
-| GET    | `/api/v1/trust/root-metadata-info`          | Retrieves the full history of TUF root metadata versions, including version, expiration date, and status (valid, expiring, expired). |
+| GET    | `/api/v1/trust/metadata-info`               | Retrieves metadata info for all TUF roles (root, targets, snapshot, timestamp), including version, expiration date, and status (valid, expiring, expired). |
 | GET    | `/api/v1/trust/targets`                     | Retrieves all TUF targets. |
 | GET    | `/api/v1/trust/target`                      | Retrieves a specific TUF target. |
 | GET    | `/api/v1/trust/targets/certificates`        | Retrieves certificates for TUF targets. |

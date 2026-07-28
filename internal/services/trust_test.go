@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"encoding/pem"
 	"math/big"
+	"strconv"
 	"testing"
 	"time"
 
@@ -276,4 +277,62 @@ func TestGetValidForLookupCaching(t *testing.T) {
 			t.Errorf("expected cached map with 1 entry for equivalent URL, got %d", len(got))
 		}
 	})
+}
+
+func TestMetadataInfoFromVersionAndExpires(t *testing.T) {
+	now := time.Now().UTC()
+
+	tests := []struct {
+		name       string
+		version    int64
+		expires    time.Time
+		wantStatus string
+	}{
+		{
+			name:       "valid, far future",
+			version:    15,
+			expires:    now.Add(365 * 24 * time.Hour),
+			wantStatus: "valid",
+		},
+		{
+			name:       "expiring within 30 days",
+			version:    5,
+			expires:    now.Add(15 * 24 * time.Hour),
+			wantStatus: "expiring",
+		},
+		{
+			name:       "expired",
+			version:    1,
+			expires:    now.Add(-1 * time.Hour),
+			wantStatus: "expired",
+		},
+		{
+			name:       "boundary: exactly 30 days",
+			version:    10,
+			expires:    now.Add(30 * 24 * time.Hour),
+			wantStatus: "expiring",
+		},
+		{
+			name:       "boundary: 31 days",
+			version:    10,
+			expires:    now.Add(31 * 24 * time.Hour),
+			wantStatus: "valid",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := metadataInfoFromVersionAndExpires(tt.version, tt.expires)
+			if got.Status != tt.wantStatus {
+				t.Errorf("status = %q, want %q", got.Status, tt.wantStatus)
+			}
+			wantVersion := strconv.FormatInt(tt.version, 10)
+			if got.Version != wantVersion {
+				t.Errorf("version = %q, want %q", got.Version, wantVersion)
+			}
+			if _, err := time.Parse(time.RFC3339, got.Expires); err != nil {
+				t.Errorf("expires %q is not valid RFC3339: %v", got.Expires, err)
+			}
+		})
+	}
 }
