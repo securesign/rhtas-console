@@ -809,23 +809,7 @@ func extractRootMetadataInfo(rootMetadataBytes []byte) (models.MetadataInfo, err
 		return models.MetadataInfo{}, fmt.Errorf("parse expires time: %w", err)
 	}
 
-	now := time.Now().UTC()
-	var status string
-
-	switch {
-	case expiresTime.Before(now):
-		status = "expired"
-	case expiresTime.Sub(now) <= 30*24*time.Hour:
-		status = "expiring"
-	default:
-		status = "valid"
-	}
-
-	return models.MetadataInfo{
-		Version: strconv.Itoa(parsed.Signed.Version),
-		Expires: parsed.Signed.Expired,
-		Status:  status,
-	}, nil
+	return metadataInfoFromVersionAndExpires(int64(parsed.Signed.Version), expiresTime), nil
 }
 
 // extractTargetMetadataInfo extracts status & usage of targets
