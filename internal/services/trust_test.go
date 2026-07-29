@@ -9,9 +9,13 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/hex"
+	"encoding/json"
 	"encoding/pem"
 	"math/big"
+	"net/http"
+	"net/http/httptest"
 	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -279,6 +283,141 @@ func TestGetValidForLookupCaching(t *testing.T) {
 	})
 }
 
+func TestExtractRootMetadataInfo(t *testing.T) {
+	tests := []struct {
+		name       string
+		input      []byte
+		wantStatus string
+		wantVer    string
+		wantErr    bool
+	}{
+		{
+			name:       "valid, far future expiry",
+			input:      []byte(`{"signed":{"expires":"2099-01-01T00:00:00Z","version":5}}`),
+			wantStatus: "valid",
+			wantVer:    "5",
+		},
+		{
+			name: "expiring within 30 days",
+			input: func() []byte {
+				exp := time.Now().UTC().Add(15 * 24 * time.Hour).Format(time.RFC3339)
+				b, _ := json.Marshal(map[string]interface{}{
+					"signed": map[string]interface{}{"expires": exp, "version": 3},
+				})
+				return b
+			}(),
+			wantStatus: "expiring",
+			wantVer:    "3",
+		},
+		{
+			name:       "expired",
+			input:      []byte(`{"signed":{"expires":"2020-01-01T00:00:00Z","version":1}}`),
+			wantStatus: "expired",
+			wantVer:    "1",
+		},
+		{
+			name:    "invalid JSON",
+			input:   []byte(`{not json`),
+			wantErr: true,
+		},
+		{
+			name:    "bad time format",
+			input:   []byte(`{"signed":{"expires":"not-a-date","version":1}}`),
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := extractRootMetadataInfo(tt.input)
+			if tt.wantErr {
+				if err == nil {
+					t.Error("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got.Status != tt.wantStatus {
+				t.Errorf("status = %q, want %q", got.Status, tt.wantStatus)
+			}
+			if got.Version != tt.wantVer {
+				t.Errorf("version = %q, want %q", got.Version, tt.wantVer)
+			}
+		})
+	}
+}
+
+func TestExtractTargetMetadataInfo(t *testing.T) {
+	t.Run("valid targets", func(t *testing.T) {
+		input := []byte(`{
+			"signed": {
+				"targets": {
+					"fulcio.crt.pem": {
+						"custom": {"sigstore": {"status": "Active", "usage": "Fulcio"}}
+					},
+					"rekor.pub": {
+						"custom": {"sigstore": {"status": "Active", "usage": "Rekor"}}
+					}
+				}
+			}
+		}`)
+		got, err := extractTargetMetadataInfo(input)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(got) != 2 {
+			t.Fatalf("expected 2 targets, got %d", len(got))
+		}
+		fulcio := got["fulcio.crt.pem"]
+		if fulcio["status"] != "Active" {
+			t.Errorf("fulcio status = %q, want %q", fulcio["status"], "Active")
+		}
+		if fulcio["type"] != "Fulcio" {
+			t.Errorf("fulcio type = %q, want %q", fulcio["type"], "Fulcio")
+		}
+	})
+
+	t.Run("empty targets", func(t *testing.T) {
+		input := []byte(`{"signed": {"targets": {}}}`)
+		got, err := extractTargetMetadataInfo(input)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(got) != 0 {
+			t.Errorf("expected 0 targets, got %d", len(got))
+		}
+	})
+
+	t.Run("invalid JSON", func(t *testing.T) {
+		_, err := extractTargetMetadataInfo([]byte(`{bad`))
+		if err == nil {
+			t.Error("expected error for invalid JSON")
+		}
+	})
+}
+
+func TestUrlsEqual(t *testing.T) {
+	tests := []struct {
+		name string
+		a, b string
+		want bool
+	}{
+		{"identical", "https://example.com/path", "https://example.com/path", true},
+		{"trailing slash", "https://example.com/", "https://example.com", true},
+		{"different hosts", "https://a.com", "https://b.com", false},
+		{"different paths", "https://a.com/x", "https://a.com/y", false},
+		{"both empty", "", "", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := urlsEqual(tt.a, tt.b); got != tt.want {
+				t.Errorf("urlsEqual(%q, %q) = %v, want %v", tt.a, tt.b, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestMetadataInfoFromVersionAndExpires(t *testing.T) {
 	now := time.Now().UTC()
 
@@ -335,4 +474,183 @@ func TestMetadataInfoFromVersionAndExpires(t *testing.T) {
 			}
 		})
 	}
+}
+
+func clearRootCache(t *testing.T) {
+	t.Helper()
+	rootCache.Lock()
+	rootCache.m = make(map[string]*cachedTufRootResponse)
+	rootCache.Unlock()
+}
+
+func TestFetchRootJSON(t *testing.T) {
+	t.Run("200 OK returns body and caches", func(t *testing.T) {
+		clearRootCache(t)
+		body := []byte(`{"signed":{"version":1}}`)
+		var reqCount atomic.Int32
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			reqCount.Add(1)
+			w.Header().Set("ETag", `"v1"`)
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(body)
+		}))
+		defer srv.Close()
+
+		got, err := fetchRootJSON(context.Background(), srv.URL+"/root.json")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if string(got) != string(body) {
+			t.Errorf("body = %q, want %q", got, body)
+		}
+		if reqCount.Load() != 1 {
+			t.Errorf("requests = %d, want 1", reqCount.Load())
+		}
+	})
+
+	t.Run("cache hit skips HTTP request", func(t *testing.T) {
+		clearRootCache(t)
+		body := []byte(`{"signed":{"version":2}}`)
+		var reqCount atomic.Int32
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			reqCount.Add(1)
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(body)
+		}))
+		defer srv.Close()
+
+		url := srv.URL + "/root.json"
+		_, err := fetchRootJSON(context.Background(), url)
+		if err != nil {
+			t.Fatalf("first call: %v", err)
+		}
+
+		got, err := fetchRootJSON(context.Background(), url)
+		if err != nil {
+			t.Fatalf("second call: %v", err)
+		}
+		if string(got) != string(body) {
+			t.Errorf("body = %q, want %q", got, body)
+		}
+		if reqCount.Load() != 1 {
+			t.Errorf("requests = %d, want 1 (cache hit should skip second request)", reqCount.Load())
+		}
+	})
+
+	t.Run("304 Not Modified reuses cached body", func(t *testing.T) {
+		clearRootCache(t)
+		body := []byte(`{"signed":{"version":3}}`)
+		var reqCount atomic.Int32
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			reqCount.Add(1)
+			if r.Header.Get("If-None-Match") == `"v3"` {
+				w.WriteHeader(http.StatusNotModified)
+				return
+			}
+			w.Header().Set("ETag", `"v3"`)
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(body)
+		}))
+		defer srv.Close()
+
+		url := srv.URL + "/root.json"
+		_, err := fetchRootJSON(context.Background(), url)
+		if err != nil {
+			t.Fatalf("first call: %v", err)
+		}
+
+		// Expire the cache entry to force a network request
+		rootCache.Lock()
+		if entry, ok := rootCache.m[url]; ok {
+			entry.expiresAt = time.Now().Add(-1 * time.Minute)
+		}
+		rootCache.Unlock()
+
+		got, err := fetchRootJSON(context.Background(), url)
+		if err != nil {
+			t.Fatalf("second call after expiry: %v", err)
+		}
+		if string(got) != string(body) {
+			t.Errorf("body = %q, want %q", got, body)
+		}
+		if reqCount.Load() != 2 {
+			t.Errorf("requests = %d, want 2", reqCount.Load())
+		}
+	})
+
+	t.Run("500 error", func(t *testing.T) {
+		clearRootCache(t)
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+		}))
+		defer srv.Close()
+
+		_, err := fetchRootJSON(context.Background(), srv.URL+"/root.json")
+		if err == nil {
+			t.Error("expected error for 500 response")
+		}
+	})
+
+	t.Run("cancelled context", func(t *testing.T) {
+		clearRootCache(t)
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{}`))
+		}))
+		defer srv.Close()
+
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		_, err := fetchRootJSON(ctx, srv.URL+"/root.json")
+		if err == nil {
+			t.Error("expected error for cancelled context")
+		}
+	})
+}
+
+func TestGetTrustCoverage(t *testing.T) {
+	s := &trustService{}
+
+	t.Run("MOCK_MODE not set returns 503", func(t *testing.T) {
+		t.Setenv("MOCK_MODE", "")
+		_, statusCode, err := s.GetTrustCoverage(context.Background(), "24h", nil, "https://tuf.example.com")
+		if err == nil {
+			t.Fatal("expected error when MOCK_MODE is not set")
+		}
+		if statusCode != http.StatusServiceUnavailable {
+			t.Errorf("status = %d, want %d", statusCode, http.StatusServiceUnavailable)
+		}
+	})
+
+	t.Run("MOCK_MODE=true returns mock data", func(t *testing.T) {
+		t.Setenv("MOCK_MODE", "true")
+		resp, statusCode, err := s.GetTrustCoverage(context.Background(), "24h", nil, "https://tuf.example.com")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if statusCode != http.StatusOK {
+			t.Errorf("status = %d, want %d", statusCode, http.StatusOK)
+		}
+		if resp.TotalArtifacts != 1000 {
+			t.Errorf("TotalArtifacts = %d, want 1000", resp.TotalArtifacts)
+		}
+		if resp.AttestedCount != 610 {
+			t.Errorf("AttestedCount = %d, want 610", resp.AttestedCount)
+		}
+		if resp.VerifiedPercentage != 61.0 {
+			t.Errorf("VerifiedPercentage = %v, want 61.0", resp.VerifiedPercentage)
+		}
+	})
+
+	t.Run("MOCK_MODE=false returns 503", func(t *testing.T) {
+		t.Setenv("MOCK_MODE", "false")
+		_, statusCode, err := s.GetTrustCoverage(context.Background(), "24h", nil, "https://tuf.example.com")
+		if err == nil {
+			t.Fatal("expected error when MOCK_MODE is not 'true'")
+		}
+		if statusCode != http.StatusServiceUnavailable {
+			t.Errorf("status = %d, want %d", statusCode, http.StatusServiceUnavailable)
+		}
+	})
 }

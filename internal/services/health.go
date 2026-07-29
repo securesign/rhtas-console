@@ -23,7 +23,7 @@ type HealthService interface {
 }
 
 type healthService struct {
-	clientset     *kubernetes.Clientset
+	clientset     kubernetes.Interface
 	dynamicClient dynamic.Interface
 	namespace     string
 }
