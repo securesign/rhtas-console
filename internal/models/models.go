@@ -47,6 +47,20 @@ const (
 	Revoked  CertificateStatus = "revoked"
 )
 
+// Defines values for SystemHealthResponseCtlogStatus.
+const (
+	SystemHealthResponseCtlogStatusHealthy   SystemHealthResponseCtlogStatus = "healthy"
+	SystemHealthResponseCtlogStatusUnhealthy SystemHealthResponseCtlogStatus = "unhealthy"
+	SystemHealthResponseCtlogStatusUnknown   SystemHealthResponseCtlogStatus = "unknown"
+)
+
+// Defines values for SystemHealthResponseFulcioStatus.
+const (
+	SystemHealthResponseFulcioStatusHealthy   SystemHealthResponseFulcioStatus = "healthy"
+	SystemHealthResponseFulcioStatusUnhealthy SystemHealthResponseFulcioStatus = "unhealthy"
+	SystemHealthResponseFulcioStatusUnknown   SystemHealthResponseFulcioStatus = "unknown"
+)
+
 // Defines values for SystemHealthResponseRekorStatus.
 const (
 	SystemHealthResponseRekorStatusHealthy   SystemHealthResponseRekorStatus = "healthy"
@@ -54,11 +68,25 @@ const (
 	SystemHealthResponseRekorStatusUnknown   SystemHealthResponseRekorStatus = "unknown"
 )
 
-// Defines values for SystemHealthResponseSigstoreServices.
+// Defines values for SystemHealthResponseSecuresignStatus.
 const (
-	SystemHealthResponseSigstoreServicesHealthy   SystemHealthResponseSigstoreServices = "healthy"
-	SystemHealthResponseSigstoreServicesUnhealthy SystemHealthResponseSigstoreServices = "unhealthy"
-	SystemHealthResponseSigstoreServicesUnknown   SystemHealthResponseSigstoreServices = "unknown"
+	SystemHealthResponseSecuresignStatusHealthy   SystemHealthResponseSecuresignStatus = "healthy"
+	SystemHealthResponseSecuresignStatusUnhealthy SystemHealthResponseSecuresignStatus = "unhealthy"
+	SystemHealthResponseSecuresignStatusUnknown   SystemHealthResponseSecuresignStatus = "unknown"
+)
+
+// Defines values for SystemHealthResponseTrillianStatus.
+const (
+	SystemHealthResponseTrillianStatusHealthy   SystemHealthResponseTrillianStatus = "healthy"
+	SystemHealthResponseTrillianStatusUnhealthy SystemHealthResponseTrillianStatus = "unhealthy"
+	SystemHealthResponseTrillianStatusUnknown   SystemHealthResponseTrillianStatus = "unknown"
+)
+
+// Defines values for SystemHealthResponseTsaStatus.
+const (
+	SystemHealthResponseTsaStatusHealthy   SystemHealthResponseTsaStatus = "healthy"
+	SystemHealthResponseTsaStatusUnhealthy SystemHealthResponseTsaStatus = "unhealthy"
+	SystemHealthResponseTsaStatusUnknown   SystemHealthResponseTsaStatus = "unknown"
 )
 
 // Defines values for SystemHealthResponseTufStatus.
@@ -369,11 +397,23 @@ type SignatureView struct {
 
 // SystemHealthResponse defines model for SystemHealthResponse.
 type SystemHealthResponse struct {
+	// CtlogStatus Certificate Transparency log service health status
+	CtlogStatus SystemHealthResponseCtlogStatus `json:"ctlogStatus"`
+
+	// FulcioStatus Fulcio certificate authority service health status
+	FulcioStatus SystemHealthResponseFulcioStatus `json:"fulcioStatus"`
+
 	// RekorStatus Rekor transparency log service health status
 	RekorStatus SystemHealthResponseRekorStatus `json:"rekorStatus"`
 
-	// SigstoreServices Sigstore services health status
-	SigstoreServices SystemHealthResponseSigstoreServices `json:"sigstoreServices"`
+	// SecuresignStatus Overall Securesign operator health status
+	SecuresignStatus SystemHealthResponseSecuresignStatus `json:"securesignStatus"`
+
+	// TrillianStatus Trillian backend service health status
+	TrillianStatus SystemHealthResponseTrillianStatus `json:"trillianStatus"`
+
+	// TsaStatus Timestamp Authority service health status
+	TsaStatus SystemHealthResponseTsaStatus `json:"tsaStatus"`
 
 	// TufStatus TUF repository health status
 	TufStatus SystemHealthResponseTufStatus `json:"tufStatus"`
@@ -382,11 +422,23 @@ type SystemHealthResponse struct {
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
+// SystemHealthResponseCtlogStatus Certificate Transparency log service health status
+type SystemHealthResponseCtlogStatus string
+
+// SystemHealthResponseFulcioStatus Fulcio certificate authority service health status
+type SystemHealthResponseFulcioStatus string
+
 // SystemHealthResponseRekorStatus Rekor transparency log service health status
 type SystemHealthResponseRekorStatus string
 
-// SystemHealthResponseSigstoreServices Sigstore services health status
-type SystemHealthResponseSigstoreServices string
+// SystemHealthResponseSecuresignStatus Overall Securesign operator health status
+type SystemHealthResponseSecuresignStatus string
+
+// SystemHealthResponseTrillianStatus Trillian backend service health status
+type SystemHealthResponseTrillianStatus string
+
+// SystemHealthResponseTsaStatus Timestamp Authority service health status
+type SystemHealthResponseTsaStatus string
 
 // SystemHealthResponseTufStatus TUF repository health status
 type SystemHealthResponseTufStatus string

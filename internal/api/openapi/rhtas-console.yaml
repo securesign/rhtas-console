@@ -1169,15 +1169,35 @@ components:
     SystemHealthResponse:
       type: object
       properties:
-        sigstoreServices:
+        securesignStatus:
           type: string
           enum: ["healthy", "unhealthy", "unknown"]
-          description: Sigstore services health status
+          description: Overall Securesign operator health status
           example: healthy
         rekorStatus:
           type: string
           enum: ["healthy", "unhealthy", "unknown"]
           description: Rekor transparency log service health status
+          example: healthy
+        fulcioStatus:
+          type: string
+          enum: ["healthy", "unhealthy", "unknown"]
+          description: Fulcio certificate authority service health status
+          example: healthy
+        ctlogStatus:
+          type: string
+          enum: ["healthy", "unhealthy", "unknown"]
+          description: Certificate Transparency log service health status
+          example: healthy
+        trillianStatus:
+          type: string
+          enum: ["healthy", "unhealthy", "unknown"]
+          description: Trillian backend service health status
+          example: healthy
+        tsaStatus:
+          type: string
+          enum: ["healthy", "unhealthy", "unknown"]
+          description: Timestamp Authority service health status
           example: healthy
         tufStatus:
           type: string
@@ -1190,7 +1210,11 @@ components:
           description: Timestamp when the health status was last updated
           example: "2026-03-18T12:00:00Z"
       required:
-        - sigstoreServices
+        - securesignStatus
         - rekorStatus
+        - fulcioStatus
+        - ctlogStatus
+        - trillianStatus
+        - tsaStatus
         - tufStatus
         - updatedAt

@@ -3,7 +3,6 @@ package services
 import (
 	"context"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"time"
@@ -13,17 +12,21 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
-	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 )
+
+var securesignGVR = schema.GroupVersionResource{
+	Group:    "rhtas.redhat.com",
+	Version:  "v1alpha1",
+	Resource: "securesigns",
+}
 
 type HealthService interface {
 	GetSystemHealth(ctx context.Context) (models.SystemHealthResponse, int, error)
 }
 
 type healthService struct {
-	clientset     kubernetes.Interface
 	dynamicClient dynamic.Interface
 	namespace     string
 }
@@ -32,11 +35,6 @@ func NewHealthService() (HealthService, error) {
 	config, err := getKubeConfig()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get kubernetes config: %w", err)
-	}
-
-	clientset, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create kubernetes clientset: %w", err)
 	}
 
 	dynamicClient, err := dynamic.NewForConfig(config)
@@ -50,7 +48,6 @@ func NewHealthService() (HealthService, error) {
 	}
 
 	return &healthService{
-		clientset:     clientset,
 		dynamicClient: dynamicClient,
 		namespace:     namespace,
 	}, nil
@@ -71,164 +68,89 @@ func getKubeConfig() (*rest.Config, error) {
 }
 
 func (h *healthService) GetSystemHealth(ctx context.Context) (models.SystemHealthResponse, int, error) {
-	// Add timeout to prevent hanging on slow/hung Kubernetes API calls
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	sigstoreServices := h.checkSigstoreServicesHealth(ctx)
-	rekorStatus := h.checkRekorHealth(ctx)
-	tufStatus := h.checkTUFHealth(ctx)
+	conditions, err := h.getSecuresignConditions(ctx)
+	if err != nil {
+		return models.SystemHealthResponse{}, http.StatusInternalServerError, fmt.Errorf("failed to read Securesign CR: %w", err)
+	}
 
 	return models.SystemHealthResponse{
-		SigstoreServices: sigstoreServices,
-		RekorStatus:      rekorStatus,
-		TufStatus:        tufStatus,
-		UpdatedAt:        time.Now().UTC(),
+		SecuresignStatus: mapCondition(conditions["Ready"],
+			models.SystemHealthResponseSecuresignStatusHealthy,
+			models.SystemHealthResponseSecuresignStatusUnhealthy,
+			models.SystemHealthResponseSecuresignStatusUnknown),
+		RekorStatus: mapCondition(conditions["RekorAvailable"],
+			models.SystemHealthResponseRekorStatusHealthy,
+			models.SystemHealthResponseRekorStatusUnhealthy,
+			models.SystemHealthResponseRekorStatusUnknown),
+		FulcioStatus: mapCondition(conditions["FulcioAvailable"],
+			models.SystemHealthResponseFulcioStatusHealthy,
+			models.SystemHealthResponseFulcioStatusUnhealthy,
+			models.SystemHealthResponseFulcioStatusUnknown),
+		CtlogStatus: mapCondition(conditions["CTlogAvailable"],
+			models.SystemHealthResponseCtlogStatusHealthy,
+			models.SystemHealthResponseCtlogStatusUnhealthy,
+			models.SystemHealthResponseCtlogStatusUnknown),
+		TrillianStatus: mapCondition(conditions["TrillianAvailable"],
+			models.SystemHealthResponseTrillianStatusHealthy,
+			models.SystemHealthResponseTrillianStatusUnhealthy,
+			models.SystemHealthResponseTrillianStatusUnknown),
+		TsaStatus: mapCondition(conditions["TsaAvailable"],
+			models.SystemHealthResponseTsaStatusHealthy,
+			models.SystemHealthResponseTsaStatusUnhealthy,
+			models.SystemHealthResponseTsaStatusUnknown),
+		TufStatus: mapCondition(conditions["TufAvailable"],
+			models.SystemHealthResponseTufStatusHealthy,
+			models.SystemHealthResponseTufStatusUnhealthy,
+			models.SystemHealthResponseTufStatusUnknown),
+		UpdatedAt: time.Now().UTC(),
 	}, http.StatusOK, nil
 }
 
-func (h *healthService) checkSigstoreServicesHealth(ctx context.Context) models.SystemHealthResponseSigstoreServices {
-	deploymentName := os.Getenv("TAS_DEPLOYMENT_NAME")
-	if deploymentName == "" {
-		deploymentName = "securesign-sample"
-	}
-
-	crHealthy, err := h.checkCustomResourceHealth(ctx, "securesigns", deploymentName)
-	if err != nil || !crHealthy {
-		return models.SystemHealthResponseSigstoreServicesUnhealthy
-	}
-
-	return models.SystemHealthResponseSigstoreServicesHealthy
-}
-
-func (h *healthService) checkRekorHealth(ctx context.Context) models.SystemHealthResponseRekorStatus {
-	crName := os.Getenv("REKOR_CR_NAME")
+func (h *healthService) getSecuresignConditions(ctx context.Context) (map[string]string, error) {
+	crName := os.Getenv("TAS_DEPLOYMENT_NAME")
 	if crName == "" {
-		log.Printf("REKOR_CR_NAME environment variable not set")
-		return models.SystemHealthResponseRekorStatusUnknown
+		crName = "securesign-sample"
 	}
 
-	deploymentName := os.Getenv("REKOR_DEPLOYMENT_NAME")
-	if deploymentName == "" {
-		deploymentName = "rekor-server"
-	}
-
-	crHealthy, err := h.checkCustomResourceHealth(ctx, "rekors", crName)
-	if err != nil || !crHealthy {
-		return models.SystemHealthResponseRekorStatusUnhealthy
-	}
-
-	podHealthy := h.checkDeploymentHealth(ctx, deploymentName)
-	if !podHealthy {
-		return models.SystemHealthResponseRekorStatusUnhealthy
-	}
-
-	endpointHealthy := h.checkHTTPHealth(ctx, "http://"+deploymentName+"."+h.namespace+".svc:80/api/v1/log")
-	if !endpointHealthy {
-		return models.SystemHealthResponseRekorStatusUnhealthy
-	}
-
-	return models.SystemHealthResponseRekorStatusHealthy
-}
-
-func (h *healthService) checkTUFHealth(ctx context.Context) models.SystemHealthResponseTufStatus {
-	crName := os.Getenv("TUF_CR_NAME")
-	if crName == "" {
-		log.Printf("TUF_CR_NAME environment variable not set")
-		return models.SystemHealthResponseTufStatusUnknown
-	}
-
-	deploymentName := os.Getenv("TUF_DEPLOYMENT_NAME")
-	if deploymentName == "" {
-		deploymentName = "tuf"
-	}
-
-	crHealthy, err := h.checkCustomResourceHealth(ctx, "tufs", crName)
-	if err != nil || !crHealthy {
-		return models.SystemHealthResponseTufStatusUnhealthy
-	}
-
-	podHealthy := h.checkDeploymentHealth(ctx, deploymentName)
-	if !podHealthy {
-		return models.SystemHealthResponseTufStatusUnhealthy
-	}
-
-	return models.SystemHealthResponseTufStatusHealthy
-}
-
-func (h *healthService) checkCustomResourceHealth(ctx context.Context, resourceType, name string) (bool, error) {
-	gvr := schema.GroupVersionResource{
-		Group:    "rhtas.redhat.com",
-		Version:  "v1alpha1",
-		Resource: resourceType,
-	}
-
-	resource, err := h.dynamicClient.Resource(gvr).Namespace(h.namespace).Get(ctx, name, metav1.GetOptions{})
+	resource, err := h.dynamicClient.Resource(securesignGVR).Namespace(h.namespace).Get(ctx, crName, metav1.GetOptions{})
 	if err != nil {
-		return false, err
+		return nil, fmt.Errorf("failed to get securesign CR %q: %w", crName, err)
 	}
 
-	conditions, found, err := unstructured.NestedSlice(resource.Object, "status", "conditions")
+	rawConditions, found, err := unstructured.NestedSlice(resource.Object, "status", "conditions")
 	if err != nil {
-		return false, fmt.Errorf("failed to get conditions: %w", err)
+		return nil, fmt.Errorf("failed to read conditions: %w", err)
 	}
 	if !found {
-		return false, fmt.Errorf("conditions not found in status")
+		return nil, fmt.Errorf("no conditions found on securesign CR %q", crName)
 	}
 
-	for _, condition := range conditions {
-		condMap, ok := condition.(map[string]interface{})
+	conditions := make(map[string]string, len(rawConditions))
+	for _, c := range rawConditions {
+		condMap, ok := c.(map[string]interface{})
 		if !ok {
 			continue
 		}
-
 		condType, _ := condMap["type"].(string)
 		condStatus, _ := condMap["status"].(string)
-
-		if condType == "Ready" && condStatus == "True" {
-			return true, nil
+		if condType != "" {
+			conditions[condType] = condStatus
 		}
 	}
 
-	return false, nil
+	return conditions, nil
 }
 
-func (h *healthService) checkDeploymentHealth(ctx context.Context, deploymentName string) bool {
-	deployment, err := h.clientset.AppsV1().Deployments(h.namespace).Get(ctx, deploymentName, metav1.GetOptions{})
-	if err != nil {
-		return false
+func mapCondition[T ~string](status string, healthy, unhealthy, unknown T) T {
+	switch status {
+	case "True":
+		return healthy
+	case "False":
+		return unhealthy
+	default:
+		return unknown
 	}
-
-	if deployment.Status.Replicas == 0 {
-		return false
-	}
-
-	if deployment.Status.ReadyReplicas < deployment.Status.Replicas {
-		return false
-	}
-
-	return true
-}
-
-func (h *healthService) checkHTTPHealth(ctx context.Context, url string) bool {
-	client := &http.Client{
-		Timeout: 5 * time.Second,
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return false
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return false
-	}
-	defer func() {
-		if cerr := resp.Body.Close(); cerr != nil {
-			log.Printf("Failed to close response body: %v", cerr)
-		}
-	}()
-
-	return resp.StatusCode == http.StatusOK
 }
