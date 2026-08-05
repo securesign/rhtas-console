@@ -19,6 +19,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           path: rhtas-console
+          persist-credentials: false
       - name: Checkout rhtas-console-ui
         uses: actions/checkout@v5
         with:
