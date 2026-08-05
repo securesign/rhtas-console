@@ -209,8 +209,12 @@ func TestGetApiV1SystemHealth(t *testing.T) {
 		hs := &mockHealthService{
 			getSystemHealthFn: func(context.Context) (models.SystemHealthResponse, int, error) {
 				return models.SystemHealthResponse{
+					SecuresignStatus: models.SystemHealthResponseSecuresignStatusHealthy,
 					RekorStatus:      models.SystemHealthResponseRekorStatusHealthy,
-					SigstoreServices: models.SystemHealthResponseSigstoreServicesHealthy,
+					FulcioStatus:     models.SystemHealthResponseFulcioStatusHealthy,
+					CtlogStatus:      models.SystemHealthResponseCtlogStatusHealthy,
+					TrillianStatus:   models.SystemHealthResponseTrillianStatusHealthy,
+					TsaStatus:        models.SystemHealthResponseTsaStatusHealthy,
 					TufStatus:        models.SystemHealthResponseTufStatusHealthy,
 				}, http.StatusOK, nil
 			},
