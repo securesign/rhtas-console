@@ -21,12 +21,12 @@ jobs:
           path: rhtas-console
           persist-credentials: false
       - name: Checkout rhtas-console-ui
-        uses: actions/checkout@v5
-        with:
-          repository: securesign/rhtas-console-ui
-          path: rhtas-console-ui
-          ref: main
-          token: ${{ secrets.GH_PAT }}
+        run: |
+          GIT_TERMINAL_PROMPT=0 git clone --depth=1 --branch main \
+            "https://x-access-token:${GH_PAT}@github.com/securesign/rhtas-console-ui.git" \
+            rhtas-console-ui
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
       - name: Update rhtas-console-ui
         run: |
           rm ./rhtas-console-ui/client/openapi/console.yaml
