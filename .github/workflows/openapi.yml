@@ -16,20 +16,11 @@ jobs:
     runs-on: ubuntu-latest
     if: ${{ github.repository_owner == 'securesign' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           path: rhtas-console
-      - name: Debug token
-        run: |
-          if [ -z "$TOKEN" ]; then
-            echo "::error::GH_PAT secret is EMPTY"
-          else
-            echo "GH_PAT is set (length: ${#TOKEN})"
-          fi
-        env:
-          TOKEN: ${{ secrets.GH_PAT }}
       - name: Checkout rhtas-console-ui
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: securesign/rhtas-console-ui
           path: rhtas-console-ui
@@ -42,7 +33,7 @@ jobs:
           cd ./rhtas-console-ui
           git diff
       - name: Create Pull Request - rhtas-console-ui
-        uses: peter-evans/create-pull-request@v7
+        uses: peter-evans/create-pull-request@v8
         id: pr
         with:
           token: ${{ secrets.GH_PAT }}
