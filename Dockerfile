@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.26 AS builder
+FROM golang:1.27 AS builder
 
 WORKDIR /app
 
@@ -9,7 +9,7 @@ RUN go mod edit -godebug=fips140=auto && \
     GOFIPS140=v1.0.0 go build -tags=no_openssl -buildvcs=false -o rhtas_console ./cmd/rhtas_console
 
 # Final stage
-FROM registry.access.redhat.com/ubi9/ubi-minimal:9.8-1785777232
+FROM registry.access.redhat.com/ubi9/ubi-minimal:9.8-1786987521
 
 # Set a writable working directory
 WORKDIR /tmp
