@@ -14,11 +14,11 @@ jobs:
     runs-on: ubuntu-latest
     if: ${{ github.repository_owner == 'securesign' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           path: rhtas-console
       - name: Checkout rhtas-console-ui
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: securesign/rhtas-console-ui
           path: rhtas-console-ui
@@ -31,7 +31,7 @@ jobs:
           cd ./rhtas-console-ui
           git diff
       - name: Create Pull Request - rhtas-console-ui
-        uses: peter-evans/create-pull-request@v7
+        uses: peter-evans/create-pull-request@22a9089034f40e5a961c8808d113e2c98fb63676 # v7.0.11
         id: pr
         with:
           token: ${{ secrets.GH_PAT }}
