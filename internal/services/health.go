@@ -18,7 +18,7 @@ import (
 
 var securesignGVR = schema.GroupVersionResource{
 	Group:    "rhtas.redhat.com",
-	Version:  "v1alpha1",
+	Version:  "v1",
 	Resource: "securesigns",
 }
 

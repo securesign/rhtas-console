@@ -30,7 +30,7 @@ func makeSecuresignCR(name, namespace string, conditions []interface{}) *unstruc
 	obj := &unstructured.Unstructured{}
 	obj.SetGroupVersionKind(schema.GroupVersionKind{
 		Group:   "rhtas.redhat.com",
-		Version: "v1alpha1",
+		Version: "v1",
 		Kind:    "Securesign",
 	})
 	obj.SetName(name)
