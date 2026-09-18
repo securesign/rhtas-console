@@ -47,6 +47,20 @@ const (
 	Revoked  CertificateStatus = "revoked"
 )
 
+// Defines values for SystemHealthResponseCtlogStatus.
+const (
+	SystemHealthResponseCtlogStatusHealthy   SystemHealthResponseCtlogStatus = "healthy"
+	SystemHealthResponseCtlogStatusUnhealthy SystemHealthResponseCtlogStatus = "unhealthy"
+	SystemHealthResponseCtlogStatusUnknown   SystemHealthResponseCtlogStatus = "unknown"
+)
+
+// Defines values for SystemHealthResponseFulcioStatus.
+const (
+	SystemHealthResponseFulcioStatusHealthy   SystemHealthResponseFulcioStatus = "healthy"
+	SystemHealthResponseFulcioStatusUnhealthy SystemHealthResponseFulcioStatus = "unhealthy"
+	SystemHealthResponseFulcioStatusUnknown   SystemHealthResponseFulcioStatus = "unknown"
+)
+
 // Defines values for SystemHealthResponseRekorStatus.
 const (
 	SystemHealthResponseRekorStatusHealthy   SystemHealthResponseRekorStatus = "healthy"
@@ -54,11 +68,25 @@ const (
 	SystemHealthResponseRekorStatusUnknown   SystemHealthResponseRekorStatus = "unknown"
 )
 
-// Defines values for SystemHealthResponseSigstoreServices.
+// Defines values for SystemHealthResponseSecuresignStatus.
 const (
-	SystemHealthResponseSigstoreServicesHealthy   SystemHealthResponseSigstoreServices = "healthy"
-	SystemHealthResponseSigstoreServicesUnhealthy SystemHealthResponseSigstoreServices = "unhealthy"
-	SystemHealthResponseSigstoreServicesUnknown   SystemHealthResponseSigstoreServices = "unknown"
+	SystemHealthResponseSecuresignStatusHealthy   SystemHealthResponseSecuresignStatus = "healthy"
+	SystemHealthResponseSecuresignStatusUnhealthy SystemHealthResponseSecuresignStatus = "unhealthy"
+	SystemHealthResponseSecuresignStatusUnknown   SystemHealthResponseSecuresignStatus = "unknown"
+)
+
+// Defines values for SystemHealthResponseTrillianStatus.
+const (
+	SystemHealthResponseTrillianStatusHealthy   SystemHealthResponseTrillianStatus = "healthy"
+	SystemHealthResponseTrillianStatusUnhealthy SystemHealthResponseTrillianStatus = "unhealthy"
+	SystemHealthResponseTrillianStatusUnknown   SystemHealthResponseTrillianStatus = "unknown"
+)
+
+// Defines values for SystemHealthResponseTsaStatus.
+const (
+	SystemHealthResponseTsaStatusHealthy   SystemHealthResponseTsaStatus = "healthy"
+	SystemHealthResponseTsaStatusUnhealthy SystemHealthResponseTsaStatus = "unhealthy"
+	SystemHealthResponseTsaStatusUnknown   SystemHealthResponseTsaStatus = "unknown"
 )
 
 // Defines values for SystemHealthResponseTufStatus.
@@ -307,6 +335,27 @@ type Metadata struct {
 	Size int64 `json:"size"`
 }
 
+// MetadataInfo defines model for MetadataInfo.
+type MetadataInfo struct {
+	// Expires Expiry date of the TUF metadata
+	Expires string `json:"expires"`
+
+	// Status Status of the TUF metadata (valid, expiring, expired)
+	Status string `json:"status"`
+
+	// Version Version of the TUF metadata
+	Version string `json:"version"`
+}
+
+// MetadataInfoResponse defines model for MetadataInfoResponse.
+type MetadataInfoResponse struct {
+	// Data Metadata info grouped by TUF role (root, targets, snapshot, timestamp)
+	Data map[string][]MetadataInfo `json:"data"`
+
+	// RepoUrl URL of the TUF repository
+	RepoUrl *string `json:"repo-url,omitempty"`
+}
+
 // ParsedCertificate defines model for ParsedCertificate.
 type ParsedCertificate struct {
 	IsCa   bool   `json:"isCa"`
@@ -330,26 +379,6 @@ type RekorPublicKey struct {
 	PublicKey string `json:"publicKey"`
 }
 
-// RootMetadataInfo defines model for RootMetadataInfo.
-type RootMetadataInfo struct {
-	// Expires Expiry date of the TUF root metadata
-	Expires string `json:"expires"`
-
-	// Status Status of the TUF root metadata
-	Status string `json:"status"`
-
-	// Version Version of the TUF root metadata
-	Version string `json:"version"`
-}
-
-// RootMetadataInfoList defines model for RootMetadataInfoList.
-type RootMetadataInfoList struct {
-	Data []RootMetadataInfo `json:"data"`
-
-	// RepoUrl URL of the TUF repository
-	RepoUrl *string `json:"repo-url,omitempty"`
-}
-
 // SignatureView defines model for SignatureView.
 type SignatureView struct {
 	CertificateChain []ParsedCertificate `json:"certificateChain"`
@@ -368,11 +397,23 @@ type SignatureView struct {
 
 // SystemHealthResponse defines model for SystemHealthResponse.
 type SystemHealthResponse struct {
+	// CtlogStatus Certificate Transparency log service health status
+	CtlogStatus SystemHealthResponseCtlogStatus `json:"ctlogStatus"`
+
+	// FulcioStatus Fulcio certificate authority service health status
+	FulcioStatus SystemHealthResponseFulcioStatus `json:"fulcioStatus"`
+
 	// RekorStatus Rekor transparency log service health status
 	RekorStatus SystemHealthResponseRekorStatus `json:"rekorStatus"`
 
-	// SigstoreServices Sigstore services health status
-	SigstoreServices SystemHealthResponseSigstoreServices `json:"sigstoreServices"`
+	// SecuresignStatus Overall Securesign operator health status
+	SecuresignStatus SystemHealthResponseSecuresignStatus `json:"securesignStatus"`
+
+	// TrillianStatus Trillian backend service health status
+	TrillianStatus SystemHealthResponseTrillianStatus `json:"trillianStatus"`
+
+	// TsaStatus Timestamp Authority service health status
+	TsaStatus SystemHealthResponseTsaStatus `json:"tsaStatus"`
 
 	// TufStatus TUF repository health status
 	TufStatus SystemHealthResponseTufStatus `json:"tufStatus"`
@@ -381,11 +422,23 @@ type SystemHealthResponse struct {
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
+// SystemHealthResponseCtlogStatus Certificate Transparency log service health status
+type SystemHealthResponseCtlogStatus string
+
+// SystemHealthResponseFulcioStatus Fulcio certificate authority service health status
+type SystemHealthResponseFulcioStatus string
+
 // SystemHealthResponseRekorStatus Rekor transparency log service health status
 type SystemHealthResponseRekorStatus string
 
-// SystemHealthResponseSigstoreServices Sigstore services health status
-type SystemHealthResponseSigstoreServices string
+// SystemHealthResponseSecuresignStatus Overall Securesign operator health status
+type SystemHealthResponseSecuresignStatus string
+
+// SystemHealthResponseTrillianStatus Trillian backend service health status
+type SystemHealthResponseTrillianStatus string
+
+// SystemHealthResponseTsaStatus Timestamp Authority service health status
+type SystemHealthResponseTsaStatus string
 
 // SystemHealthResponseTufStatus TUF repository health status
 type SystemHealthResponseTufStatus string
@@ -566,8 +619,8 @@ type GetApiV1TrustConfigParams struct {
 	TufRepositoryUrl *string `form:"tufRepositoryUrl,omitempty" json:"tufRepositoryUrl,omitempty"`
 }
 
-// GetApiV1TrustRootMetadataInfoParams defines parameters for GetApiV1TrustRootMetadataInfo.
-type GetApiV1TrustRootMetadataInfoParams struct {
+// GetApiV1TrustMetadataInfoParams defines parameters for GetApiV1TrustMetadataInfo.
+type GetApiV1TrustMetadataInfoParams struct {
 	TufRepositoryUrl *string `form:"tufRepositoryUrl,omitempty" json:"tufRepositoryUrl,omitempty"`
 }
 
@@ -616,9 +669,9 @@ type ServerInterface interface {
 	// Get Trust Coverage
 	// (GET /api/v1/trust/coverage)
 	GetApiV1TrustCoverage(w http.ResponseWriter, r *http.Request)
-	// Get TUF Root Metadata
-	// (GET /api/v1/trust/root-metadata-info)
-	GetApiV1TrustRootMetadataInfo(w http.ResponseWriter, r *http.Request, params GetApiV1TrustRootMetadataInfoParams)
+	// Get TUF Metadata Info
+	// (GET /api/v1/trust/metadata-info)
+	GetApiV1TrustMetadataInfo(w http.ResponseWriter, r *http.Request, params GetApiV1TrustMetadataInfoParams)
 	// Get TUF Target File Content
 	// (GET /api/v1/trust/target)
 	GetApiV1TrustTarget(w http.ResponseWriter, r *http.Request, params GetApiV1TrustTargetParams)
@@ -685,9 +738,9 @@ func (_ Unimplemented) GetApiV1TrustCoverage(w http.ResponseWriter, r *http.Requ
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// Get TUF Root Metadata
-// (GET /api/v1/trust/root-metadata-info)
-func (_ Unimplemented) GetApiV1TrustRootMetadataInfo(w http.ResponseWriter, r *http.Request, params GetApiV1TrustRootMetadataInfoParams) {
+// Get TUF Metadata Info
+// (GET /api/v1/trust/metadata-info)
+func (_ Unimplemented) GetApiV1TrustMetadataInfo(w http.ResponseWriter, r *http.Request, params GetApiV1TrustMetadataInfoParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -896,13 +949,13 @@ func (siw *ServerInterfaceWrapper) GetApiV1TrustCoverage(w http.ResponseWriter, 
 	handler.ServeHTTP(w, r)
 }
 
-// GetApiV1TrustRootMetadataInfo operation middleware
-func (siw *ServerInterfaceWrapper) GetApiV1TrustRootMetadataInfo(w http.ResponseWriter, r *http.Request) {
+// GetApiV1TrustMetadataInfo operation middleware
+func (siw *ServerInterfaceWrapper) GetApiV1TrustMetadataInfo(w http.ResponseWriter, r *http.Request) {
 
 	var err error
 
 	// Parameter object where we will unmarshal all parameters from the context
-	var params GetApiV1TrustRootMetadataInfoParams
+	var params GetApiV1TrustMetadataInfoParams
 
 	// ------------- Optional query parameter "tufRepositoryUrl" -------------
 
@@ -913,7 +966,7 @@ func (siw *ServerInterfaceWrapper) GetApiV1TrustRootMetadataInfo(w http.Response
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetApiV1TrustRootMetadataInfo(w, r, params)
+		siw.Handler.GetApiV1TrustMetadataInfo(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1171,7 +1224,7 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Get(options.BaseURL+"/api/v1/trust/coverage", wrapper.GetApiV1TrustCoverage)
 	})
 	r.Group(func(r chi.Router) {
-		r.Get(options.BaseURL+"/api/v1/trust/root-metadata-info", wrapper.GetApiV1TrustRootMetadataInfo)
+		r.Get(options.BaseURL+"/api/v1/trust/metadata-info", wrapper.GetApiV1TrustMetadataInfo)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/trust/target", wrapper.GetApiV1TrustTarget)

@@ -104,9 +104,9 @@ func (h *Handler) GetApiV1TrustConfig(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, statusCode, resp)
 }
 
-func (h *Handler) GetApiV1TrustRootMetadata(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) GetApiV1TrustMetadataInfo(w http.ResponseWriter, r *http.Request) {
 	tufRepoUrl := h.trustService.GetTUFRepoURL()
-	resp, statusCode, err := h.trustService.GetTrustRootMetadataInfo(r.Context(), tufRepoUrl)
+	resp, statusCode, err := h.trustService.GetTrustMetadataInfo(r.Context(), tufRepoUrl)
 	if err != nil {
 		writeError(w, statusCode, err.Error())
 		return
