@@ -4,8 +4,12 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -13,11 +17,20 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
+	"github.com/google/go-containerregistry/pkg/v1/types"
 	"github.com/securesign/rhtas-console/internal/models"
+	protobundle "github.com/sigstore/protobuf-specs/gen/pb-go/bundle/v1"
+	protocommon "github.com/sigstore/protobuf-specs/gen/pb-go/common/v1"
+	protodsse "github.com/sigstore/protobuf-specs/gen/pb-go/dsse"
+	"github.com/sigstore/sigstore-go/pkg/bundle"
 )
 
 // ---------------------------------------------------------------------------
@@ -681,4 +694,610 @@ func TestUrlsEqual(t *testing.T) {
 			}
 		})
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Helpers for building cosign v2 (simple signing) layers and bundles
+// ---------------------------------------------------------------------------
+
+// writeECDSAPublicKeyPEM generates a P-256 key pair and writes its PKIX public
+// key to a temp file, returning the path.
+func writeECDSAPublicKeyPEM(t *testing.T) string {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	der, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	if err != nil {
+		t.Fatalf("marshal pubkey: %v", err)
+	}
+	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der})
+	path := filepath.Join(t.TempDir(), "pub.pem")
+	if err := os.WriteFile(path, pemBytes, 0o600); err != nil {
+		t.Fatalf("write pubkey: %v", err)
+	}
+	return path
+}
+
+// certDER returns the DER bytes of the first certificate in a PEM string.
+func certDER(t *testing.T, pemStr string) []byte {
+	t.Helper()
+	block, _ := pem.Decode([]byte(pemStr))
+	if block == nil {
+		t.Fatal("failed to decode cert PEM")
+	}
+	return block.Bytes
+}
+
+// certDERHex parses a single certificate (from PEM) and returns its DER bytes as
+// hex, so two certificate representations can be compared regardless of PEM
+// whitespace formatting.
+func certDERHex(t *testing.T, pemStr string) string {
+	t.Helper()
+	certs, err := parsePEMCertificates(pemStr)
+	if err != nil {
+		t.Fatalf("parse cert: %v", err)
+	}
+	if len(certs) == 0 {
+		t.Fatal("no certificate parsed")
+	}
+	return hex.EncodeToString(certs[0].Cert.Raw)
+}
+
+// makeCosignV2SigningLayer builds a cosign v2 "simple signing" layer descriptor
+// with a certificate (containing a URI SAN), a message signature, and a Rekor
+// bundle annotation. It returns the descriptor and the URI SAN value embedded in
+// the signing certificate.
+func makeCosignV2SigningLayer(t *testing.T) (*v1.Descriptor, string) {
+	t.Helper()
+
+	uri, _ := url.Parse("https://github.com/user/repo/.github/workflows/build.yml@refs/heads/main")
+	certPEM := generateTestCertWithSANs(t, nil, nil, nil, []*url.URL{uri})
+
+	// Rekor bundle annotation (cosign v2 format).
+	body := map[string]interface{}{
+		"apiVersion": "0.0.1",
+		"kind":       "hashedrekord",
+	}
+	bodyBytes, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("marshal body: %v", err)
+	}
+	logID := make([]byte, 32)
+	bundleAnnotation := map[string]interface{}{
+		"SignedEntryTimestamp": base64.StdEncoding.EncodeToString([]byte("fake-set-signature")),
+		"Payload": map[string]interface{}{
+			"logIndex":       float64(12345),
+			"logID":          hex.EncodeToString(logID),
+			"integratedTime": float64(1700000000),
+			"body":           base64.StdEncoding.EncodeToString(bodyBytes),
+		},
+	}
+	bundleJSON, err := json.Marshal(bundleAnnotation)
+	if err != nil {
+		t.Fatalf("marshal bundle annotation: %v", err)
+	}
+
+	sum := sha256.Sum256([]byte("payload-to-sign"))
+	digestHex := hex.EncodeToString(sum[:])
+
+	desc := &v1.Descriptor{
+		MediaType: types.MediaType("application/vnd.dev.cosign.simplesigning.v1+json"),
+		Size:      123,
+		Digest:    v1.Hash{Algorithm: "sha256", Hex: digestHex},
+		Annotations: map[string]string{
+			"dev.sigstore.cosign/certificate":    certPEM,
+			"dev.cosignproject.cosign/signature": base64.StdEncoding.EncodeToString([]byte("fake-signature")),
+			"dev.sigstore.cosign/bundle":         string(bundleJSON),
+		},
+	}
+	return desc, uri.String()
+}
+
+// makeX509ChainBundle builds a bundle whose verification material carries an
+// X.509 certificate chain (leaf + intermediate), as produced by cosign v3.
+func makeX509ChainBundle(t *testing.T) (b *bundle.Bundle, leafPEM, intermediatePEM string) {
+	t.Helper()
+	cc := generateCertChain(t)
+	pb := &protobundle.Bundle{
+		VerificationMaterial: &protobundle.VerificationMaterial{
+			Content: &protobundle.VerificationMaterial_X509CertificateChain{
+				X509CertificateChain: &protocommon.X509CertificateChain{
+					Certificates: []*protocommon.X509Certificate{
+						{RawBytes: certDER(t, cc.leafPEM)},
+						{RawBytes: certDER(t, cc.intermediatePEM)},
+					},
+				},
+			},
+		},
+	}
+	return &bundle.Bundle{Bundle: pb}, cc.leafPEM, cc.intermediatePEM
+}
+
+// intotoStatementJSON returns a minimal in-toto statement with a single subject
+// carrying the given sha256 digest.
+func intotoStatementJSON(sha256Digest string) []byte {
+	statement := map[string]interface{}{
+		"_type":         "https://in-toto.io/Statement/v1",
+		"predicateType": "https://slsa.dev/provenance/v1",
+		"subject": []map[string]interface{}{
+			{
+				"name":   "artifact",
+				"digest": map[string]string{"sha256": sha256Digest},
+			},
+		},
+	}
+	b, _ := json.Marshal(statement)
+	return b
+}
+
+// ---------------------------------------------------------------------------
+// VerifyArtifact
+// ---------------------------------------------------------------------------
+
+func TestVerifyArtifactInvalidImage(t *testing.T) {
+	opts := NewVerifyOptions()
+	opts.OCIImage = "::::not a valid reference::::"
+	_, err := VerifyArtifact(opts)
+	if err == nil {
+		t.Fatal("expected error for invalid image reference")
+	}
+	if !strings.Contains(err.Error(), "error getting signing layers") {
+		t.Errorf("error = %q, want it to contain %q", err.Error(), "error getting signing layers")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// VerifyLayer
+// ---------------------------------------------------------------------------
+
+func TestVerifyLayer(t *testing.T) {
+	t.Run("missing SAN criteria", func(t *testing.T) {
+		// NewVerifyOptions leaves both ExpectedSAN and ExpectedSANRegex empty,
+		// so building the certificate identity must fail.
+		opts := NewVerifyOptions()
+		_, _, err := VerifyLayer(opts, nil)
+		if err == nil || !strings.Contains(err.Error(), "subject alternative name") {
+			t.Fatalf("expected SAN criteria error, got %v", err)
+		}
+	})
+
+	t.Run("no trusted material provided", func(t *testing.T) {
+		opts := NewVerifyOptions()
+		opts.ExpectedSAN = "user@example.com"
+		_, _, err := VerifyLayer(opts, nil)
+		if err == nil || !strings.Contains(err.Error(), "no trusted material provided") {
+			t.Fatalf("expected no trusted material error, got %v", err)
+		}
+	})
+
+	t.Run("trusted public key file missing", func(t *testing.T) {
+		opts := NewVerifyOptions()
+		opts.TrustedPublicKey = filepath.Join(t.TempDir(), "does-not-exist.pem")
+		_, _, err := VerifyLayer(opts, nil)
+		if err == nil {
+			t.Fatal("expected error reading missing public key file")
+		}
+	})
+
+	t.Run("trusted public key invalid PEM", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "bad.pem")
+		if err := os.WriteFile(path, []byte("not a pem file"), 0o600); err != nil {
+			t.Fatalf("write file: %v", err)
+		}
+		opts := NewVerifyOptions()
+		opts.TrustedPublicKey = path
+		_, _, err := VerifyLayer(opts, nil)
+		if err == nil || !strings.Contains(err.Error(), "failed to decode pem block") {
+			t.Fatalf("expected pem decode error, got %v", err)
+		}
+	})
+
+	t.Run("trusted root JSON file missing", func(t *testing.T) {
+		opts := NewVerifyOptions()
+		opts.ExpectedSAN = "user@example.com"
+		opts.TrustedRootJSONPath = filepath.Join(t.TempDir(), "missing-root.json")
+		_, _, err := VerifyLayer(opts, nil)
+		if err == nil || !strings.Contains(err.Error(), "failed to read") {
+			t.Fatalf("expected read error, got %v", err)
+		}
+	})
+
+	t.Run("invalid artifact digest hex", func(t *testing.T) {
+		// With a valid trusted public key the verifier is constructed, and the
+		// invalid hex digest must then be rejected.
+		opts := NewVerifyOptions()
+		opts.TrustedPublicKey = writeECDSAPublicKeyPEM(t)
+		opts.ArtifactDigest = "not-hex-zz"
+		_, _, err := VerifyLayer(opts, nil)
+		if err == nil {
+			t.Fatal("expected error decoding invalid artifact digest")
+		}
+	})
+
+	t.Run("min bundle version not met", func(t *testing.T) {
+		desc, san := makeCosignV2SigningLayer(t)
+		b, _, err := bundleFromSigningLayer("registry.example.com/image:latest", desc, true, true)
+		if err != nil {
+			t.Fatalf("build bundle: %v", err)
+		}
+		opts := NewVerifyOptions()
+		opts.ExpectedSAN = san
+		opts.MinBundleVersion = "99.0"
+		_, _, err = VerifyLayer(opts, b)
+		if err == nil || !strings.Contains(err.Error(), "minimum version") {
+			t.Fatalf("expected minimum version error, got %v", err)
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// bundleFromSigningLayer + getBundle* helpers
+// ---------------------------------------------------------------------------
+
+func TestBundleFromSigningLayer(t *testing.T) {
+	t.Run("valid cosign v2 layer", func(t *testing.T) {
+		desc, _ := makeCosignV2SigningLayer(t)
+		b, digest, err := bundleFromSigningLayer("registry.example.com/image:latest", desc, true, true)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if b == nil {
+			t.Fatal("expected non-nil bundle")
+		}
+		if digest != desc.Digest.Hex {
+			t.Errorf("digest = %q, want %q", digest, desc.Digest.Hex)
+		}
+	})
+
+	t.Run("missing certificate annotation", func(t *testing.T) {
+		desc, _ := makeCosignV2SigningLayer(t)
+		delete(desc.Annotations, "dev.sigstore.cosign/certificate")
+		_, _, err := bundleFromSigningLayer("registry.example.com/image:latest", desc, true, true)
+		if err == nil {
+			t.Fatal("expected error for missing certificate annotation")
+		}
+	})
+
+	t.Run("unknown digest algorithm", func(t *testing.T) {
+		desc, _ := makeCosignV2SigningLayer(t)
+		desc.Digest.Algorithm = "md5"
+		_, _, err := bundleFromSigningLayer("registry.example.com/image:latest", desc, false, false)
+		if err == nil || !strings.Contains(err.Error(), "unknown digest algorithm") {
+			t.Fatalf("expected unknown digest algorithm error, got %v", err)
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// VerifyAndGetSignatureView
+// ---------------------------------------------------------------------------
+
+func TestVerifyAndGetSignatureView(t *testing.T) {
+	t.Run("bundle extraction failure returns failed view", func(t *testing.T) {
+		desc, _ := makeCosignV2SigningLayer(t)
+		delete(desc.Annotations, "dev.sigstore.cosign/certificate")
+		opts := NewVerifyOptions()
+		opts.OCIImage = "registry.example.com/image:latest"
+		view, ids, err := VerifyAndGetSignatureView(opts, desc)
+		if err == nil {
+			t.Fatal("expected error extracting bundle")
+		}
+		if view.SignatureStatus.Signature != models.Failed {
+			t.Errorf("Signature status = %q, want %q", view.SignatureStatus.Signature, models.Failed)
+		}
+		if len(ids) != 0 {
+			t.Errorf("expected no identities, got %d", len(ids))
+		}
+	})
+
+	t.Run("valid layer but verification fails on trust material", func(t *testing.T) {
+		desc, _ := makeCosignV2SigningLayer(t)
+		// NewVerifyOptions has no trusted material, so VerifyLayer fails after
+		// the bundle and signature view are extracted successfully.
+		opts := NewVerifyOptions()
+		opts.OCIImage = "registry.example.com/image:latest"
+		view, _, err := VerifyAndGetSignatureView(opts, desc)
+		if err == nil {
+			t.Fatal("expected verification error")
+		}
+		if !strings.Contains(err.Error(), "failed to verify signing layer") {
+			t.Errorf("error = %q, want it to mention verify failure", err.Error())
+		}
+		if view.SignatureStatus.Signature != models.Failed {
+			t.Errorf("Signature status = %q, want %q", view.SignatureStatus.Signature, models.Failed)
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// VerifyAndGetAttestationView
+// ---------------------------------------------------------------------------
+
+func TestVerifyAndGetAttestationViewBundleFailure(t *testing.T) {
+	desc, _ := makeCosignV2SigningLayer(t)
+	// Use a non-bundle media type (DSSE envelope) but strip the certificate
+	// annotation so the verification material build fails before any network.
+	desc.MediaType = types.MediaType("application/vnd.dsse.envelope.v1+json")
+	delete(desc.Annotations, "dev.sigstore.cosign/certificate")
+	opts := NewVerifyOptions()
+	opts.OCIImage = "registry.example.com/image:latest"
+	view, ids, err := VerifyAndGetAttestationView(opts, desc)
+	if err == nil {
+		t.Fatal("expected error building attestation bundle")
+	}
+	if view.AttestationStatus.Attestation != models.AttestationStatusAttestationFailed {
+		t.Errorf("Attestation status = %q, want %q", view.AttestationStatus.Attestation, models.AttestationStatusAttestationFailed)
+	}
+	if len(ids) != 0 {
+		t.Errorf("expected no identities, got %d", len(ids))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// extractSignatureViewFromLayer / extractAttestationViewFromLayer
+// ---------------------------------------------------------------------------
+
+func TestExtractSignatureViewFromLayer(t *testing.T) {
+	t.Run("nil bundle", func(t *testing.T) {
+		desc, _ := makeCosignV2SigningLayer(t)
+		_, _, err := extractSignatureViewFromLayer(desc, nil)
+		if err == nil || !strings.Contains(err.Error(), "empty bundle") {
+			t.Fatalf("expected empty bundle error, got %v", err)
+		}
+	})
+
+	t.Run("valid layer and bundle", func(t *testing.T) {
+		desc, san := makeCosignV2SigningLayer(t)
+		b, _, err := bundleFromSigningLayer("registry.example.com/image:latest", desc, true, true)
+		if err != nil {
+			t.Fatalf("build bundle: %v", err)
+		}
+		view, ids, err := extractSignatureViewFromLayer(desc, b)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if view.Digest != desc.Digest.String() {
+			t.Errorf("Digest = %q, want %q", view.Digest, desc.Digest.String())
+		}
+		if view.RekorEntry == nil {
+			t.Error("expected a Rekor entry")
+		}
+		if len(view.SigningCertificate.Sans) == 0 || view.SigningCertificate.Sans[0] != san {
+			t.Errorf("SigningCertificate SANs = %v, want to contain %q", view.SigningCertificate.Sans, san)
+		}
+		found := false
+		for _, id := range ids {
+			if id.Value == san {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("expected identity with SAN %q in %v", san, ids)
+		}
+	})
+}
+
+func TestExtractAttestationViewFromLayer(t *testing.T) {
+	t.Run("nil bundle", func(t *testing.T) {
+		desc, _ := makeCosignV2SigningLayer(t)
+		_, _, err := extractAttestationViewFromLayer(desc, nil)
+		if err == nil || !strings.Contains(err.Error(), "empty bundle") {
+			t.Fatalf("expected empty bundle error, got %v", err)
+		}
+	})
+
+	t.Run("valid layer and bundle", func(t *testing.T) {
+		desc, san := makeCosignV2SigningLayer(t)
+		b, _, err := bundleFromSigningLayer("registry.example.com/image:latest", desc, true, true)
+		if err != nil {
+			t.Fatalf("build bundle: %v", err)
+		}
+		view, ids, err := extractAttestationViewFromLayer(desc, b)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if view.RekorEntry == nil {
+			t.Error("expected a Rekor entry")
+		}
+		if view.SigningCertificate == nil || len(view.SigningCertificate.Sans) == 0 {
+			t.Fatal("expected a signing certificate with SANs")
+		}
+		found := false
+		for _, id := range ids {
+			if id.Value == san {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("expected identity with SAN %q in %v", san, ids)
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// extractCertificateFromBundle / extractCertificateChainFromBundle
+// ---------------------------------------------------------------------------
+
+func TestExtractCertificateFromBundle(t *testing.T) {
+	t.Run("nil bundle", func(t *testing.T) {
+		_, err := extractCertificateFromBundle(nil)
+		if err == nil {
+			t.Fatal("expected error for nil bundle")
+		}
+	})
+
+	t.Run("x509 chain", func(t *testing.T) {
+		b, leafPEM, _ := makeX509ChainBundle(t)
+		got, err := extractCertificateFromBundle(b)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// Compare parsed DER to be robust against PEM formatting differences.
+		if certDERHex(t, got) != certDERHex(t, leafPEM) {
+			t.Error("extracted certificate does not match leaf certificate")
+		}
+	})
+
+	t.Run("no certificate in material", func(t *testing.T) {
+		b := &bundle.Bundle{Bundle: &protobundle.Bundle{
+			VerificationMaterial: &protobundle.VerificationMaterial{},
+		}}
+		_, err := extractCertificateFromBundle(b)
+		if err == nil {
+			t.Fatal("expected error when no certificate present")
+		}
+	})
+}
+
+func TestExtractCertificateChainFromBundle(t *testing.T) {
+	t.Run("nil bundle", func(t *testing.T) {
+		_, err := extractCertificateChainFromBundle(nil)
+		if err == nil {
+			t.Fatal("expected error for nil bundle")
+		}
+	})
+
+	t.Run("x509 chain returns intermediates", func(t *testing.T) {
+		b, _, intPEM := makeX509ChainBundle(t)
+		got, err := extractCertificateChainFromBundle(b)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if certDERHex(t, got) != certDERHex(t, intPEM) {
+			t.Error("extracted chain does not match intermediate certificate")
+		}
+	})
+
+	t.Run("single cert has no chain", func(t *testing.T) {
+		cc := generateCertChain(t)
+		b := &bundle.Bundle{Bundle: &protobundle.Bundle{
+			VerificationMaterial: &protobundle.VerificationMaterial{
+				Content: &protobundle.VerificationMaterial_X509CertificateChain{
+					X509CertificateChain: &protocommon.X509CertificateChain{
+						Certificates: []*protocommon.X509Certificate{
+							{RawBytes: certDER(t, cc.leafPEM)},
+						},
+					},
+				},
+			},
+		}}
+		_, err := extractCertificateChainFromBundle(b)
+		if err == nil {
+			t.Fatal("expected error when only a leaf certificate is present")
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// extractDigestFromDSSE / getSubjectDigestFromDSSE
+// ---------------------------------------------------------------------------
+
+func TestExtractDigestFromDSSE(t *testing.T) {
+	const want = "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899"
+
+	t.Run("nil envelope", func(t *testing.T) {
+		_, err := extractDigestFromDSSE(nil)
+		if err == nil {
+			t.Fatal("expected error for nil envelope")
+		}
+	})
+
+	t.Run("empty payload", func(t *testing.T) {
+		_, err := extractDigestFromDSSE(&protodsse.Envelope{})
+		if err == nil {
+			t.Fatal("expected error for empty payload")
+		}
+	})
+
+	t.Run("valid statement", func(t *testing.T) {
+		env := &protodsse.Envelope{Payload: intotoStatementJSON(want)}
+		got, err := extractDigestFromDSSE(env)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != want {
+			t.Errorf("digest = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("no subject digest", func(t *testing.T) {
+		env := &protodsse.Envelope{Payload: []byte(`{"_type":"x","subject":[]}`)}
+		_, err := extractDigestFromDSSE(env)
+		if err == nil {
+			t.Fatal("expected error when no subject digest present")
+		}
+	})
+}
+
+func TestGetSubjectDigestFromDSSE(t *testing.T) {
+	const want = "ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100"
+
+	t.Run("nil envelope", func(t *testing.T) {
+		_, err := getSubjectDigestFromDSSE(nil)
+		if err == nil {
+			t.Fatal("expected error for nil envelope")
+		}
+	})
+
+	t.Run("valid in-toto statement", func(t *testing.T) {
+		env := &protobundle.Bundle_DsseEnvelope{
+			DsseEnvelope: &protodsse.Envelope{Payload: intotoStatementJSON(want)},
+		}
+		got, err := getSubjectDigestFromDSSE(env)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != want {
+			t.Errorf("digest = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("no subject found", func(t *testing.T) {
+		env := &protobundle.Bundle_DsseEnvelope{
+			DsseEnvelope: &protodsse.Envelope{Payload: []byte(`{"unrelated":"data"}`)},
+		}
+		_, err := getSubjectDigestFromDSSE(env)
+		if err == nil {
+			t.Fatal("expected error when no subject present")
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// extractTransparencyLogEntry
+// ---------------------------------------------------------------------------
+
+func TestExtractTransparencyLogEntry(t *testing.T) {
+	t.Run("bundle with entry", func(t *testing.T) {
+		desc, _ := makeCosignV2SigningLayer(t)
+		b, _, err := bundleFromSigningLayer("registry.example.com/image:latest", desc, true, true)
+		if err != nil {
+			t.Fatalf("build bundle: %v", err)
+		}
+		entry, err := extractTransparencyLogEntry(b)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if entry.LogIndex != 12345 {
+			t.Errorf("LogIndex = %d, want 12345", entry.LogIndex)
+		}
+		if entry.IntegratedTime != 1700000000 {
+			t.Errorf("IntegratedTime = %d, want 1700000000", entry.IntegratedTime)
+		}
+		if entry.KindVersion == nil || entry.KindVersion.Kind != "hashedrekord" {
+			t.Errorf("KindVersion = %+v, want kind hashedrekord", entry.KindVersion)
+		}
+	})
+
+	t.Run("bundle without entries", func(t *testing.T) {
+		b := &bundle.Bundle{Bundle: &protobundle.Bundle{
+			VerificationMaterial: &protobundle.VerificationMaterial{},
+		}}
+		_, err := extractTransparencyLogEntry(b)
+		if err == nil || !strings.Contains(err.Error(), "no Rekor entries") {
+			t.Fatalf("expected no Rekor entries error, got %v", err)
+		}
+	})
 }

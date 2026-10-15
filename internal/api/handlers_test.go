@@ -123,6 +123,51 @@ func decodeErrorResponse(t *testing.T, body []byte) string {
 // Tests: utility functions
 // ---------------------------------------------------------------------------
 
+func TestRegisterRoutes(t *testing.T) {
+	r := chi.NewMux()
+	RegisterRoutes(r,
+		&mockArtifactService{},
+		&mockRekorService{},
+		&mockTrustService{},
+		&mockHealthService{},
+	)
+
+	registered := make(map[string]bool)
+	err := chi.Walk(r, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
+		registered[method+" "+route] = true
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk routes: %v", err)
+	}
+
+	want := []string{
+		"GET /healthz",
+		"POST /api/v1/artifacts/verify",
+		"GET /api/v1/artifacts/{artifact}/policies",
+		"GET /api/v1/artifacts/image",
+		"GET /api/v1/rekor/entries/{uuid}",
+		"GET /api/v1/rekor/public-key",
+		"GET /api/v1/trust/config",
+		"GET /api/v1/trust/metadata-info",
+		"GET /api/v1/trust/targets",
+		"GET /api/v1/trust/target",
+		"GET /api/v1/trust/targets/certificates",
+		"GET /api/v1/trust/coverage",
+		"GET /api/v1/system/health",
+		"GET /swagger-ui",
+		"GET /rhtas-console.yaml",
+	}
+	for _, route := range want {
+		if !registered[route] {
+			t.Errorf("route %q not registered", route)
+		}
+	}
+	if len(registered) != len(want) {
+		t.Errorf("registered %d routes, want %d: %v", len(registered), len(want), registered)
+	}
+}
+
 func TestWriteJSON(t *testing.T) {
 	w := httptest.NewRecorder()
 	writeJSON(w, http.StatusCreated, map[string]string{"key": "value"})
