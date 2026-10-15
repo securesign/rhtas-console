@@ -2,7 +2,9 @@ package services
 
 import (
 	"context"
+	"crypto"
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
@@ -11,15 +13,19 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/securesign/rhtas-console/internal/models"
+	"github.com/sigstore/sigstore/pkg/signature"
+	"github.com/theupdateframework/go-tuf/v2/metadata"
 )
 
 func generateTestCert(t *testing.T, notBefore, notAfter time.Time, subject string) (string, []byte) {
@@ -653,4 +659,271 @@ func TestGetTrustCoverage(t *testing.T) {
 			t.Errorf("status = %d, want %d", statusCode, http.StatusServiceUnavailable)
 		}
 	})
+}
+
+// ---------------------------------------------------------------------------
+// Fake TUF repository fixture
+// ---------------------------------------------------------------------------
+
+// testTUFTarget describes a single target file to publish in the fake repo.
+type testTUFTarget struct {
+	name    string
+	usage   string // sigstore custom "usage" -> target type (e.g. Fulcio, TSA, TrustedRoot)
+	content string
+}
+
+// newTestTUFServer builds a minimal but correctly-signed consistent-snapshot TUF
+// repository (root/timestamp/snapshot/targets at version 1) and serves it over
+// httptest. It returns the server. Callers must redirect the TUF cache away from
+// the real home directory (t.Setenv("HOME", t.TempDir())) before using it.
+func newTestTUFServer(t *testing.T, targets []testTUFTarget) *httptest.Server {
+	t.Helper()
+	expires := time.Now().UTC().Add(365 * 24 * time.Hour)
+
+	// One ed25519 key per top-level role.
+	keys := map[string]ed25519.PrivateKey{}
+	root := metadata.Root(expires)
+	for _, role := range []string{"root", "targets", "snapshot", "timestamp"} {
+		_, priv, err := ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			t.Fatalf("generate %s key: %v", role, err)
+		}
+		keys[role] = priv
+		key, err := metadata.KeyFromPublicKey(priv.Public())
+		if err != nil {
+			t.Fatalf("convert %s key: %v", role, err)
+		}
+		if err := root.Signed.AddKey(key, role); err != nil {
+			t.Fatalf("add %s key to root: %v", role, err)
+		}
+	}
+
+	// Targets metadata + the hash-prefixed target blobs that will be served.
+	served := map[string][]byte{}
+	targetsMeta := metadata.Targets(expires)
+	for _, tgt := range targets {
+		sum := sha256.Sum256([]byte(tgt.content))
+		tf := &metadata.TargetFiles{
+			Length: int64(len(tgt.content)),
+			Hashes: metadata.Hashes{"sha256": sum[:]},
+			Path:   tgt.name,
+		}
+		custom := json.RawMessage(fmt.Sprintf(`{"sigstore":{"status":"Active","usage":%q}}`, tgt.usage))
+		tf.Custom = &custom
+		targetsMeta.Signed.Targets[tgt.name] = tf
+		// Consistent-snapshot target path: <sha256hex>.<name>
+		served["/targets/"+hex.EncodeToString(sum[:])+"."+tgt.name] = []byte(tgt.content)
+	}
+
+	snapshot := metadata.Snapshot(expires)
+	timestamp := metadata.Timestamp(expires)
+
+	// Sign each role with its key.
+	signWith := func(role string) signature.Signer {
+		signer, err := signature.LoadSigner(keys[role], crypto.Hash(0))
+		if err != nil {
+			t.Fatalf("load %s signer: %v", role, err)
+		}
+		return signer
+	}
+	if _, err := targetsMeta.Sign(signWith("targets")); err != nil {
+		t.Fatalf("sign targets: %v", err)
+	}
+	if _, err := snapshot.Sign(signWith("snapshot")); err != nil {
+		t.Fatalf("sign snapshot: %v", err)
+	}
+	if _, err := timestamp.Sign(signWith("timestamp")); err != nil {
+		t.Fatalf("sign timestamp: %v", err)
+	}
+	if _, err := root.Sign(signWith("root")); err != nil {
+		t.Fatalf("sign root: %v", err)
+	}
+
+	rootBytes, err := root.ToBytes(true)
+	if err != nil {
+		t.Fatalf("serialize root: %v", err)
+	}
+	timestampBytes, err := timestamp.ToBytes(true)
+	if err != nil {
+		t.Fatalf("serialize timestamp: %v", err)
+	}
+	snapshotBytes, err := snapshot.ToBytes(true)
+	if err != nil {
+		t.Fatalf("serialize snapshot: %v", err)
+	}
+	targetsBytes, err := targetsMeta.ToBytes(true)
+	if err != nil {
+		t.Fatalf("serialize targets: %v", err)
+	}
+	served["/root.json"] = rootBytes   // fetched by setOptsRoot
+	served["/1.root.json"] = rootBytes // harmless, not requested at v1
+	served["/timestamp.json"] = timestampBytes
+	served["/1.snapshot.json"] = snapshotBytes
+	served["/1.targets.json"] = targetsBytes
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if body, ok := served[r.URL.Path]; ok {
+			_, _ = w.Write(body)
+			return
+		}
+		// 404 for e.g. /2.root.json so the updater stops the root-rotation loop.
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func defaultTestTargets(t *testing.T) []testTUFTarget {
+	t.Helper()
+	now := time.Now().UTC()
+	fulcioPEM, _ := generateTestCert(t, now.Add(-time.Hour), now.Add(365*24*time.Hour), "Test Fulcio CA")
+	tsaPEM, _ := generateTestCert(t, now.Add(-time.Hour), now.Add(365*24*time.Hour), "Test TSA")
+	trustedRoot := `{"mediaType":"application/vnd.dev.sigstore.trustedroot+json;version=0.1",` +
+		`"tlogs":[],"certificateAuthorities":[],"ctlogs":[],"timestampAuthorities":[]}`
+	return []testTUFTarget{
+		{name: "fulcio.crt.pem", usage: "Fulcio", content: fulcioPEM},
+		{name: "tsa.crt.pem", usage: "TSA", content: tsaPEM},
+		{name: "trusted_root.json", usage: "TrustedRoot", content: trustedRoot},
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Trust service integration tests against the fake TUF repository
+// ---------------------------------------------------------------------------
+
+func TestTrustServiceTUFIntegration(t *testing.T) {
+	t.Setenv("HOME", t.TempDir()) // redirect TUF cache away from real home
+	srv := newTestTUFServer(t, defaultTestTargets(t))
+	s := &trustService{refreshInterval: time.Hour}
+	ctx := context.Background()
+
+	t.Run("GetTarget downloads and returns content", func(t *testing.T) {
+		tc, code, err := s.GetTarget(ctx, srv.URL, "fulcio.crt.pem")
+		if err != nil {
+			t.Fatalf("GetTarget: %v", err)
+		}
+		if code != http.StatusOK {
+			t.Errorf("status = %d, want 200", code)
+		}
+		if !strings.Contains(tc.Content, "BEGIN CERTIFICATE") {
+			t.Errorf("content = %q, want a PEM certificate", tc.Content)
+		}
+	})
+
+	t.Run("GetTarget on unknown target errors", func(t *testing.T) {
+		_, code, err := s.GetTarget(ctx, srv.URL, "does-not-exist")
+		if err == nil {
+			t.Fatal("expected error for unknown target")
+		}
+		if code != http.StatusInternalServerError {
+			t.Errorf("status = %d, want 500", code)
+		}
+	})
+
+	t.Run("GetTarget with cancelled context", func(t *testing.T) {
+		cancelled, cancel := context.WithCancel(ctx)
+		cancel()
+		_, code, err := s.GetTarget(cancelled, srv.URL, "fulcio.crt.pem")
+		if err == nil {
+			t.Fatal("expected error for cancelled context")
+		}
+		if code != 499 {
+			t.Errorf("status = %d, want 499", code)
+		}
+	})
+
+	t.Run("GetCertificatesInfo returns fulcio and tsa certs", func(t *testing.T) {
+		certs, code, err := s.GetCertificatesInfo(ctx, srv.URL)
+		if err != nil {
+			t.Fatalf("GetCertificatesInfo: %v", err)
+		}
+		if code != http.StatusOK {
+			t.Errorf("status = %d, want 200", code)
+		}
+		if len(certs.Data) != 2 {
+			t.Fatalf("got %d certificates, want 2 (fulcio + tsa)", len(certs.Data))
+		}
+		types := map[string]bool{}
+		for _, c := range certs.Data {
+			types[strings.ToLower(c.Type)] = true
+		}
+		if !types["fulcio"] || !types["tsa"] {
+			t.Errorf("certificate types = %v, want fulcio and tsa", types)
+		}
+	})
+
+	t.Run("GetAllTargets returns every target", func(t *testing.T) {
+		targets, code, err := s.GetAllTargets(ctx, srv.URL)
+		if err != nil {
+			t.Fatalf("GetAllTargets: %v", err)
+		}
+		if code != http.StatusOK {
+			t.Errorf("status = %d, want 200", code)
+		}
+		if len(targets.Data) != 3 {
+			t.Errorf("got %d targets, want 3", len(targets.Data))
+		}
+	})
+
+	t.Run("GetTrustMetadataInfo reports metadata versions", func(t *testing.T) {
+		info, code, err := s.GetTrustMetadataInfo(ctx, srv.URL)
+		if err != nil {
+			t.Fatalf("GetTrustMetadataInfo: %v", err)
+		}
+		if code != http.StatusOK {
+			t.Errorf("status = %d, want 200", code)
+		}
+		for _, role := range []string{"root", "targets", "snapshot", "timestamp"} {
+			entries, ok := info.Data[role]
+			if !ok || len(entries) == 0 {
+				t.Errorf("missing metadata info for role %q", role)
+				continue
+			}
+			if entries[0].Version != "1" {
+				t.Errorf("%s version = %q, want \"1\"", role, entries[0].Version)
+			}
+		}
+	})
+
+	t.Run("GetTUFRepoURL returns configured URL", func(t *testing.T) {
+		if got := s.GetTUFRepoURL(); got != srv.URL {
+			t.Errorf("GetTUFRepoURL() = %q, want %q", got, srv.URL)
+		}
+	})
+
+	t.Run("Close cancels background context", func(t *testing.T) {
+		_, cancel := context.WithCancel(context.Background())
+		s.cancel = cancel
+		if err := s.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	})
+}
+
+func TestNewTrustService(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	srv := newTestTUFServer(t, defaultTestTargets(t))
+
+	ts := NewTrustService(&TrustServiceFlags{
+		TUFRepoURL:      srv.URL,
+		RefreshInterval: time.Hour, // large, so the background ticker never fires during the test
+	})
+	defer func() {
+		if err := ts.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	}()
+
+	if ts.GetTUFRepoURL() != srv.URL {
+		t.Errorf("GetTUFRepoURL() = %q, want %q", ts.GetTUFRepoURL(), srv.URL)
+	}
+
+	// Repository is initialized, so a target lookup must succeed.
+	tc, code, err := ts.GetTarget(context.Background(), srv.URL, "tsa.crt.pem")
+	if err != nil {
+		t.Fatalf("GetTarget after NewTrustService: %v", err)
+	}
+	if code != http.StatusOK || !strings.Contains(tc.Content, "BEGIN CERTIFICATE") {
+		t.Errorf("unexpected target result: code=%d content=%q", code, tc.Content)
+	}
 }
