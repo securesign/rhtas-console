@@ -812,18 +812,14 @@ func extractRootMetadataInfo(rootMetadataBytes []byte) (models.MetadataInfo, err
 	return metadataInfoFromVersionAndExpires(int64(parsed.Signed.Version), expiresTime), nil
 }
 
-// extractTargetMetadataInfo extracts status & usage of targets
+// extractTargetMetadataInfo extracts status & usage of targets.
+// Each target is decoded individually so that a single malformed entry (e.g. a
+// non-string status) is skipped and logged rather than discarding every valid
+// target along with it.
 func extractTargetMetadataInfo(targetsBytes []byte) (map[string]map[string]string, error) {
 	var parsed struct {
 		Signed struct {
-			Targets map[string]struct {
-				Custom struct {
-					Sigstore struct {
-						Status string `json:"status"`
-						Usage  string `json:"usage"`
-					} `json:"sigstore"`
-				} `json:"custom"`
-			} `json:"targets"`
+			Targets map[string]json.RawMessage `json:"targets"`
 		} `json:"signed"`
 	}
 
@@ -832,11 +828,32 @@ func extractTargetMetadataInfo(targetsBytes []byte) (map[string]map[string]strin
 	}
 
 	targetSpecs := make(map[string]map[string]string)
-	for name, target := range parsed.Signed.Targets {
+	skipped := 0
+	for name, raw := range parsed.Signed.Targets {
+		var target struct {
+			Custom struct {
+				Sigstore struct {
+					Status string `json:"status"`
+					Usage  string `json:"usage"`
+				} `json:"sigstore"`
+			} `json:"custom"`
+		}
+		if err := json.Unmarshal(raw, &target); err != nil {
+			// Skip malformed targets but keep processing the valid ones.
+			log.Printf("skipping malformed target metadata for %q: %v", name, err)
+			skipped++
+			continue
+		}
 		targetSpecs[name] = map[string]string{
 			"status": target.Custom.Sigstore.Status,
 			"type":   target.Custom.Sigstore.Usage,
 		}
+	}
+
+	// If targets were present but every one failed to decode, surface an error
+	// so callers don't mistake a broken inventory for an empty repository.
+	if skipped > 0 && len(targetSpecs) == 0 {
+		return nil, fmt.Errorf("all %d target(s) in metadata are malformed", skipped)
 	}
 
 	return targetSpecs, nil
