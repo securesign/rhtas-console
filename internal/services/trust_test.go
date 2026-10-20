@@ -401,6 +401,51 @@ func TestExtractTargetMetadataInfo(t *testing.T) {
 			t.Error("expected error for invalid JSON")
 		}
 	})
+
+	t.Run("malformed target is skipped, valid targets survive", func(t *testing.T) {
+		// "poisoned.pem" has a non-string status; it must be dropped while the
+		// valid targets (including the revoked ctfe.pub) are still returned.
+		input := []byte(`{
+			"signed": {
+				"targets": {
+					"fulcio.crt.pem": {"custom": {"sigstore": {"status": "Active", "usage": "Fulcio"}}},
+					"rekor.pub": {"custom": {"sigstore": {"status": "Active", "usage": "Rekor"}}},
+					"poisoned.pem": {"custom": {"sigstore": {"status": 123, "usage": "Fulcio"}}},
+					"ctfe.pub": {"custom": {"sigstore": {"status": "Revoked", "usage": "CTFE"}}}
+				}
+			}
+		}`)
+		got, err := extractTargetMetadataInfo(input)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(got) != 3 {
+			t.Fatalf("expected 3 valid targets, got %d: %v", len(got), got)
+		}
+		if _, ok := got["poisoned.pem"]; ok {
+			t.Error("malformed target should have been skipped")
+		}
+		if got["ctfe.pub"]["status"] != "Revoked" {
+			t.Errorf("ctfe.pub status = %q, want %q", got["ctfe.pub"]["status"], "Revoked")
+		}
+	})
+
+	t.Run("all targets malformed returns error", func(t *testing.T) {
+		// A non-empty inventory where every entry is malformed must error rather
+		// than masquerade as an empty repository.
+		input := []byte(`{
+			"signed": {
+				"targets": {
+					"a.pem": {"custom": {"sigstore": {"status": 1, "usage": "Fulcio"}}},
+					"b.pem": {"custom": {"sigstore": {"status": 2, "usage": "TSA"}}}
+				}
+			}
+		}`)
+		_, err := extractTargetMetadataInfo(input)
+		if err == nil {
+			t.Fatal("expected error when every target is malformed")
+		}
+	})
 }
 
 func TestUrlsEqual(t *testing.T) {
