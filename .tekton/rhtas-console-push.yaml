@@ -7,22 +7,22 @@ metadata:
     build.appstudio.redhat.com/target_branch: '{{target_branch}}'
     pipelinesascode.tekton.dev/cancel-in-progress: "false"
     pipelinesascode.tekton.dev/max-keep-runs: "3"
-    pipelinesascode.tekton.dev/on-cel-expression: event == "push" && target_branch == "main" &&
+    pipelinesascode.tekton.dev/on-cel-expression: event == "push" && target_branch == "release-1.5" &&
       (".tekton/rhtas-console-push.yaml".pathChanged()
       || "Dockerfile.rh".pathChanged()
       || "internal/***".pathChanged() || "cmd/rhtas_console/***".pathChanged()
       || "go.mod".pathChanged() || "go.sum".pathChanged() || "trigger-konflux-builds.txt".pathChanged())
   creationTimestamp: null
   labels:
-    appstudio.openshift.io/application: rhtas-console
-    appstudio.openshift.io/component: rhtas-console
+    appstudio.openshift.io/application: rhtas-console-v1-5
+    appstudio.openshift.io/component: rhtas-console-v1-5
     pipelines.appstudio.openshift.io/type: build
-  name: rhtas-console-on-push
+  name: rhtas-console-v1-5-on-push
   namespace: rhtas-tenant
 spec:
   params:
   - name: release-version
-    value: 1.5.0
+    value: 1.5.1
   - name: git-url
     value: '{{source_url}}'
   - name: revision
@@ -55,8 +55,9 @@ spec:
       - name: pathInRepo
         value: 'pipelines/docker-build-oci-ta.yaml'
   taskRunTemplate:
-    serviceAccountName: build-pipeline-rhtas-console
+    serviceAccountName: build-pipeline-rhtas-console-v1-5
   workspaces:
+  - name: git-url
   - name: git-auth
     secret:
       secretName: '{{ git_auth_secret }}'
