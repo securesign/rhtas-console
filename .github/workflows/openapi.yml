@@ -3,7 +3,7 @@ name: openapi
 on:
   push:
     branches:
-      - main
+      - release-1.5
     paths:
       - internal/api/openapi/rhtas-console.yaml
   workflow_call:
@@ -22,7 +22,7 @@ jobs:
         with:
           repository: securesign/rhtas-console-ui
           path: rhtas-console-ui
-          ref: main
+          ref: release-1.5
           token: ${{ secrets.GH_PAT }}
       - name: Update rhtas-console-ui
         run: |
