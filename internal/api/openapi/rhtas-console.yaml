@@ -756,11 +756,13 @@ components:
       type: string
       description: >
         Status of the certificate, derived from trusted_root.json validFor window and X.509 validity.
+        pending — not yet in service, the validFor start date is in the future.
         active — in service, cert is valid.
         expiring — in service, cert expires within 30 days.
         expired — the X.509 cert has actually expired.
         revoked — cert still valid but taken out of service.
       enum:
+        - pending
         - active
         - expiring
         - expired
