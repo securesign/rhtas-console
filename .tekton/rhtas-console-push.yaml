@@ -57,7 +57,6 @@ spec:
   taskRunTemplate:
     serviceAccountName: build-pipeline-rhtas-console-v1-5
   workspaces:
-  - name: git-url
   - name: git-auth
     secret:
       secretName: '{{ git_auth_secret }}'
