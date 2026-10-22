@@ -320,8 +320,10 @@ func (s *trustService) GetCertificatesInfo(ctx context.Context, tufRepoUrl strin
 					Pem:            pc.info.Pem,
 				}
 				if vfPtr != nil {
-					start := vfPtr.start.Format(time.RFC3339)
-					info.ValidForStart = &start
+					if !vfPtr.start.IsZero() {
+						start := vfPtr.start.Format(time.RFC3339)
+						info.ValidForStart = &start
+					}
 					if !vfPtr.end.IsZero() {
 						end := vfPtr.end.Format(time.RFC3339)
 						info.ValidForEnd = &end
@@ -919,6 +921,9 @@ func computeCertStatus(notAfter time.Time, validFor *validForWindow, now time.Ti
 	expired := !notAfter.IsZero() && now.After(notAfter)
 	if expired {
 		return models.Expired
+	}
+	if validFor != nil && !validFor.start.IsZero() && now.Before(validFor.start) {
+		return models.Pending
 	}
 	if validFor != nil && !validFor.end.IsZero() && now.After(validFor.end) {
 		return models.Revoked

@@ -44,6 +44,7 @@ const (
 	Active   CertificateStatus = "active"
 	Expired  CertificateStatus = "expired"
 	Expiring CertificateStatus = "expiring"
+	Pending  CertificateStatus = "pending"
 	Revoked  CertificateStatus = "revoked"
 )
 
@@ -231,7 +232,7 @@ type CertificateInfo struct {
 	// Pem Certificate in PEM-encoded format.
 	Pem string `json:"pem"`
 
-	// Status Status of the certificate, derived from trusted_root.json validFor window and X.509 validity. active — in service, cert is valid. expiring — in service, cert expires within 30 days. expired — the X.509 cert has actually expired. revoked — cert still valid but taken out of service.
+	// Status Status of the certificate, derived from trusted_root.json validFor window and X.509 validity. pending — not yet in service, the validFor start date is in the future. active — in service, cert is valid. expiring — in service, cert expires within 30 days. expired — the X.509 cert has actually expired. revoked — cert still valid but taken out of service.
 	Status CertificateStatus `json:"status"`
 
 	// Subject Certificate subject
@@ -258,7 +259,7 @@ type CertificateInfoList struct {
 // CertificateRole defines model for CertificateRole.
 type CertificateRole string
 
-// CertificateStatus Status of the certificate, derived from trusted_root.json validFor window and X.509 validity. active — in service, cert is valid. expiring — in service, cert expires within 30 days. expired — the X.509 cert has actually expired. revoked — cert still valid but taken out of service.
+// CertificateStatus Status of the certificate, derived from trusted_root.json validFor window and X.509 validity. pending — not yet in service, the validFor start date is in the future. active — in service, cert is valid. expiring — in service, cert expires within 30 days. expired — the X.509 cert has actually expired. revoked — cert still valid but taken out of service.
 type CertificateStatus string
 
 // Checkpoint defines model for Checkpoint.

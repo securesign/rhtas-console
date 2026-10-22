@@ -195,6 +195,33 @@ func TestComputeCertStatus(t *testing.T) {
 			want: models.Expiring,
 		},
 		{
+			name:     "pending: validFor.start in future",
+			notAfter: now.Add(365 * 24 * time.Hour),
+			validFor: &validForWindow{
+				start: now.Add(30 * 24 * time.Hour),
+				end:   now.Add(2 * 365 * 24 * time.Hour),
+			},
+			want: models.Pending,
+		},
+		{
+			name:     "expired takes precedence over pending",
+			notAfter: now.Add(-1 * time.Hour),
+			validFor: &validForWindow{
+				start: now.Add(30 * 24 * time.Hour),
+				end:   now.Add(2 * 365 * 24 * time.Hour),
+			},
+			want: models.Expired,
+		},
+		{
+			name:     "active once validFor.start has passed",
+			notAfter: now.Add(365 * 24 * time.Hour),
+			validFor: &validForWindow{
+				start: now.Add(-1 * time.Hour),
+				end:   now.Add(365 * 24 * time.Hour),
+			},
+			want: models.Active,
+		},
+		{
 			name: "zero notAfter defaults to active",
 			want: models.Active,
 		},
