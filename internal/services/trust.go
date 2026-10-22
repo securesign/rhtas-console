@@ -922,11 +922,15 @@ func computeCertStatus(notAfter time.Time, validFor *validForWindow, now time.Ti
 	if expired {
 		return models.Expired
 	}
-	if validFor != nil && !validFor.start.IsZero() && now.Before(validFor.start) {
-		return models.Pending
-	}
+	// A closed service window (end in the past) takes precedence over a future
+	// start. This covers the malformed case where start is in the future but end
+	// is already in the past: the window will never open, so report it as out of
+	// service (revoked) rather than pending, which would imply it is still coming.
 	if validFor != nil && !validFor.end.IsZero() && now.After(validFor.end) {
 		return models.Revoked
+	}
+	if validFor != nil && !validFor.start.IsZero() && now.Before(validFor.start) {
+		return models.Pending
 	}
 	if !notAfter.IsZero() && notAfter.Sub(now) <= 30*24*time.Hour {
 		return models.Expiring

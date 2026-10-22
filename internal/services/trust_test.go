@@ -210,6 +210,15 @@ func TestComputeCertStatus(t *testing.T) {
 			want: models.Pending,
 		},
 		{
+			name:     "revoked takes precedence over pending when end already passed",
+			notAfter: now.Add(365 * 24 * time.Hour),
+			validFor: &validForWindow{
+				start: now.Add(30 * 24 * time.Hour),
+				end:   now.Add(-30 * 24 * time.Hour),
+			},
+			want: models.Revoked,
+		},
+		{
 			name:     "expired takes precedence over pending",
 			notAfter: now.Add(-1 * time.Hour),
 			validFor: &validForWindow{
