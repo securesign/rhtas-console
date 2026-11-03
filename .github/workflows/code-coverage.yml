@@ -1,9 +1,23 @@
 name: code-coverage
 on:
   push:
-    branches: [ "release-1.5" ]
+    branches:
+      - "main"
+      - "release-*"
+    paths-ignore:
+      - 'Dockerfile.rh'
+      - '.devcontainer/**'
+      - '*.md'
+      - 'renovate.json'
   pull_request:
-    branches: [ "release-1.5" ]
+    branches:
+      - "main"
+      - "release-*"
+    paths-ignore:
+      - 'Dockerfile.rh'
+      - '.devcontainer/**'
+      - '*.md'
+      - 'renovate.json'
 
 jobs:
   coverage:
