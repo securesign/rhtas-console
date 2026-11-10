@@ -434,7 +434,11 @@ func (h *healthService) defaultProbeHTTP(ctx context.Context, url string) (time.
 	if err != nil {
 		return 0, 0, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			log.Printf("health: failed to close probe response body for %s: %v", url, err)
+		}
+	}()
 	// Drain (bounded) so the keep-alive connection can be reused by the next
 	// probe instead of dialing again.
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxProbeBodyBytes))
