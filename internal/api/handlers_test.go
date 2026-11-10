@@ -81,12 +81,16 @@ func (m *mockTrustService) GetTUFRepoURL() string {
 func (m *mockTrustService) Close() error { return nil }
 
 type mockHealthService struct {
-	getSystemHealthFn func(context.Context) (models.SystemHealthResponse, int, error)
+	getSystemHealthFn func(context.Context, bool) (models.SystemHealthResponse, int, error)
 }
 
-func (m *mockHealthService) GetSystemHealth(ctx context.Context) (models.SystemHealthResponse, int, error) {
-	return m.getSystemHealthFn(ctx)
+func (m *mockHealthService) GetSystemHealth(ctx context.Context, includeHistory bool) (models.SystemHealthResponse, int, error) {
+	return m.getSystemHealthFn(ctx, includeHistory)
 }
+
+func (m *mockHealthService) Start(context.Context) {}
+
+func (m *mockHealthService) Stop() {}
 
 // Verify interfaces are satisfied at compile time.
 var (
@@ -236,7 +240,7 @@ func TestGetApiV1SystemHealth(t *testing.T) {
 
 	t.Run("service error", func(t *testing.T) {
 		hs := &mockHealthService{
-			getSystemHealthFn: func(context.Context) (models.SystemHealthResponse, int, error) {
+			getSystemHealthFn: func(context.Context, bool) (models.SystemHealthResponse, int, error) {
 				return models.SystemHealthResponse{}, http.StatusInternalServerError, fmt.Errorf("k8s unavailable")
 			},
 		}
@@ -251,16 +255,15 @@ func TestGetApiV1SystemHealth(t *testing.T) {
 	})
 
 	t.Run("success", func(t *testing.T) {
+		var gotHistory bool
 		hs := &mockHealthService{
-			getSystemHealthFn: func(context.Context) (models.SystemHealthResponse, int, error) {
+			getSystemHealthFn: func(_ context.Context, includeHistory bool) (models.SystemHealthResponse, int, error) {
+				gotHistory = includeHistory
 				return models.SystemHealthResponse{
 					SecuresignStatus: models.SystemHealthResponseSecuresignStatusHealthy,
-					RekorStatus:      models.SystemHealthResponseRekorStatusHealthy,
-					FulcioStatus:     models.SystemHealthResponseFulcioStatusHealthy,
-					CtlogStatus:      models.SystemHealthResponseCtlogStatusHealthy,
-					TrillianStatus:   models.SystemHealthResponseTrillianStatusHealthy,
-					TsaStatus:        models.SystemHealthResponseTsaStatusHealthy,
-					TufStatus:        models.SystemHealthResponseTufStatusHealthy,
+					Services: []models.ServiceHealth{
+						{Name: models.Rekor, Status: models.ServiceHealthStatusHealthy},
+					},
 				}, http.StatusOK, nil
 			},
 		}
@@ -271,6 +274,48 @@ func TestGetApiV1SystemHealth(t *testing.T) {
 
 		if w.Code != http.StatusOK {
 			t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
+		}
+		if gotHistory {
+			t.Error("history must default to false")
+		}
+	})
+
+	t.Run("history parameter", func(t *testing.T) {
+		var gotHistory bool
+		hs := &mockHealthService{
+			getSystemHealthFn: func(_ context.Context, includeHistory bool) (models.SystemHealthResponse, int, error) {
+				gotHistory = includeHistory
+				return models.SystemHealthResponse{}, http.StatusOK, nil
+			},
+		}
+		h := newTestHandler(nil, nil, nil, hs)
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodGet, "/api/v1/system/health?history=true", nil)
+		h.GetApiV1SystemHealth(w, r)
+
+		if w.Code != http.StatusOK || !gotHistory {
+			t.Errorf("status = %d, includeHistory = %v; want 200, true", w.Code, gotHistory)
+		}
+	})
+
+	t.Run("invalid history parameter", func(t *testing.T) {
+		called := false
+		hs := &mockHealthService{
+			getSystemHealthFn: func(context.Context, bool) (models.SystemHealthResponse, int, error) {
+				called = true
+				return models.SystemHealthResponse{}, http.StatusOK, nil
+			},
+		}
+		h := newTestHandler(nil, nil, nil, hs)
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodGet, "/api/v1/system/health?history=maybe", nil)
+		h.GetApiV1SystemHealth(w, r)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
+		}
+		if called {
+			t.Error("service must not be called on a bad request")
 		}
 	})
 }

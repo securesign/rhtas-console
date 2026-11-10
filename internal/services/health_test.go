@@ -2,9 +2,18 @@ package services
 
 import (
 	"context"
+	"errors"
+	"math"
+	"net"
 	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/securesign/rhtas-console/internal/httpclient"
 	"github.com/securesign/rhtas-console/internal/models"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -14,19 +23,47 @@ import (
 
 const testNamespace = "test-ns"
 
+// fixedNow returns a deterministic clock advancing by one second per call.
+// It is safe for concurrent use (Start collects in a background goroutine).
+func fixedNow() func() time.Time {
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	var mu sync.Mutex
+	n := 0
+	return func() time.Time {
+		mu.Lock()
+		defer mu.Unlock()
+		t := base.Add(time.Duration(n) * time.Second)
+		n++
+		return t
+	}
+}
+
 func newTestHealthService(dynamicObjs ...runtime.Object) *healthService {
 	scheme := runtime.NewScheme()
 	gvrToListKind := map[schema.GroupVersionResource]string{
 		securesignGVR: "SecuresignList",
 	}
 	dynamicClient := fake.NewSimpleDynamicClientWithCustomListKinds(scheme, gvrToListKind, dynamicObjs...)
-	return &healthService{
-		dynamicClient: dynamicClient,
-		namespace:     testNamespace,
+	h := &healthService{
+		dynamicClient:    dynamicClient,
+		namespace:        testNamespace,
+		crName:           "securesign-sample",
+		interval:         30 * time.Second,
+		timeout:          5 * time.Second,
+		historySize:      5,
+		failureThreshold: defaultFailureThreshold,
+		stopCh:           make(chan struct{}),
+		now:              fixedNow(),
 	}
+	// Default probe: always healthy with a fixed latency. Tests override as needed.
+	h.probeHTTP = func(context.Context, string) (time.Duration, int, error) {
+		return 10 * time.Millisecond, http.StatusOK, nil
+	}
+	h.initBuffers()
+	return h
 }
 
-func makeSecuresignCR(name, namespace string, conditions []interface{}) *unstructured.Unstructured {
+func makeSecuresignCR(name, namespace string, conditions []interface{}, urls map[string]string) *unstructured.Unstructured {
 	obj := &unstructured.Unstructured{}
 	obj.SetGroupVersionKind(schema.GroupVersionKind{
 		Group:   "rhtas.redhat.com",
@@ -35,10 +72,15 @@ func makeSecuresignCR(name, namespace string, conditions []interface{}) *unstruc
 	})
 	obj.SetName(name)
 	obj.SetNamespace(namespace)
+	status := map[string]interface{}{}
 	if conditions != nil {
-		obj.Object["status"] = map[string]interface{}{
-			"conditions": conditions,
-		}
+		status["conditions"] = conditions
+	}
+	for svc, url := range urls {
+		status[svc] = map[string]interface{}{"url": url}
+	}
+	if len(status) > 0 {
+		obj.Object["status"] = status
 	}
 	return obj
 }
@@ -59,202 +101,738 @@ func allHealthyConditions() []interface{} {
 	}
 }
 
-func TestGetSecuresignConditions(t *testing.T) {
-	t.Run("all conditions present", func(t *testing.T) {
-		t.Setenv("TAS_DEPLOYMENT_NAME", "securesign-sample")
-		cr := makeSecuresignCR("securesign-sample", testNamespace, allHealthyConditions())
-		h := newTestHealthService(cr)
-
-		conditions, err := h.getSecuresignConditions(context.Background())
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if len(conditions) != 7 {
-			t.Errorf("expected 7 conditions, got %d", len(conditions))
-		}
-		if conditions["Ready"] != "True" {
-			t.Errorf("Ready = %q, want %q", conditions["Ready"], "True")
-		}
-	})
-
-	t.Run("CR not found", func(t *testing.T) {
-		t.Setenv("TAS_DEPLOYMENT_NAME", "missing")
-		h := newTestHealthService()
-
-		_, err := h.getSecuresignConditions(context.Background())
-		if err == nil {
-			t.Error("expected error for missing CR, got nil")
-		}
-	})
-
-	t.Run("CR with no conditions", func(t *testing.T) {
-		t.Setenv("TAS_DEPLOYMENT_NAME", "securesign-sample")
-		cr := makeSecuresignCR("securesign-sample", testNamespace, nil)
-		h := newTestHealthService(cr)
-
-		_, err := h.getSecuresignConditions(context.Background())
-		if err == nil {
-			t.Error("expected error for missing conditions, got nil")
-		}
-	})
+func allURLs() map[string]string {
+	return map[string]string{
+		"rekor":  "https://rekor.example.com",
+		"fulcio": "https://fulcio.example.com",
+		"tsa":    "https://tsa.example.com",
+		"tuf":    "https://tuf.example.com",
+	}
 }
 
-func TestMapCondition(t *testing.T) {
-	type result = models.SystemHealthResponseRekorStatus
-	healthy := models.SystemHealthResponseRekorStatusHealthy
-	unhealthy := models.SystemHealthResponseRekorStatusUnhealthy
-	unknown := models.SystemHealthResponseRekorStatusUnknown
+// assertRate checks a nullable rate is present and approximately want.
+func assertRate(t *testing.T, name string, got *float32, want float64) {
+	t.Helper()
+	if got == nil {
+		t.Errorf("%s = nil, want %v", name, want)
+		return
+	}
+	if math.Abs(float64(*got)-want) > 1e-4 {
+		t.Errorf("%s = %v, want %v", name, *got, want)
+	}
+}
 
+// history returns a service's probe samples, failing if they were omitted.
+func history(t *testing.T, s models.ServiceHealth) []models.ProbeSample {
+	t.Helper()
+	if s.ProbeHistory == nil {
+		t.Fatalf("%s: probeHistory missing", s.Name)
+	}
+	return *s.ProbeHistory
+}
+
+func findService(resp models.SystemHealthResponse, name string) (models.ServiceHealth, bool) {
+	for _, s := range resp.Services {
+		if string(s.Name) == name {
+			return s, true
+		}
+	}
+	return models.ServiceHealth{}, false
+}
+
+func TestReadSecuresign(t *testing.T) {
+	cr := makeSecuresignCR("securesign-sample", testNamespace, allHealthyConditions(), allURLs())
+	h := newTestHealthService(cr)
+
+	conditions, urls, err := h.readSecuresign(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if conditions["Ready"] != "True" {
+		t.Errorf("Ready = %q, want True", conditions["Ready"])
+	}
+	if len(conditions) != 7 {
+		t.Errorf("expected 7 conditions, got %d", len(conditions))
+	}
+	if urls["rekor"] != "https://rekor.example.com" {
+		t.Errorf("rekor url = %q", urls["rekor"])
+	}
+	if _, ok := urls["ctlog"]; ok {
+		t.Error("ctlog should have no URL")
+	}
+}
+
+func TestReadSecuresignMissingCR(t *testing.T) {
+	h := newTestHealthService() // no CR
+	conditions, urls, err := h.readSecuresign(context.Background())
+	if err == nil {
+		t.Error("expected an error for a missing CR")
+	}
+	if len(conditions) != 0 || len(urls) != 0 {
+		t.Errorf("expected empty maps for missing CR, got conditions=%v urls=%v", conditions, urls)
+	}
+}
+
+// An unreadable CR (missing, RBAC, wrong name) must surface as unknown, not as
+// every service being down.
+func TestCollectMissingCRReportsUnknown(t *testing.T) {
+	h := newTestHealthService() // no CR
+	probed := false
+	h.probeHTTP = func(context.Context, string) (time.Duration, int, error) {
+		probed = true
+		return 0, 0, errors.New("should not be called")
+	}
+
+	h.collect(context.Background())
+	h.collect(context.Background())
+
+	resp, _, _ := h.GetSystemHealth(context.Background(), true)
+	if resp.SecuresignStatus != models.SystemHealthResponseSecuresignStatusUnknown {
+		t.Errorf("securesignStatus = %q, want unknown", resp.SecuresignStatus)
+	}
+	for _, s := range resp.Services {
+		if s.Status != models.ServiceHealthStatusUnknown {
+			t.Errorf("%s status = %q, want unknown", s.Name, s.Status)
+		}
+		if s.ConsecutiveFailures != 0 || s.ErrorRate != nil || s.UptimePercentage != nil {
+			t.Errorf("%s: unknown samples must not count (consecutive=%d errorRate=%v uptime=%v)",
+				s.Name, s.ConsecutiveFailures, s.ErrorRate, s.UptimePercentage)
+		}
+	}
+	if probed {
+		t.Error("services without a URL must not be HTTP-probed")
+	}
+}
+
+// A condition reported as Unknown (e.g. while the operator is initializing) is
+// unknown, not unhealthy.
+func TestConditionUnknownIsUnknown(t *testing.T) {
+	cr := makeSecuresignCR("securesign-sample", testNamespace, []interface{}{
+		cond("Ready", "True"),
+		cond("RekorAvailable", "True"),
+		cond("FulcioAvailable", "True"),
+		cond("CTlogAvailable", "Unknown"),
+		cond("TrillianAvailable", "True"),
+		cond("TsaAvailable", "True"),
+		cond("TufAvailable", "True"),
+	}, allURLs())
+	h := newTestHealthService(cr)
+	h.collect(context.Background())
+
+	resp, _, _ := h.GetSystemHealth(context.Background(), true)
+	ctlog, _ := findService(resp, "ctlog")
+	if ctlog.Status != models.ServiceHealthStatusUnknown {
+		t.Errorf("ctlog status = %q, want unknown", ctlog.Status)
+	}
+	// securesignStatus mirrors the Ready condition; it is not recomputed from services.
+	if resp.SecuresignStatus != models.SystemHealthResponseSecuresignStatusHealthy {
+		t.Errorf("securesignStatus = %q, want healthy (Ready=True)", resp.SecuresignStatus)
+	}
+}
+
+// A probed service whose URL is not published yet falls back to its condition.
+func TestProbedServiceWithoutURLUsesCondition(t *testing.T) {
+	urls := allURLs()
+	delete(urls, "rekor")
+	conds := allHealthyConditions()
+	conds[1] = cond("RekorAvailable", "False")
+	cr := makeSecuresignCR("securesign-sample", testNamespace, conds, urls)
+	h := newTestHealthService(cr)
+	h.collect(context.Background())
+
+	resp, _, _ := h.GetSystemHealth(context.Background(), true)
+	rekor, _ := findService(resp, "rekor")
+	if rekor.Status != models.ServiceHealthStatusUnhealthy {
+		t.Errorf("rekor status = %q, want unhealthy (condition False)", rekor.Status)
+	}
+	if rekor.EndpointUrl != nil {
+		t.Errorf("rekor endpoint should be nil, got %v", *rekor.EndpointUrl)
+	}
+	if h := history(t, rekor); len(h) != 1 || h[0].Source != models.Condition {
+		t.Errorf("rekor sample should come from the condition: %+v", h)
+	}
+}
+
+// A single transient HTTP failure must not flip a service to unhealthy.
+func TestSingleHTTPFailureIsDebounced(t *testing.T) {
+	cr := makeSecuresignCR("securesign-sample", testNamespace, allHealthyConditions(), allURLs())
+	h := newTestHealthService(cr)
+
+	fail := false
+	h.probeHTTP = func(_ context.Context, url string) (time.Duration, int, error) {
+		if fail && url == "https://rekor.example.com/api/v1/log" {
+			return 0, 0, errors.New("context deadline exceeded")
+		}
+		return 10 * time.Millisecond, http.StatusOK, nil
+	}
+
+	h.collect(context.Background()) // healthy
+	fail = true
+	h.collect(context.Background()) // 1st failure: still healthy
+
+	resp, _, _ := h.GetSystemHealth(context.Background(), true)
+	rekor, _ := findService(resp, "rekor")
+	if rekor.Status != models.ServiceHealthStatusHealthy {
+		t.Errorf("after one failure rekor = %q, want healthy", rekor.Status)
+	}
+	if rekor.ConsecutiveFailures != 1 {
+		t.Errorf("consecutiveFailures = %d, want 1", rekor.ConsecutiveFailures)
+	}
+
+	h.collect(context.Background()) // 2nd failure: threshold reached
+	resp, _, _ = h.GetSystemHealth(context.Background(), true)
+	rekor, _ = findService(resp, "rekor")
+	if rekor.Status != models.ServiceHealthStatusUnhealthy {
+		t.Errorf("after two failures rekor = %q, want unhealthy", rekor.Status)
+	}
+}
+
+// A failing first probe (cold start) reports unknown rather than unhealthy.
+func TestFirstHTTPFailureIsUnknown(t *testing.T) {
+	cr := makeSecuresignCR("securesign-sample", testNamespace, allHealthyConditions(), allURLs())
+	h := newTestHealthService(cr)
+	h.probeHTTP = func(context.Context, string) (time.Duration, int, error) {
+		return 0, 0, errors.New("timeout")
+	}
+	h.collect(context.Background())
+
+	resp, _, _ := h.GetSystemHealth(context.Background(), true)
+	tuf, _ := findService(resp, "tuf")
+	if tuf.Status != models.ServiceHealthStatusUnknown {
+		t.Errorf("tuf status = %q, want unknown after a single failed first probe", tuf.Status)
+	}
+}
+
+func TestCollectAndGetSystemHealthAllHealthy(t *testing.T) {
+	cr := makeSecuresignCR("securesign-sample", testNamespace, allHealthyConditions(), allURLs())
+	h := newTestHealthService(cr)
+
+	h.collect(context.Background())
+
+	resp, code, err := h.GetSystemHealth(context.Background(), true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if code != http.StatusOK {
+		t.Errorf("code = %d, want 200", code)
+	}
+	if resp.SecuresignStatus != models.SystemHealthResponseSecuresignStatusHealthy {
+		t.Errorf("securesignStatus = %q, want healthy", resp.SecuresignStatus)
+	}
+	if len(resp.Services) != 6 {
+		t.Fatalf("expected 6 services, got %d", len(resp.Services))
+	}
+	if _, ok := findService(resp, "securesign"); ok {
+		t.Error("securesign must not be listed as a service")
+	}
+	if resp.ProbeIntervalSeconds != 30 {
+		t.Errorf("interval = %d, want 30", resp.ProbeIntervalSeconds)
+	}
+	if resp.WindowSeconds != 30*5 {
+		t.Errorf("window = %d, want 150", resp.WindowSeconds)
+	}
+
+	// HTTP-probed service carries latency + endpoint; condition-only does not.
+	rekor, _ := findService(resp, "rekor")
+	if !rekor.Probed {
+		t.Error("rekor should be probed")
+	}
+	if rekor.EndpointUrl == nil || *rekor.EndpointUrl != "https://rekor.example.com" {
+		t.Errorf("rekor endpoint = %v", rekor.EndpointUrl)
+	}
+	if rekor.LatencyP95Ms == nil {
+		t.Error("rekor should have p95 latency")
+	}
+	if rekor.Status != models.ServiceHealthStatusHealthy {
+		t.Errorf("rekor status = %q", rekor.Status)
+	}
+
+	ctlog, _ := findService(resp, "ctlog")
+	if ctlog.Probed {
+		t.Error("ctlog should not be probed")
+	}
+	if ctlog.EndpointUrl != nil {
+		t.Errorf("ctlog endpoint should be nil, got %v", *ctlog.EndpointUrl)
+	}
+	if ctlog.LatencyP95Ms != nil {
+		t.Error("ctlog should not have latency")
+	}
+	if ctlog.Status != models.ServiceHealthStatusHealthy {
+		t.Errorf("ctlog status = %q", ctlog.Status)
+	}
+	if h := history(t, ctlog); len(h) != 1 || h[0].Source != models.Condition {
+		t.Errorf("ctlog history unexpected: %+v", h)
+	}
+}
+
+func TestCollectFailureMetrics(t *testing.T) {
+	cr := makeSecuresignCR("securesign-sample", testNamespace, []interface{}{
+		cond("Ready", "False"),
+		cond("RekorAvailable", "True"),
+		cond("CTlogAvailable", "False"),
+	}, allURLs())
+	h := newTestHealthService(cr)
+
+	// Fulcio probe fails (connection error); others succeed.
+	h.probeHTTP = func(_ context.Context, url string) (time.Duration, int, error) {
+		if url == "https://fulcio.example.com/api/v2/trustBundle" {
+			return 0, 0, errors.New("connection refused")
+		}
+		return 20 * time.Millisecond, http.StatusOK, nil
+	}
+
+	// Two rounds so error rate / consecutive failures accumulate.
+	h.collect(context.Background())
+	h.collect(context.Background())
+
+	resp, _, _ := h.GetSystemHealth(context.Background(), true)
+	if resp.SecuresignStatus != models.SystemHealthResponseSecuresignStatusUnhealthy {
+		t.Errorf("securesignStatus = %q, want unhealthy (Ready=False)", resp.SecuresignStatus)
+	}
+
+	fulcio, _ := findService(resp, "fulcio")
+	if fulcio.Status != models.ServiceHealthStatusUnhealthy {
+		t.Errorf("fulcio status = %q, want unhealthy", fulcio.Status)
+	}
+	if fulcio.ConsecutiveFailures != 2 {
+		t.Errorf("fulcio consecutiveFailures = %d, want 2", fulcio.ConsecutiveFailures)
+	}
+	assertRate(t, "fulcio errorRate", fulcio.ErrorRate, 1)
+	assertRate(t, "fulcio uptime", fulcio.UptimePercentage, 0)
+	if fulcio.LastSuccessfulProbe != nil {
+		t.Error("fulcio should have no successful probe")
+	}
+	// A connection error yields no latency sample.
+	if fulcio.LatencyP95Ms != nil {
+		t.Error("fulcio should have no latency (connection errors)")
+	}
+
+	ctlog, _ := findService(resp, "ctlog")
+	if ctlog.Status != models.ServiceHealthStatusUnhealthy {
+		t.Errorf("ctlog status = %q, want unhealthy", ctlog.Status)
+	}
+}
+
+func TestProbeBadStatusCodeIsFailureWithLatency(t *testing.T) {
+	cr := makeSecuresignCR("securesign-sample", testNamespace, allHealthyConditions(), allURLs())
+	h := newTestHealthService(cr)
+	h.probeHTTP = func(context.Context, string) (time.Duration, int, error) {
+		return 15 * time.Millisecond, http.StatusInternalServerError, nil
+	}
+
+	h.collect(context.Background())
+	h.collect(context.Background())
+	resp, _, _ := h.GetSystemHealth(context.Background(), true)
+
+	rekor, _ := findService(resp, "rekor")
+	if rekor.Status != models.ServiceHealthStatusUnhealthy {
+		t.Errorf("rekor status = %q, want unhealthy", rekor.Status)
+	}
+	// A 5xx still produced a response, so latency IS recorded.
+	if rekor.LatencyP95Ms == nil {
+		t.Error("rekor should record latency even on 5xx")
+	}
+	if h := history(t, rekor); len(h) == 0 || h[0].HttpStatusCode == nil {
+		t.Error("rekor sample should carry http status code")
+	}
+}
+
+func TestRingBufferCapAndStateChange(t *testing.T) {
+	buf := newRingBuffer(3, 1, true)
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for i := 0; i < 5; i++ {
+		buf.add(sample{timestamp: base.Add(time.Duration(i) * time.Second), status: models.ServiceHealthStatusHealthy, source: models.Http})
+	}
+	if len(buf.samples) != 3 {
+		t.Errorf("buffer len = %d, want 3 (capped)", len(buf.samples))
+	}
+	// First retained sample should be the 3rd added (index 2).
+	if !buf.samples[0].timestamp.Equal(base.Add(2 * time.Second)) {
+		t.Errorf("oldest retained = %v", buf.samples[0].timestamp)
+	}
+
+	// Flip to failure: state change recorded, consecutive failures count.
+	buf.add(sample{timestamp: base.Add(5 * time.Second), status: models.ServiceHealthStatusUnhealthy, source: models.Http})
+	if buf.consecutiveFail != 1 {
+		t.Errorf("consecutiveFail = %d, want 1", buf.consecutiveFail)
+	}
+	if buf.lastStateChange == nil || !buf.lastStateChange.Equal(base.Add(5*time.Second)) {
+		t.Errorf("lastStateChange = %v", buf.lastStateChange)
+	}
+}
+
+// Unknown observations are neither successes nor failures: they reset the
+// consecutive-failure count and are excluded from errorRate/uptime.
+func TestUnknownSamplesExcludedFromRates(t *testing.T) {
+	buf := newRingBuffer(10, 2, true)
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	add := func(i int, st models.ServiceHealthStatus) {
+		buf.add(sample{timestamp: base.Add(time.Duration(i) * time.Second), status: st, source: models.Http})
+	}
+	add(0, models.ServiceHealthStatusHealthy)
+	add(1, models.ServiceHealthStatusUnhealthy)
+	add(2, models.ServiceHealthStatusUnknown)
+	add(3, models.ServiceHealthStatusUnknown)
+	add(4, models.ServiceHealthStatusUnhealthy)
+
+	if buf.consecutiveFail != 1 {
+		t.Errorf("consecutiveFail = %d, want 1 (reset by unknown)", buf.consecutiveFail)
+	}
+	// Debounce restarts after unknown: one failure keeps the unknown status.
+	if buf.status != models.ServiceHealthStatusUnknown {
+		t.Errorf("status = %q, want unknown", buf.status)
+	}
+
+	sh := buildServiceHealth("rekor", buf, true)
+	// 1 success + 2 failures known; the 2 unknown samples are ignored.
+	assertRate(t, "errorRate", sh.ErrorRate, 2.0/3)
+	assertRate(t, "uptime", sh.UptimePercentage, 100.0/3)
+	if sh.ProbeCount != 5 {
+		t.Errorf("probeCount = %d, want 5", sh.ProbeCount)
+	}
+}
+
+func TestPercentile(t *testing.T) {
+	vals := []float64{10, 20, 30, 40, 50, 60, 70, 80, 90, 100}
+	if got := percentile(vals, 50); got != 50 {
+		t.Errorf("p50 = %v, want 50", got)
+	}
+	if got := percentile(vals, 95); got != 100 {
+		t.Errorf("p95 = %v, want 100", got)
+	}
+	if got := percentile([]float64{42}, 95); got != 42 {
+		t.Errorf("single-value p95 = %v, want 42", got)
+	}
+	if got := percentile(nil, 95); got != 0 {
+		t.Errorf("empty p95 = %v, want 0", got)
+	}
+}
+
+func TestReadyStatus(t *testing.T) {
 	tests := []struct {
-		status string
-		want   result
+		in   string
+		want models.SystemHealthResponseSecuresignStatus
 	}{
-		{"True", healthy},
-		{"False", unhealthy},
-		{"", unknown},
-		{"Unknown", unknown},
+		{"True", models.SystemHealthResponseSecuresignStatusHealthy},
+		{"False", models.SystemHealthResponseSecuresignStatusUnhealthy},
+		{"Unknown", models.SystemHealthResponseSecuresignStatusUnknown},
+		{"", models.SystemHealthResponseSecuresignStatusUnknown},
 	}
-
 	for _, tt := range tests {
-		got := mapCondition(tt.status, healthy, unhealthy, unknown)
-		if got != tt.want {
-			t.Errorf("mapCondition(%q) = %q, want %q", tt.status, got, tt.want)
+		if got := readyStatus(tt.in); got != tt.want {
+			t.Errorf("readyStatus(%q) = %q, want %q", tt.in, got, tt.want)
 		}
 	}
 }
 
-func TestGetSystemHealth(t *testing.T) {
-	t.Run("all components healthy", func(t *testing.T) {
-		t.Setenv("TAS_DEPLOYMENT_NAME", "securesign-sample")
-		cr := makeSecuresignCR("securesign-sample", testNamespace, allHealthyConditions())
-		h := newTestHealthService(cr)
+// securesignStatus follows the operator's Ready condition even when an HTTP
+// probe disagrees: it is never recomputed from services.
+func TestSecuresignStatusFollowsReadyCondition(t *testing.T) {
+	cr := makeSecuresignCR("securesign-sample", testNamespace, allHealthyConditions(), allURLs())
+	h := newTestHealthService(cr)
+	h.probeHTTP = func(context.Context, string) (time.Duration, int, error) {
+		return 0, 0, errors.New("connection refused")
+	}
+	h.collect(context.Background())
+	h.collect(context.Background())
 
-		resp, statusCode, err := h.GetSystemHealth(context.Background())
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if statusCode != http.StatusOK {
-			t.Errorf("status = %d, want %d", statusCode, http.StatusOK)
-		}
-		if resp.SecuresignStatus != models.SystemHealthResponseSecuresignStatusHealthy {
-			t.Errorf("SecuresignStatus = %q, want %q", resp.SecuresignStatus, models.SystemHealthResponseSecuresignStatusHealthy)
-		}
-		if resp.RekorStatus != models.SystemHealthResponseRekorStatusHealthy {
-			t.Errorf("RekorStatus = %q, want %q", resp.RekorStatus, models.SystemHealthResponseRekorStatusHealthy)
-		}
-		if resp.FulcioStatus != models.SystemHealthResponseFulcioStatusHealthy {
-			t.Errorf("FulcioStatus = %q, want %q", resp.FulcioStatus, models.SystemHealthResponseFulcioStatusHealthy)
-		}
-		if resp.CtlogStatus != models.SystemHealthResponseCtlogStatusHealthy {
-			t.Errorf("CtlogStatus = %q, want %q", resp.CtlogStatus, models.SystemHealthResponseCtlogStatusHealthy)
-		}
-		if resp.TrillianStatus != models.SystemHealthResponseTrillianStatusHealthy {
-			t.Errorf("TrillianStatus = %q, want %q", resp.TrillianStatus, models.SystemHealthResponseTrillianStatusHealthy)
-		}
-		if resp.TsaStatus != models.SystemHealthResponseTsaStatusHealthy {
-			t.Errorf("TsaStatus = %q, want %q", resp.TsaStatus, models.SystemHealthResponseTsaStatusHealthy)
-		}
-		if resp.TufStatus != models.SystemHealthResponseTufStatusHealthy {
-			t.Errorf("TufStatus = %q, want %q", resp.TufStatus, models.SystemHealthResponseTufStatusHealthy)
-		}
-	})
+	resp, _, _ := h.GetSystemHealth(context.Background(), true)
+	if resp.SecuresignStatus != models.SystemHealthResponseSecuresignStatusHealthy {
+		t.Errorf("securesignStatus = %q, want healthy (Ready=True)", resp.SecuresignStatus)
+	}
+	rekor, _ := findService(resp, "rekor")
+	if rekor.Status != models.ServiceHealthStatusUnhealthy {
+		t.Errorf("rekor status = %q, want unhealthy", rekor.Status)
+	}
+}
 
-	t.Run("mixed component statuses", func(t *testing.T) {
-		t.Setenv("TAS_DEPLOYMENT_NAME", "securesign-sample")
-		cr := makeSecuresignCR("securesign-sample", testNamespace, []interface{}{
-			cond("Ready", "False"),
-			cond("RekorAvailable", "True"),
-			cond("FulcioAvailable", "False"),
-			cond("CTlogAvailable", "True"),
-			cond("TrillianAvailable", "False"),
-			cond("TsaAvailable", "True"),
-			cond("TufAvailable", "False"),
-		})
-		h := newTestHealthService(cr)
+func TestGetSystemHealthBeforeAnyProbe(t *testing.T) {
+	cr := makeSecuresignCR("securesign-sample", testNamespace, allHealthyConditions(), allURLs())
+	h := newTestHealthService(cr)
 
-		resp, statusCode, err := h.GetSystemHealth(context.Background())
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
+	// No collect() called yet: buffers empty -> everything unknown, no panic.
+	resp, code, err := h.GetSystemHealth(context.Background(), true)
+	if err != nil || code != http.StatusOK {
+		t.Fatalf("code=%d err=%v", code, err)
+	}
+	if resp.SecuresignStatus != models.SystemHealthResponseSecuresignStatusUnknown {
+		t.Errorf("securesignStatus = %q, want unknown", resp.SecuresignStatus)
+	}
+	for _, s := range resp.Services {
+		if s.Status != models.ServiceHealthStatusUnknown {
+			t.Errorf("%s status = %q, want unknown", s.Name, s.Status)
 		}
-		if statusCode != http.StatusOK {
-			t.Errorf("status = %d, want %d", statusCode, http.StatusOK)
+		if s.ProbeHistory == nil || *s.ProbeHistory == nil {
+			t.Errorf("%s ProbeHistory should be a non-nil empty list", s.Name)
 		}
-		if resp.SecuresignStatus != models.SystemHealthResponseSecuresignStatusUnhealthy {
-			t.Errorf("SecuresignStatus = %q, want %q", resp.SecuresignStatus, models.SystemHealthResponseSecuresignStatusUnhealthy)
-		}
-		if resp.RekorStatus != models.SystemHealthResponseRekorStatusHealthy {
-			t.Errorf("RekorStatus = %q, want %q", resp.RekorStatus, models.SystemHealthResponseRekorStatusHealthy)
-		}
-		if resp.FulcioStatus != models.SystemHealthResponseFulcioStatusUnhealthy {
-			t.Errorf("FulcioStatus = %q, want %q", resp.FulcioStatus, models.SystemHealthResponseFulcioStatusUnhealthy)
-		}
-		if resp.CtlogStatus != models.SystemHealthResponseCtlogStatusHealthy {
-			t.Errorf("CtlogStatus = %q, want %q", resp.CtlogStatus, models.SystemHealthResponseCtlogStatusHealthy)
-		}
-		if resp.TrillianStatus != models.SystemHealthResponseTrillianStatusUnhealthy {
-			t.Errorf("TrillianStatus = %q, want %q", resp.TrillianStatus, models.SystemHealthResponseTrillianStatusUnhealthy)
-		}
-		if resp.TsaStatus != models.SystemHealthResponseTsaStatusHealthy {
-			t.Errorf("TsaStatus = %q, want %q", resp.TsaStatus, models.SystemHealthResponseTsaStatusHealthy)
-		}
-		if resp.TufStatus != models.SystemHealthResponseTufStatusUnhealthy {
-			t.Errorf("TufStatus = %q, want %q", resp.TufStatus, models.SystemHealthResponseTufStatusUnhealthy)
-		}
-	})
+	}
+}
 
-	t.Run("CR not found returns error", func(t *testing.T) {
-		t.Setenv("TAS_DEPLOYMENT_NAME", "missing")
-		h := newTestHealthService()
+func TestStartStop(t *testing.T) {
+	cr := makeSecuresignCR("securesign-sample", testNamespace, allHealthyConditions(), allURLs())
+	h := newTestHealthService(cr)
+	h.interval = 10 * time.Millisecond
 
-		_, statusCode, err := h.GetSystemHealth(context.Background())
-		if err == nil {
-			t.Fatal("expected error for missing CR, got nil")
-		}
-		if statusCode != http.StatusInternalServerError {
-			t.Errorf("status = %d, want %d", statusCode, http.StatusInternalServerError)
-		}
-	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	h.Start(ctx) // non-blocking: first collection runs in the background
 
-	t.Run("missing condition returns unknown for that component", func(t *testing.T) {
-		t.Setenv("TAS_DEPLOYMENT_NAME", "securesign-sample")
-		cr := makeSecuresignCR("securesign-sample", testNamespace, []interface{}{
-			cond("Ready", "True"),
-			cond("RekorAvailable", "True"),
-		})
-		h := newTestHealthService(cr)
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		resp, _, _ := h.GetSystemHealth(context.Background(), true)
+		if resp.SecuresignStatus == models.SystemHealthResponseSecuresignStatusHealthy {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("after Start, securesignStatus = %q, want healthy", resp.SecuresignStatus)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	h.Stop()
+	h.Stop() // idempotent, must not panic
+}
 
-		resp, _, err := h.GetSystemHealth(context.Background())
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
+// The real probe client drains response bodies so keep-alive connections are
+// reused: repeated probes must not open a new connection each time (each new
+// dial is another chance to hit a dead load-balancer address).
+func TestDefaultProbeHTTPReusesConnections(t *testing.T) {
+	var newConns atomic.Int32
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(strings.Repeat("x", 64*1024)))
+	}))
+	srv.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			newConns.Add(1)
 		}
-		if resp.SecuresignStatus != models.SystemHealthResponseSecuresignStatusHealthy {
-			t.Errorf("SecuresignStatus = %q, want %q", resp.SecuresignStatus, models.SystemHealthResponseSecuresignStatusHealthy)
-		}
-		if resp.RekorStatus != models.SystemHealthResponseRekorStatusHealthy {
-			t.Errorf("RekorStatus = %q, want %q", resp.RekorStatus, models.SystemHealthResponseRekorStatusHealthy)
-		}
-		if resp.FulcioStatus != models.SystemHealthResponseFulcioStatusUnknown {
-			t.Errorf("FulcioStatus = %q, want %q", resp.FulcioStatus, models.SystemHealthResponseFulcioStatusUnknown)
-		}
-		if resp.TsaStatus != models.SystemHealthResponseTsaStatusUnknown {
-			t.Errorf("TsaStatus = %q, want %q", resp.TsaStatus, models.SystemHealthResponseTsaStatusUnknown)
-		}
-	})
+	}
+	srv.Start()
+	defer srv.Close()
 
-	t.Run("defaults to securesign-sample when TAS_DEPLOYMENT_NAME not set", func(t *testing.T) {
-		t.Setenv("TAS_DEPLOYMENT_NAME", "")
-		cr := makeSecuresignCR("securesign-sample", testNamespace, allHealthyConditions())
-		h := newTestHealthService(cr)
+	h := &healthService{httpClient: httpclient.New(5*time.Second, 5*time.Second)}
+	for i := 0; i < 5; i++ {
+		latency, code, err := h.defaultProbeHTTP(context.Background(), srv.URL)
+		if err != nil || code != http.StatusOK {
+			t.Fatalf("probe %d: code=%d err=%v", i, code, err)
+		}
+		if latency <= 0 {
+			t.Errorf("probe %d: latency = %v, want > 0", i, latency)
+		}
+	}
+	if n := newConns.Load(); n != 1 {
+		t.Errorf("new connections = %d, want 1 (keep-alive reuse)", n)
+	}
+}
 
-		resp, statusCode, err := h.GetSystemHealth(context.Background())
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
+func TestDefaultProbeHTTPTimeout(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		<-release
+	}))
+	defer srv.Close()
+	defer close(release)
+
+	h := &healthService{httpClient: httpclient.New(100*time.Millisecond, 100*time.Millisecond)}
+	if _, _, err := h.defaultProbeHTTP(context.Background(), srv.URL); err == nil {
+		t.Fatal("expected a timeout error")
+	}
+}
+
+// Probes run concurrently and a round is published atomically: while a round
+// is in flight readers still see the previous complete state, and the round
+// takes roughly as long as the slowest probe, not the sum.
+func TestCollectIsConcurrentAndAtomic(t *testing.T) {
+	cr := makeSecuresignCR("securesign-sample", testNamespace, allHealthyConditions(), allURLs())
+	h := newTestHealthService(cr)
+
+	const probeDelay = 200 * time.Millisecond
+	release := make(chan struct{})
+	var started atomic.Int32
+	h.probeHTTP = func(context.Context, string) (time.Duration, int, error) {
+		started.Add(1)
+		<-release
+		time.Sleep(probeDelay)
+		return probeDelay, http.StatusOK, nil
+	}
+
+	done := make(chan time.Duration)
+	go func() {
+		start := time.Now()
+		h.collect(context.Background())
+		done <- time.Since(start)
+	}()
+
+	// All 4 HTTP probes must be in flight at the same time.
+	deadline := time.Now().Add(2 * time.Second)
+	for started.Load() < 4 {
+		if time.Now().After(deadline) {
+			t.Fatalf("only %d probes started concurrently, want 4", started.Load())
 		}
-		if statusCode != http.StatusOK {
-			t.Errorf("status = %d, want %d", statusCode, http.StatusOK)
+		time.Sleep(time.Millisecond)
+	}
+
+	// Mid-round, nothing from this round is visible yet (not even the
+	// condition-only services or securesignStatus).
+	resp, _, _ := h.GetSystemHealth(context.Background(), true)
+	if resp.SecuresignStatus != models.SystemHealthResponseSecuresignStatusUnknown {
+		t.Errorf("mid-round securesignStatus = %q, want unknown", resp.SecuresignStatus)
+	}
+	for _, s := range resp.Services {
+		if s.ProbeCount != 0 {
+			t.Errorf("mid-round %s probeCount = %d, want 0", s.Name, s.ProbeCount)
 		}
-		if resp.SecuresignStatus != models.SystemHealthResponseSecuresignStatusHealthy {
-			t.Errorf("SecuresignStatus = %q, want %q", resp.SecuresignStatus, models.SystemHealthResponseSecuresignStatusHealthy)
+	}
+
+	close(release)
+	if elapsed := <-done; elapsed > 3*probeDelay {
+		t.Errorf("round took %v, want about %v (probes not concurrent)", elapsed, probeDelay)
+	}
+
+	resp, _, _ = h.GetSystemHealth(context.Background(), true)
+	if resp.SecuresignStatus != models.SystemHealthResponseSecuresignStatusHealthy {
+		t.Errorf("securesignStatus = %q, want healthy", resp.SecuresignStatus)
+	}
+	for _, s := range resp.Services {
+		if s.ProbeCount != 1 || s.Status != models.ServiceHealthStatusHealthy {
+			t.Errorf("%s probeCount=%d status=%q, want 1/healthy", s.Name, s.ProbeCount, s.Status)
 		}
-	})
+	}
+}
+
+// Before any sample, rates are null rather than a misleading 0% uptime.
+func TestRatesNullWithoutSamples(t *testing.T) {
+	sh := buildServiceHealth("rekor", newRingBuffer(5, 2, true), false)
+	if sh.ErrorRate != nil || sh.UptimePercentage != nil {
+		t.Errorf("errorRate=%v uptime=%v, want nil/nil", sh.ErrorRate, sh.UptimePercentage)
+	}
+}
+
+// The summary omits probe samples unless requested.
+func TestHistoryOnlyWhenRequested(t *testing.T) {
+	cr := makeSecuresignCR("securesign-sample", testNamespace, allHealthyConditions(), allURLs())
+	h := newTestHealthService(cr)
+	h.collect(context.Background())
+
+	resp, _, _ := h.GetSystemHealth(context.Background(), false)
+	for _, s := range resp.Services {
+		if s.ProbeHistory != nil {
+			t.Errorf("%s: probeHistory must be omitted by default", s.Name)
+		}
+		if s.ProbeCount != 1 || s.Status != models.ServiceHealthStatusHealthy {
+			t.Errorf("%s: summary fields must still be populated (count=%d status=%q)", s.Name, s.ProbeCount, s.Status)
+		}
+	}
+
+	resp, _, _ = h.GetSystemHealth(context.Background(), true)
+	rekor, _ := findService(resp, "rekor")
+	if got := history(t, rekor); len(got) != 1 || got[0].Status != models.ProbeSampleStatusHealthy {
+		t.Errorf("rekor history = %+v, want one healthy sample", got)
+	}
+}
+
+// updatedAt reports when the last round completed, not the request time, and
+// is null before the first round.
+func TestUpdatedAtIsRoundCompletion(t *testing.T) {
+	cr := makeSecuresignCR("securesign-sample", testNamespace, allHealthyConditions(), allURLs())
+	h := newTestHealthService(cr)
+
+	resp, _, _ := h.GetSystemHealth(context.Background(), false)
+	if resp.UpdatedAt != nil {
+		t.Errorf("updatedAt before first round = %v, want nil", *resp.UpdatedAt)
+	}
+
+	h.collect(context.Background())
+	first, _, _ := h.GetSystemHealth(context.Background(), false)
+	if first.UpdatedAt == nil {
+		t.Fatal("updatedAt must be set after a round")
+	}
+	// Further requests (no new round) must not move updatedAt.
+	again, _, _ := h.GetSystemHealth(context.Background(), false)
+	if !again.UpdatedAt.Equal(*first.UpdatedAt) {
+		t.Errorf("updatedAt moved without a new round: %v -> %v", *first.UpdatedAt, *again.UpdatedAt)
+	}
+
+	h.collect(context.Background())
+	next, _, _ := h.GetSystemHealth(context.Background(), false)
+	if !next.UpdatedAt.After(*first.UpdatedAt) {
+		t.Errorf("updatedAt did not advance after a new round: %v -> %v", *first.UpdatedAt, *next.UpdatedAt)
+	}
+}
+
+// Unknown observations are distinguishable from failures in the history.
+func TestProbeSampleStatusDistinguishesUnknown(t *testing.T) {
+	h := newTestHealthService() // no CR: every sample is unknown
+	h.collect(context.Background())
+
+	resp, _, _ := h.GetSystemHealth(context.Background(), true)
+	for _, s := range resp.Services {
+		for _, ps := range history(t, s) {
+			if ps.Status != models.ProbeSampleStatusUnknown || ps.Success {
+				t.Errorf("%s sample status=%q success=%v, want unknown/false", s.Name, ps.Status, ps.Success)
+			}
+		}
+	}
+}
+
+// PROBE_URL_<SERVICE> overrides the CR status URL (e.g. an in-cluster Service).
+func TestProbeURLOverride(t *testing.T) {
+	t.Setenv("PROBE_URL_REKOR", "http://rekor-server.tas.svc/")
+	t.Setenv("PROBE_URL_CTLOG", "http://ignored") // condition-only service: not probed
+
+	cr := makeSecuresignCR("securesign-sample", testNamespace, allHealthyConditions(), allURLs())
+	h := newTestHealthService(cr)
+	h.probeURLs = probeURLOverrides()
+
+	var mu sync.Mutex
+	var probed []string
+	h.probeHTTP = func(_ context.Context, url string) (time.Duration, int, error) {
+		mu.Lock()
+		probed = append(probed, url)
+		mu.Unlock()
+		return time.Millisecond, http.StatusOK, nil
+	}
+	h.collect(context.Background())
+
+	mu.Lock()
+	defer mu.Unlock()
+	want := map[string]bool{
+		"http://rekor-server.tas.svc/api/v1/log":        true, // override, trailing slash trimmed
+		"https://fulcio.example.com/api/v2/trustBundle": true, // CR status URL
+		"https://tsa.example.com/certchain":             true,
+		"https://tuf.example.com/root.json":             true,
+	}
+	if len(probed) != len(want) {
+		t.Fatalf("probed %v, want %d URLs", probed, len(want))
+	}
+	for _, u := range probed {
+		if !want[u] {
+			t.Errorf("unexpected probe URL %q", u)
+		}
+	}
+
+	resp, _, _ := h.GetSystemHealth(context.Background(), false)
+	rekor, _ := findService(resp, "rekor")
+	if rekor.EndpointUrl == nil || *rekor.EndpointUrl != "http://rekor-server.tas.svc" {
+		t.Errorf("rekor endpointUrl = %v, want the override", rekor.EndpointUrl)
+	}
+	ctlog, _ := findService(resp, "ctlog")
+	if ctlog.EndpointUrl != nil || ctlog.Probed {
+		t.Error("condition-only services must ignore PROBE_URL_* overrides")
+	}
+}
+
+// With an override set, a probed service keeps being probed even when the CR
+// cannot be read (the override does not depend on the CR).
+func TestProbeURLOverrideWithoutCR(t *testing.T) {
+	h := newTestHealthService() // no CR
+	h.probeURLs = map[string]string{"tuf": "http://tuf.tas.svc"}
+	h.collect(context.Background())
+
+	resp, _, _ := h.GetSystemHealth(context.Background(), false)
+	tuf, _ := findService(resp, "tuf")
+	if tuf.Status != models.ServiceHealthStatusHealthy {
+		t.Errorf("tuf status = %q, want healthy (probed via override)", tuf.Status)
+	}
+	if resp.SecuresignStatus != models.SystemHealthResponseSecuresignStatusUnknown {
+		t.Errorf("securesignStatus = %q, want unknown (CR unreadable)", resp.SecuresignStatus)
+	}
 }

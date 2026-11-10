@@ -47,25 +47,34 @@ const (
 	Revoked  CertificateStatus = "revoked"
 )
 
-// Defines values for SystemHealthResponseCtlogStatus.
+// Defines values for ProbeSampleSource.
 const (
-	SystemHealthResponseCtlogStatusHealthy   SystemHealthResponseCtlogStatus = "healthy"
-	SystemHealthResponseCtlogStatusUnhealthy SystemHealthResponseCtlogStatus = "unhealthy"
-	SystemHealthResponseCtlogStatusUnknown   SystemHealthResponseCtlogStatus = "unknown"
+	Condition ProbeSampleSource = "condition"
+	Http      ProbeSampleSource = "http"
 )
 
-// Defines values for SystemHealthResponseFulcioStatus.
+// Defines values for ProbeSampleStatus.
 const (
-	SystemHealthResponseFulcioStatusHealthy   SystemHealthResponseFulcioStatus = "healthy"
-	SystemHealthResponseFulcioStatusUnhealthy SystemHealthResponseFulcioStatus = "unhealthy"
-	SystemHealthResponseFulcioStatusUnknown   SystemHealthResponseFulcioStatus = "unknown"
+	ProbeSampleStatusHealthy   ProbeSampleStatus = "healthy"
+	ProbeSampleStatusUnhealthy ProbeSampleStatus = "unhealthy"
+	ProbeSampleStatusUnknown   ProbeSampleStatus = "unknown"
 )
 
-// Defines values for SystemHealthResponseRekorStatus.
+// Defines values for ServiceHealthName.
 const (
-	SystemHealthResponseRekorStatusHealthy   SystemHealthResponseRekorStatus = "healthy"
-	SystemHealthResponseRekorStatusUnhealthy SystemHealthResponseRekorStatus = "unhealthy"
-	SystemHealthResponseRekorStatusUnknown   SystemHealthResponseRekorStatus = "unknown"
+	Ctlog    ServiceHealthName = "ctlog"
+	Fulcio   ServiceHealthName = "fulcio"
+	Rekor    ServiceHealthName = "rekor"
+	Trillian ServiceHealthName = "trillian"
+	Tsa      ServiceHealthName = "tsa"
+	Tuf      ServiceHealthName = "tuf"
+)
+
+// Defines values for ServiceHealthStatus.
+const (
+	ServiceHealthStatusHealthy   ServiceHealthStatus = "healthy"
+	ServiceHealthStatusUnhealthy ServiceHealthStatus = "unhealthy"
+	ServiceHealthStatusUnknown   ServiceHealthStatus = "unknown"
 )
 
 // Defines values for SystemHealthResponseSecuresignStatus.
@@ -73,27 +82,6 @@ const (
 	SystemHealthResponseSecuresignStatusHealthy   SystemHealthResponseSecuresignStatus = "healthy"
 	SystemHealthResponseSecuresignStatusUnhealthy SystemHealthResponseSecuresignStatus = "unhealthy"
 	SystemHealthResponseSecuresignStatusUnknown   SystemHealthResponseSecuresignStatus = "unknown"
-)
-
-// Defines values for SystemHealthResponseTrillianStatus.
-const (
-	SystemHealthResponseTrillianStatusHealthy   SystemHealthResponseTrillianStatus = "healthy"
-	SystemHealthResponseTrillianStatusUnhealthy SystemHealthResponseTrillianStatus = "unhealthy"
-	SystemHealthResponseTrillianStatusUnknown   SystemHealthResponseTrillianStatus = "unknown"
-)
-
-// Defines values for SystemHealthResponseTsaStatus.
-const (
-	SystemHealthResponseTsaStatusHealthy   SystemHealthResponseTsaStatus = "healthy"
-	SystemHealthResponseTsaStatusUnhealthy SystemHealthResponseTsaStatus = "unhealthy"
-	SystemHealthResponseTsaStatusUnknown   SystemHealthResponseTsaStatus = "unknown"
-)
-
-// Defines values for SystemHealthResponseTufStatus.
-const (
-	SystemHealthResponseTufStatusHealthy   SystemHealthResponseTufStatus = "healthy"
-	SystemHealthResponseTufStatusUnhealthy SystemHealthResponseTufStatus = "unhealthy"
-	SystemHealthResponseTufStatusUnknown   SystemHealthResponseTufStatus = "unknown"
 )
 
 // Defines values for TimeCoherenceSummaryStatus.
@@ -373,11 +361,111 @@ type ParsedCertificate struct {
 	Subject      string          `json:"subject"`
 }
 
+// ProbeSample A single probe observation.
+type ProbeSample struct {
+	// Error Error detail when the probe failed, otherwise null.
+	Error *string `json:"error"`
+
+	// HttpStatusCode HTTP status code returned by the probe, or null when not an HTTP probe or no response was received.
+	HttpStatusCode *int `json:"httpStatusCode"`
+
+	// LatencyMs Probe latency in milliseconds, or null for condition-derived samples or when no response was received.
+	LatencyMs *float32 `json:"latencyMs"`
+
+	// Source Origin of the sample - an active HTTP probe or a Securesign CR condition observation.
+	Source ProbeSampleSource `json:"source"`
+
+	// Status Outcome of this observation. unknown means it could not be determined (e.g.
+	// the Securesign CR was unreadable or the condition was not reported) and is not
+	// counted as a failure.
+	Status ProbeSampleStatus `json:"status"`
+
+	// Success Shorthand for status == healthy.
+	Success bool `json:"success"`
+
+	// Timestamp When the probe was taken.
+	Timestamp time.Time `json:"timestamp"`
+}
+
+// ProbeSampleSource Origin of the sample - an active HTTP probe or a Securesign CR condition observation.
+type ProbeSampleSource string
+
+// ProbeSampleStatus Outcome of this observation. unknown means it could not be determined (e.g.
+// the Securesign CR was unreadable or the condition was not reported) and is not
+// counted as a failure.
+type ProbeSampleStatus string
+
 // RekorPublicKey defines model for RekorPublicKey.
 type RekorPublicKey struct {
 	// PublicKey Rekor public key in PEM format
 	PublicKey string `json:"publicKey"`
 }
+
+// ServiceHealth Detailed health and probe metrics for a single component service.
+type ServiceHealth struct {
+	// ConsecutiveFailures Number of consecutive failing probes ending at the most recent sample. Unknown observations reset the count.
+	ConsecutiveFailures int `json:"consecutiveFailures"`
+
+	// EndpointUrl Probe target URL, or null when the service has no reachable endpoint.
+	EndpointUrl *string `json:"endpointUrl"`
+
+	// ErrorRate Fraction of failed probes (0..1) over the retained samples with a known outcome. Null when there is no such sample yet.
+	ErrorRate *float32 `json:"errorRate"`
+
+	// LastProbe Timestamp of the most recent probe, or null if none yet.
+	LastProbe *time.Time `json:"lastProbe"`
+
+	// LastStateChange Timestamp at which the status last changed, or null if unknown.
+	LastStateChange *time.Time `json:"lastStateChange"`
+
+	// LastSuccessfulProbe Timestamp of the most recent successful probe, or null if none yet.
+	LastSuccessfulProbe *time.Time `json:"lastSuccessfulProbe"`
+
+	// LatencyP50Ms Median (p50) probe latency, in milliseconds, over the retained window. Null when not HTTP-probed or no samples exist.
+	LatencyP50Ms *float32 `json:"latencyP50Ms"`
+
+	// LatencyP95Ms 95th percentile probe latency, in milliseconds, over the retained window. Null when not HTTP-probed or no samples exist.
+	LatencyP95Ms *float32 `json:"latencyP95Ms"`
+
+	// MeanLatencyMs Mean probe latency, in milliseconds, over the retained window. Null when not HTTP-probed or no samples exist.
+	MeanLatencyMs *float32 `json:"meanLatencyMs"`
+
+	// Name Component service identifier.
+	Name ServiceHealthName `json:"name"`
+
+	// ProbeCount Number of probe samples retained in the window.
+	ProbeCount int `json:"probeCount"`
+
+	// ProbeHistory Retained probe samples, oldest first. Only present when the request sets `history=true`.
+	ProbeHistory *[]ProbeSample `json:"probeHistory,omitempty"`
+
+	// Probed Whether this service is actively HTTP-probed. When false, status and
+	// history are derived from Securesign CR conditions and latency metrics
+	// are not available. A probed service falls back to condition samples
+	// while its endpoint URL is not published (or the CR is unreadable); each
+	// sample's `source` tells which applies.
+	Probed bool `json:"probed"`
+
+	// Status Current health status. Condition-derived failures apply immediately; HTTP
+	// probe failures only mark the service unhealthy after a configurable number
+	// of consecutive failures (PROBE_FAILURE_THRESHOLD, default 2). unknown when
+	// the outcome cannot be determined, e.g. the Securesign CR is unreadable or
+	// the condition is not reported.
+	Status ServiceHealthStatus `json:"status"`
+
+	// UptimePercentage Percentage of successful probes (0..100) over the retained samples with a known outcome. Null when there is no such sample yet.
+	UptimePercentage *float32 `json:"uptimePercentage"`
+}
+
+// ServiceHealthName Component service identifier.
+type ServiceHealthName string
+
+// ServiceHealthStatus Current health status. Condition-derived failures apply immediately; HTTP
+// probe failures only mark the service unhealthy after a configurable number
+// of consecutive failures (PROBE_FAILURE_THRESHOLD, default 2). unknown when
+// the outcome cannot be determined, e.g. the Securesign CR is unreadable or
+// the condition is not reported.
+type ServiceHealthStatus string
 
 // SignatureView defines model for SignatureView.
 type SignatureView struct {
@@ -395,53 +483,41 @@ type SignatureView struct {
 	Timestamp *time.Time `json:"timestamp,omitempty"`
 }
 
-// SystemHealthResponse defines model for SystemHealthResponse.
+// SystemHealthResponse Health of the RHTAS deployment and its component services.
+// `securesignStatus` is the operator's own verdict for the whole deployment.
+// Each entry in `services` carries detailed, per-service probe metrics derived
+// from an in-process prober. Services with a reachable endpoint (rekor, fulcio,
+// tsa, tuf) are actively HTTP-probed; the remaining components (ctlog, trillian)
+// have no externally reachable endpoint and their availability is observed from
+// the Securesign Custom Resource status conditions instead.
 type SystemHealthResponse struct {
-	// CtlogStatus Certificate Transparency log service health status
-	CtlogStatus SystemHealthResponseCtlogStatus `json:"ctlogStatus"`
+	// ProbeIntervalSeconds Interval, in seconds, between consecutive probes.
+	ProbeIntervalSeconds int `json:"probeIntervalSeconds"`
 
-	// FulcioStatus Fulcio certificate authority service health status
-	FulcioStatus SystemHealthResponseFulcioStatus `json:"fulcioStatus"`
-
-	// RekorStatus Rekor transparency log service health status
-	RekorStatus SystemHealthResponseRekorStatus `json:"rekorStatus"`
-
-	// SecuresignStatus Overall Securesign operator health status
+	// SecuresignStatus Overall deployment status taken from the Securesign CR `Ready` condition,
+	// which the operator derives from the component conditions: True -> healthy,
+	// False -> unhealthy, anything else (including an unreadable CR or no
+	// observation yet) -> unknown. It is not computed from `services`, so it can
+	// differ from the HTTP probe results.
 	SecuresignStatus SystemHealthResponseSecuresignStatus `json:"securesignStatus"`
 
-	// TrillianStatus Trillian backend service health status
-	TrillianStatus SystemHealthResponseTrillianStatus `json:"trillianStatus"`
+	// Services Per-service health detail.
+	Services []ServiceHealth `json:"services"`
 
-	// TsaStatus Timestamp Authority service health status
-	TsaStatus SystemHealthResponseTsaStatus `json:"tsaStatus"`
+	// UpdatedAt When the most recent probe round completed, i.e. how fresh the data is (not
+	// the time of this request). Null until the first round completes.
+	UpdatedAt *time.Time `json:"updatedAt"`
 
-	// TufStatus TUF repository health status
-	TufStatus SystemHealthResponseTufStatus `json:"tufStatus"`
-
-	// UpdatedAt Timestamp when the health status was last updated
-	UpdatedAt time.Time `json:"updatedAt"`
+	// WindowSeconds Approximate time window, in seconds, covered by the retained probe history.
+	WindowSeconds int `json:"windowSeconds"`
 }
 
-// SystemHealthResponseCtlogStatus Certificate Transparency log service health status
-type SystemHealthResponseCtlogStatus string
-
-// SystemHealthResponseFulcioStatus Fulcio certificate authority service health status
-type SystemHealthResponseFulcioStatus string
-
-// SystemHealthResponseRekorStatus Rekor transparency log service health status
-type SystemHealthResponseRekorStatus string
-
-// SystemHealthResponseSecuresignStatus Overall Securesign operator health status
+// SystemHealthResponseSecuresignStatus Overall deployment status taken from the Securesign CR `Ready` condition,
+// which the operator derives from the component conditions: True -> healthy,
+// False -> unhealthy, anything else (including an unreadable CR or no
+// observation yet) -> unknown. It is not computed from `services`, so it can
+// differ from the HTTP probe results.
 type SystemHealthResponseSecuresignStatus string
-
-// SystemHealthResponseTrillianStatus Trillian backend service health status
-type SystemHealthResponseTrillianStatus string
-
-// SystemHealthResponseTsaStatus Timestamp Authority service health status
-type SystemHealthResponseTsaStatus string
-
-// SystemHealthResponseTufStatus TUF repository health status
-type SystemHealthResponseTufStatus string
 
 // TargetContent defines model for TargetContent.
 type TargetContent struct {
@@ -614,6 +690,12 @@ type GetApiV1ArtifactsImageParams struct {
 	Uri string `form:"uri" json:"uri"`
 }
 
+// GetApiV1SystemHealthParams defines parameters for GetApiV1SystemHealth.
+type GetApiV1SystemHealthParams struct {
+	// History Include the retained probe samples (`probeHistory`) for each service.
+	History *bool `form:"history,omitempty" json:"history,omitempty"`
+}
+
 // GetApiV1TrustConfigParams defines parameters for GetApiV1TrustConfig.
 type GetApiV1TrustConfigParams struct {
 	TufRepositoryUrl *string `form:"tufRepositoryUrl,omitempty" json:"tufRepositoryUrl,omitempty"`
@@ -662,7 +744,7 @@ type ServerInterface interface {
 	GetApiV1RekorPublicKey(w http.ResponseWriter, r *http.Request)
 	// Get System Health Status
 	// (GET /api/v1/system/health)
-	GetApiV1SystemHealth(w http.ResponseWriter, r *http.Request)
+	GetApiV1SystemHealth(w http.ResponseWriter, r *http.Request, params GetApiV1SystemHealthParams)
 	// Get Fulcio and Rekor metadata from TUF targets
 	// (GET /api/v1/trust/config)
 	GetApiV1TrustConfig(w http.ResponseWriter, r *http.Request, params GetApiV1TrustConfigParams)
@@ -722,7 +804,7 @@ func (_ Unimplemented) GetApiV1RekorPublicKey(w http.ResponseWriter, r *http.Req
 
 // Get System Health Status
 // (GET /api/v1/system/health)
-func (_ Unimplemented) GetApiV1SystemHealth(w http.ResponseWriter, r *http.Request) {
+func (_ Unimplemented) GetApiV1SystemHealth(w http.ResponseWriter, r *http.Request, params GetApiV1SystemHealthParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -897,8 +979,21 @@ func (siw *ServerInterfaceWrapper) GetApiV1RekorPublicKey(w http.ResponseWriter,
 // GetApiV1SystemHealth operation middleware
 func (siw *ServerInterfaceWrapper) GetApiV1SystemHealth(w http.ResponseWriter, r *http.Request) {
 
+	var err error
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetApiV1SystemHealthParams
+
+	// ------------- Optional query parameter "history" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "history", r.URL.Query(), &params.History)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "history", Err: err})
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetApiV1SystemHealth(w, r)
+		siw.Handler.GetApiV1SystemHealth(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {

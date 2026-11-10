@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/securesign/rhtas-console/internal/httpclient"
 	"github.com/securesign/rhtas-console/internal/models"
 	"github.com/sigstore/sigstore-go/pkg/root"
 	"github.com/sigstore/sigstore-go/pkg/tuf"
@@ -653,12 +654,24 @@ func (s *trustService) GetTUFRepoURL() string {
 func buildTufOptions(ctx context.Context, tufRepoUrl string) (*tuf.Options, error) {
 	opts := tuf.DefaultOptions()
 	opts.RepositoryBaseURL = tufRepoUrl
+	// tuf.DefaultOptions installs a fetcher backed by http.DefaultClient, which
+	// has no timeouts; replace it with one using a bounded client.
+	opts.Fetcher = newTUFFetcher()
 	if !urlsEqual(opts.RepositoryBaseURL, TufPublicGoodInstance) {
 		if err := setOptsRoot(ctx, opts); err != nil {
 			return nil, fmt.Errorf("failed to set root in options for %s: %w", tufRepoUrl, err)
 		}
 	}
 	return opts, nil
+}
+
+// newTUFFetcher returns a TUF metadata fetcher that uses the bounded shared
+// HTTP client instead of http.DefaultClient.
+func newTUFFetcher() *fetcher.DefaultFetcher {
+	f := fetcher.NewDefaultFetcher()
+	f.SetHTTPUserAgent(util.ConstructUserAgent())
+	f.SetHTTPClient(httpclient.Default)
+	return f
 }
 
 const rootTTL = 30 * time.Minute
@@ -692,7 +705,7 @@ func fetchRootJSON(ctx context.Context, url string) ([]byte, error) {
 		}
 		rootCache.RUnlock()
 
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := httpclient.Default.Do(req)
 		if err != nil {
 			return nil, err
 		}
@@ -766,9 +779,7 @@ func buildTufConfig(opts *tuf.Options) (*config.UpdaterConfig, error) {
 	if opts.Fetcher != nil {
 		tufCfg.Fetcher = opts.Fetcher
 	} else {
-		f := fetcher.NewDefaultFetcher()
-		f.SetHTTPUserAgent(util.ConstructUserAgent())
-		tufCfg.Fetcher = f
+		tufCfg.Fetcher = newTUFFetcher()
 	}
 
 	return tufCfg, nil

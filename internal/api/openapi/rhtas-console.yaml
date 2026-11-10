@@ -404,11 +404,21 @@ paths:
     get:
       summary: Get System Health Status
       description: |
-        Returns the health status of the RHTAS Console and its downstream dependencies
-        including TAS, Rekor, and TUF services. Useful for monitoring and operational dashboards.
+        Returns the health of the RHTAS deployment (Securesign CR Ready condition) and
+        of each component service (rekor, fulcio, ctlog, trillian, tsa, tuf), as observed
+        by the console's background prober. The summary is small; pass `history=true`
+        to also receive the retained per-service probe samples.
       tags:
         - System
       operationId: GetApiV1SystemHealth
+      parameters:
+        - name: history
+          in: query
+          required: false
+          description: Include the retained probe samples (`probeHistory`) for each service.
+          schema:
+            type: boolean
+            default: false
       responses:
         "200":
           description: System health status
@@ -417,10 +427,54 @@ paths:
               schema:
                 $ref: "#/components/schemas/SystemHealthResponse"
               example:
-                sigstoreServices: healthy
-                rekorStatus: healthy
-                tufStatus: healthy
+                securesignStatus: unhealthy
+                probeIntervalSeconds: 30
+                windowSeconds: 3600
                 updatedAt: "2026-03-18T12:00:00Z"
+                services:
+                  - name: rekor
+                    status: healthy
+                    probed: true
+                    endpointUrl: "https://rekor.example.com"
+                    latencyP50Ms: 42.5
+                    latencyP95Ms: 88.1
+                    meanLatencyMs: 50.3
+                    errorRate: 0
+                    uptimePercentage: 100
+                    consecutiveFailures: 0
+                    probeCount: 120
+                    lastProbe: "2026-03-18T12:00:00Z"
+                    lastSuccessfulProbe: "2026-03-18T12:00:00Z"
+                    lastStateChange: "2026-03-18T10:00:00Z"
+                    probeHistory: # only present with history=true
+                      - timestamp: "2026-03-18T12:00:00Z"
+                        status: healthy
+                        success: true
+                        latencyMs: 41.2
+                        httpStatusCode: 200
+                        source: http
+                  - name: ctlog
+                    status: unhealthy
+                    probed: false
+                    endpointUrl: null
+                    latencyP50Ms: null
+                    latencyP95Ms: null
+                    meanLatencyMs: null
+                    errorRate: 1
+                    uptimePercentage: 0
+                    consecutiveFailures: 5
+                    probeCount: 120
+                    lastProbe: "2026-03-18T12:00:00Z"
+                    lastSuccessfulProbe: null
+                    lastStateChange: "2026-03-18T11:30:00Z"
+                    probeHistory: # only present with history=true
+                      - timestamp: "2026-03-18T12:00:00Z"
+                        status: unhealthy
+                        success: false
+                        latencyMs: null
+                        httpStatusCode: null
+                        source: condition
+                        error: "Securesign condition CTlogAvailable=False"
         "500":
           description: Internal server error
           content:
@@ -1168,53 +1222,193 @@ components:
         - updatedAt
     SystemHealthResponse:
       type: object
+      description: |
+        Health of the RHTAS deployment and its component services.
+        `securesignStatus` is the operator's own verdict for the whole deployment.
+        Each entry in `services` carries detailed, per-service probe metrics derived
+        from an in-process prober. Services with a reachable endpoint (rekor, fulcio,
+        tsa, tuf) are actively HTTP-probed; the remaining components (ctlog, trillian)
+        have no externally reachable endpoint and their availability is observed from
+        the Securesign Custom Resource status conditions instead.
       properties:
         securesignStatus:
           type: string
           enum: ["healthy", "unhealthy", "unknown"]
-          description: Overall Securesign operator health status
+          description: |
+            Overall deployment status taken from the Securesign CR `Ready` condition,
+            which the operator derives from the component conditions: True -> healthy,
+            False -> unhealthy, anything else (including an unreadable CR or no
+            observation yet) -> unknown. It is not computed from `services`, so it can
+            differ from the HTTP probe results.
           example: healthy
-        rekorStatus:
-          type: string
-          enum: ["healthy", "unhealthy", "unknown"]
-          description: Rekor transparency log service health status
-          example: healthy
-        fulcioStatus:
-          type: string
-          enum: ["healthy", "unhealthy", "unknown"]
-          description: Fulcio certificate authority service health status
-          example: healthy
-        ctlogStatus:
-          type: string
-          enum: ["healthy", "unhealthy", "unknown"]
-          description: Certificate Transparency log service health status
-          example: healthy
-        trillianStatus:
-          type: string
-          enum: ["healthy", "unhealthy", "unknown"]
-          description: Trillian backend service health status
-          example: healthy
-        tsaStatus:
-          type: string
-          enum: ["healthy", "unhealthy", "unknown"]
-          description: Timestamp Authority service health status
-          example: healthy
-        tufStatus:
-          type: string
-          enum: ["healthy", "unhealthy", "unknown"]
-          description: TUF repository health status
-          example: healthy
+        services:
+          type: array
+          description: Per-service health detail.
+          items:
+            $ref: "#/components/schemas/ServiceHealth"
+        probeIntervalSeconds:
+          type: integer
+          description: Interval, in seconds, between consecutive probes.
+          example: 30
+        windowSeconds:
+          type: integer
+          description: Approximate time window, in seconds, covered by the retained probe history.
+          example: 3600
         updatedAt:
           type: string
           format: date-time
-          description: Timestamp when the health status was last updated
+          nullable: true
+          description: |
+            When the most recent probe round completed, i.e. how fresh the data is (not
+            the time of this request). Null until the first round completes.
           example: "2026-03-18T12:00:00Z"
       required:
         - securesignStatus
-        - rekorStatus
-        - fulcioStatus
-        - ctlogStatus
-        - trillianStatus
-        - tsaStatus
-        - tufStatus
+        - services
+        - probeIntervalSeconds
+        - windowSeconds
         - updatedAt
+    ServiceHealth:
+      type: object
+      description: Detailed health and probe metrics for a single component service.
+      properties:
+        name:
+          type: string
+          enum:
+            ["rekor", "fulcio", "ctlog", "trillian", "tsa", "tuf"]
+          description: Component service identifier.
+          example: rekor
+        status:
+          type: string
+          enum: ["healthy", "unhealthy", "unknown"]
+          description: |
+            Current health status. Condition-derived failures apply immediately; HTTP
+            probe failures only mark the service unhealthy after a configurable number
+            of consecutive failures (PROBE_FAILURE_THRESHOLD, default 2). unknown when
+            the outcome cannot be determined, e.g. the Securesign CR is unreadable or
+            the condition is not reported.
+          example: healthy
+        probed:
+          type: boolean
+          description: |
+            Whether this service is actively HTTP-probed. When false, status and
+            history are derived from Securesign CR conditions and latency metrics
+            are not available. A probed service falls back to condition samples
+            while its endpoint URL is not published (or the CR is unreadable); each
+            sample's `source` tells which applies.
+          example: true
+        endpointUrl:
+          type: string
+          nullable: true
+          description: Probe target URL, or null when the service has no reachable endpoint.
+          example: "https://rekor.example.com"
+        latencyP50Ms:
+          type: number
+          nullable: true
+          description: Median (p50) probe latency, in milliseconds, over the retained window. Null when not HTTP-probed or no samples exist.
+          example: 42.5
+        latencyP95Ms:
+          type: number
+          nullable: true
+          description: 95th percentile probe latency, in milliseconds, over the retained window. Null when not HTTP-probed or no samples exist.
+          example: 88.1
+        meanLatencyMs:
+          type: number
+          nullable: true
+          description: Mean probe latency, in milliseconds, over the retained window. Null when not HTTP-probed or no samples exist.
+          example: 50.3
+        errorRate:
+          type: number
+          nullable: true
+          description: Fraction of failed probes (0..1) over the retained samples with a known outcome. Null when there is no such sample yet.
+          example: 0
+        uptimePercentage:
+          type: number
+          nullable: true
+          description: Percentage of successful probes (0..100) over the retained samples with a known outcome. Null when there is no such sample yet.
+          example: 100
+        consecutiveFailures:
+          type: integer
+          description: Number of consecutive failing probes ending at the most recent sample. Unknown observations reset the count.
+          example: 0
+        lastProbe:
+          type: string
+          format: date-time
+          nullable: true
+          description: Timestamp of the most recent probe, or null if none yet.
+          example: "2026-03-18T12:00:00Z"
+        lastSuccessfulProbe:
+          type: string
+          format: date-time
+          nullable: true
+          description: Timestamp of the most recent successful probe, or null if none yet.
+          example: "2026-03-18T12:00:00Z"
+        lastStateChange:
+          type: string
+          format: date-time
+          nullable: true
+          description: Timestamp at which the status last changed, or null if unknown.
+          example: "2026-03-18T10:00:00Z"
+        probeCount:
+          type: integer
+          description: Number of probe samples retained in the window.
+          example: 120
+        probeHistory:
+          type: array
+          description: Retained probe samples, oldest first. Only present when the request sets `history=true`.
+          items:
+            $ref: "#/components/schemas/ProbeSample"
+      required:
+        - name
+        - status
+        - probed
+        - errorRate
+        - uptimePercentage
+        - consecutiveFailures
+        - probeCount
+    ProbeSample:
+      type: object
+      description: A single probe observation.
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+          description: When the probe was taken.
+          example: "2026-03-18T12:00:00Z"
+        status:
+          type: string
+          enum: ["healthy", "unhealthy", "unknown"]
+          description: |
+            Outcome of this observation. unknown means it could not be determined (e.g.
+            the Securesign CR was unreadable or the condition was not reported) and is not
+            counted as a failure.
+          example: healthy
+        success:
+          type: boolean
+          description: Shorthand for status == healthy.
+          example: true
+        latencyMs:
+          type: number
+          nullable: true
+          description: Probe latency in milliseconds, or null for condition-derived samples or when no response was received.
+          example: 41.2
+        httpStatusCode:
+          type: integer
+          nullable: true
+          description: HTTP status code returned by the probe, or null when not an HTTP probe or no response was received.
+          example: 200
+        source:
+          type: string
+          enum: ["http", "condition"]
+          description: Origin of the sample - an active HTTP probe or a Securesign CR condition observation.
+          example: http
+        error:
+          type: string
+          nullable: true
+          description: Error detail when the probe failed, otherwise null.
+          example: null
+      required:
+        - timestamp
+        - status
+        - success
+        - source
