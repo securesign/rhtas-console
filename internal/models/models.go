@@ -77,11 +77,53 @@ const (
 	ServiceHealthStatusUnknown   ServiceHealthStatus = "unknown"
 )
 
+// Defines values for SystemHealthResponseCtlogStatus.
+const (
+	SystemHealthResponseCtlogStatusHealthy   SystemHealthResponseCtlogStatus = "healthy"
+	SystemHealthResponseCtlogStatusUnhealthy SystemHealthResponseCtlogStatus = "unhealthy"
+	SystemHealthResponseCtlogStatusUnknown   SystemHealthResponseCtlogStatus = "unknown"
+)
+
+// Defines values for SystemHealthResponseFulcioStatus.
+const (
+	SystemHealthResponseFulcioStatusHealthy   SystemHealthResponseFulcioStatus = "healthy"
+	SystemHealthResponseFulcioStatusUnhealthy SystemHealthResponseFulcioStatus = "unhealthy"
+	SystemHealthResponseFulcioStatusUnknown   SystemHealthResponseFulcioStatus = "unknown"
+)
+
+// Defines values for SystemHealthResponseRekorStatus.
+const (
+	SystemHealthResponseRekorStatusHealthy   SystemHealthResponseRekorStatus = "healthy"
+	SystemHealthResponseRekorStatusUnhealthy SystemHealthResponseRekorStatus = "unhealthy"
+	SystemHealthResponseRekorStatusUnknown   SystemHealthResponseRekorStatus = "unknown"
+)
+
 // Defines values for SystemHealthResponseSecuresignStatus.
 const (
 	SystemHealthResponseSecuresignStatusHealthy   SystemHealthResponseSecuresignStatus = "healthy"
 	SystemHealthResponseSecuresignStatusUnhealthy SystemHealthResponseSecuresignStatus = "unhealthy"
 	SystemHealthResponseSecuresignStatusUnknown   SystemHealthResponseSecuresignStatus = "unknown"
+)
+
+// Defines values for SystemHealthResponseTrillianStatus.
+const (
+	SystemHealthResponseTrillianStatusHealthy   SystemHealthResponseTrillianStatus = "healthy"
+	SystemHealthResponseTrillianStatusUnhealthy SystemHealthResponseTrillianStatus = "unhealthy"
+	SystemHealthResponseTrillianStatusUnknown   SystemHealthResponseTrillianStatus = "unknown"
+)
+
+// Defines values for SystemHealthResponseTsaStatus.
+const (
+	SystemHealthResponseTsaStatusHealthy   SystemHealthResponseTsaStatus = "healthy"
+	SystemHealthResponseTsaStatusUnhealthy SystemHealthResponseTsaStatus = "unhealthy"
+	SystemHealthResponseTsaStatusUnknown   SystemHealthResponseTsaStatus = "unknown"
+)
+
+// Defines values for SystemHealthResponseTufStatus.
+const (
+	SystemHealthResponseTufStatusHealthy   SystemHealthResponseTufStatus = "healthy"
+	SystemHealthResponseTufStatusUnhealthy SystemHealthResponseTufStatus = "unhealthy"
+	SystemHealthResponseTufStatusUnknown   SystemHealthResponseTufStatus = "unknown"
 )
 
 // Defines values for TimeCoherenceSummaryStatus.
@@ -491,8 +533,20 @@ type SignatureView struct {
 // have no externally reachable endpoint and their availability is observed from
 // the Securesign Custom Resource status conditions instead.
 type SystemHealthResponse struct {
+	// CtlogStatus CT log status. Deprecated, kept for compatibility; use the `ctlog` entry in `services`.
+	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
+	CtlogStatus SystemHealthResponseCtlogStatus `json:"ctlogStatus"`
+
+	// FulcioStatus Fulcio status. Deprecated, kept for compatibility; use the `fulcio` entry in `services`.
+	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
+	FulcioStatus SystemHealthResponseFulcioStatus `json:"fulcioStatus"`
+
 	// ProbeIntervalSeconds Interval, in seconds, between consecutive probes.
 	ProbeIntervalSeconds int `json:"probeIntervalSeconds"`
+
+	// RekorStatus Rekor status. Deprecated, kept for compatibility; use the `rekor` entry in `services`.
+	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
+	RekorStatus SystemHealthResponseRekorStatus `json:"rekorStatus"`
 
 	// SecuresignStatus Overall deployment status taken from the Securesign CR `Ready` condition,
 	// which the operator derives from the component conditions: True -> healthy,
@@ -501,8 +555,27 @@ type SystemHealthResponse struct {
 	// differ from the HTTP probe results.
 	SecuresignStatus SystemHealthResponseSecuresignStatus `json:"securesignStatus"`
 
+	// SecuresignStatusReason Why securesignStatus is not healthy: a short description of why the
+	// Securesign CR could not be read (e.g. permission denied, not found, timeout),
+	// a missing Ready condition, or the Ready condition's status and reason. Raw
+	// Kubernetes errors are not exposed; they are written to the console logs.
+	// Null when healthy.
+	SecuresignStatusReason *string `json:"securesignStatusReason"`
+
 	// Services Per-service health detail.
 	Services []ServiceHealth `json:"services"`
+
+	// TrillianStatus Trillian status. Deprecated, kept for compatibility; use the `trillian` entry in `services`.
+	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
+	TrillianStatus SystemHealthResponseTrillianStatus `json:"trillianStatus"`
+
+	// TsaStatus TSA status. Deprecated, kept for compatibility; use the `tsa` entry in `services`.
+	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
+	TsaStatus SystemHealthResponseTsaStatus `json:"tsaStatus"`
+
+	// TufStatus TUF status. Deprecated, kept for compatibility; use the `tuf` entry in `services`.
+	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
+	TufStatus SystemHealthResponseTufStatus `json:"tufStatus"`
 
 	// UpdatedAt When the most recent probe round completed, i.e. how fresh the data is (not
 	// the time of this request). Null until the first round completes.
@@ -512,12 +585,30 @@ type SystemHealthResponse struct {
 	WindowSeconds int `json:"windowSeconds"`
 }
 
+// SystemHealthResponseCtlogStatus CT log status. Deprecated, kept for compatibility; use the `ctlog` entry in `services`.
+type SystemHealthResponseCtlogStatus string
+
+// SystemHealthResponseFulcioStatus Fulcio status. Deprecated, kept for compatibility; use the `fulcio` entry in `services`.
+type SystemHealthResponseFulcioStatus string
+
+// SystemHealthResponseRekorStatus Rekor status. Deprecated, kept for compatibility; use the `rekor` entry in `services`.
+type SystemHealthResponseRekorStatus string
+
 // SystemHealthResponseSecuresignStatus Overall deployment status taken from the Securesign CR `Ready` condition,
 // which the operator derives from the component conditions: True -> healthy,
 // False -> unhealthy, anything else (including an unreadable CR or no
 // observation yet) -> unknown. It is not computed from `services`, so it can
 // differ from the HTTP probe results.
 type SystemHealthResponseSecuresignStatus string
+
+// SystemHealthResponseTrillianStatus Trillian status. Deprecated, kept for compatibility; use the `trillian` entry in `services`.
+type SystemHealthResponseTrillianStatus string
+
+// SystemHealthResponseTsaStatus TSA status. Deprecated, kept for compatibility; use the `tsa` entry in `services`.
+type SystemHealthResponseTsaStatus string
+
+// SystemHealthResponseTufStatus TUF status. Deprecated, kept for compatibility; use the `tuf` entry in `services`.
+type SystemHealthResponseTufStatus string
 
 // TargetContent defines model for TargetContent.
 type TargetContent struct {

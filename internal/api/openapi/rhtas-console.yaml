@@ -428,6 +428,13 @@ paths:
                 $ref: "#/components/schemas/SystemHealthResponse"
               example:
                 securesignStatus: unhealthy
+                securesignStatusReason: "Ready=False (reason: Creating)"
+                rekorStatus: healthy
+                fulcioStatus: healthy
+                ctlogStatus: unhealthy
+                trillianStatus: healthy
+                tsaStatus: healthy
+                tufStatus: healthy
                 probeIntervalSeconds: 30
                 windowSeconds: 3600
                 updatedAt: "2026-03-18T12:00:00Z"
@@ -1241,6 +1248,52 @@ components:
             observation yet) -> unknown. It is not computed from `services`, so it can
             differ from the HTTP probe results.
           example: healthy
+        securesignStatusReason:
+          type: string
+          nullable: true
+          description: |
+            Why securesignStatus is not healthy: a short description of why the
+            Securesign CR could not be read (e.g. permission denied, not found, timeout),
+            a missing Ready condition, or the Ready condition's status and reason. Raw
+            Kubernetes errors are not exposed; they are written to the console logs.
+            Null when healthy.
+          example: null
+        rekorStatus:
+          type: string
+          enum: ["healthy", "unhealthy", "unknown"]
+          deprecated: true
+          description: Rekor status. Deprecated, kept for compatibility; use the `rekor` entry in `services`.
+          example: healthy
+        fulcioStatus:
+          type: string
+          enum: ["healthy", "unhealthy", "unknown"]
+          deprecated: true
+          description: Fulcio status. Deprecated, kept for compatibility; use the `fulcio` entry in `services`.
+          example: healthy
+        ctlogStatus:
+          type: string
+          enum: ["healthy", "unhealthy", "unknown"]
+          deprecated: true
+          description: CT log status. Deprecated, kept for compatibility; use the `ctlog` entry in `services`.
+          example: healthy
+        trillianStatus:
+          type: string
+          enum: ["healthy", "unhealthy", "unknown"]
+          deprecated: true
+          description: Trillian status. Deprecated, kept for compatibility; use the `trillian` entry in `services`.
+          example: healthy
+        tsaStatus:
+          type: string
+          enum: ["healthy", "unhealthy", "unknown"]
+          deprecated: true
+          description: TSA status. Deprecated, kept for compatibility; use the `tsa` entry in `services`.
+          example: healthy
+        tufStatus:
+          type: string
+          enum: ["healthy", "unhealthy", "unknown"]
+          deprecated: true
+          description: TUF status. Deprecated, kept for compatibility; use the `tuf` entry in `services`.
+          example: healthy
         services:
           type: array
           description: Per-service health detail.
@@ -1264,6 +1317,13 @@ components:
           example: "2026-03-18T12:00:00Z"
       required:
         - securesignStatus
+        - securesignStatusReason
+        - rekorStatus
+        - fulcioStatus
+        - ctlogStatus
+        - trillianStatus
+        - tsaStatus
+        - tufStatus
         - services
         - probeIntervalSeconds
         - windowSeconds

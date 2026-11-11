@@ -3,10 +3,13 @@ package services
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -15,6 +18,7 @@ import (
 
 	"github.com/securesign/rhtas-console/internal/httpclient"
 	"github.com/securesign/rhtas-console/internal/models"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -148,8 +152,8 @@ func TestReadSecuresign(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if conditions["Ready"] != "True" {
-		t.Errorf("Ready = %q, want True", conditions["Ready"])
+	if conditions["Ready"].status != "True" {
+		t.Errorf("Ready = %+v, want True", conditions["Ready"])
 	}
 	if len(conditions) != 7 {
 		t.Errorf("expected 7 conditions, got %d", len(conditions))
@@ -190,9 +194,16 @@ func TestCollectMissingCRReportsUnknown(t *testing.T) {
 	if resp.SecuresignStatus != models.SystemHealthResponseSecuresignStatusUnknown {
 		t.Errorf("securesignStatus = %q, want unknown", resp.SecuresignStatus)
 	}
+	// The read failure is visible in the API, not only in the pod logs.
+	if r := resp.SecuresignStatusReason; r == nil || *r != "Securesign CR unavailable: not found; check TAS_DEPLOYMENT_NAME and NAMESPACE" {
+		t.Errorf("securesignStatusReason = %v, want the sanitized not-found reason", r)
+	}
 	for _, s := range resp.Services {
 		if s.Status != models.ServiceHealthStatusUnknown {
 			t.Errorf("%s status = %q, want unknown", s.Name, s.Status)
+		}
+		if h := history(t, s); len(h) == 0 || h[len(h)-1].Error == nil || !strings.HasPrefix(*h[len(h)-1].Error, "Securesign CR unavailable: ") {
+			t.Errorf("%s: sample error must name the CR read failure, got %+v", s.Name, h)
 		}
 		if s.ConsecutiveFailures != 0 || s.ErrorRate != nil || s.UptimePercentage != nil {
 			t.Errorf("%s: unknown samples must not count (consecutive=%d errorRate=%v uptime=%v)",
@@ -508,20 +519,40 @@ func TestPercentile(t *testing.T) {
 	}
 }
 
-func TestReadyStatus(t *testing.T) {
+func TestReadyState(t *testing.T) {
 	tests := []struct {
-		in   string
-		want models.SystemHealthResponseSecuresignStatus
+		name       string
+		cond       crCondition
+		readErr    error
+		want       models.SystemHealthResponseSecuresignStatus
+		wantReason string // "" means nil
 	}{
-		{"True", models.SystemHealthResponseSecuresignStatusHealthy},
-		{"False", models.SystemHealthResponseSecuresignStatusUnhealthy},
-		{"Unknown", models.SystemHealthResponseSecuresignStatusUnknown},
-		{"", models.SystemHealthResponseSecuresignStatusUnknown},
+		{"true", crCondition{status: "True"}, nil, models.SystemHealthResponseSecuresignStatusHealthy, ""},
+		{"false with reason", crCondition{status: "False", reason: "Creating"}, nil,
+			models.SystemHealthResponseSecuresignStatusUnhealthy, "Ready=False (reason: Creating)"},
+		{"false without reason", crCondition{status: "False"}, nil,
+			models.SystemHealthResponseSecuresignStatusUnhealthy, "Ready=False"},
+		{"unknown", crCondition{status: "Unknown", reason: "Pending"}, nil,
+			models.SystemHealthResponseSecuresignStatusUnknown, "Ready=Unknown (reason: Pending)"},
+		{"missing", crCondition{}, nil, models.SystemHealthResponseSecuresignStatusUnknown, "Ready condition not reported"},
+		{"read error", crCondition{status: "True"},
+			apierrors.NewForbidden(securesignGVR.GroupResource(), "securesign-sample", errors.New("RBAC: access denied")),
+			models.SystemHealthResponseSecuresignStatusUnknown,
+			"Securesign CR unavailable: permission denied; the console needs get and list access to securesigns.rhtas.redhat.com"},
 	}
 	for _, tt := range tests {
-		if got := readyStatus(tt.in); got != tt.want {
-			t.Errorf("readyStatus(%q) = %q, want %q", tt.in, got, tt.want)
-		}
+		t.Run(tt.name, func(t *testing.T) {
+			got, reason := readyState(tt.cond, tt.readErr)
+			if got != tt.want {
+				t.Errorf("status = %q, want %q", got, tt.want)
+			}
+			switch {
+			case tt.wantReason == "" && reason != nil:
+				t.Errorf("reason = %q, want nil", *reason)
+			case tt.wantReason != "" && (reason == nil || *reason != tt.wantReason):
+				t.Errorf("reason = %v, want %q", reason, tt.wantReason)
+			}
+		})
 	}
 }
 
@@ -834,5 +865,259 @@ func TestProbeURLOverrideWithoutCR(t *testing.T) {
 	}
 	if resp.SecuresignStatus != models.SystemHealthResponseSecuresignStatusUnknown {
 		t.Errorf("securesignStatus = %q, want unknown (CR unreadable)", resp.SecuresignStatus)
+	}
+}
+
+// Redirects are not followed and are not healthy (e.g. a route redirecting to
+// a login page must not make a service look up).
+func TestProbeRedirectIsUnhealthy(t *testing.T) {
+	login := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer login.Close()
+	redirecting := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, login.URL, http.StatusFound)
+	}))
+	defer redirecting.Close()
+
+	h := &healthService{httpClient: newProbeClient(5 * time.Second)}
+	h.probeHTTP = h.defaultProbeHTTP
+	s := h.probeService(context.Background(), serviceSpecs[0], redirecting.URL, time.Now())
+	if s.status != models.ServiceHealthStatusUnhealthy || s.httpStatus != http.StatusFound {
+		t.Errorf("status=%q httpStatus=%d, want unhealthy/302 (redirect not followed)", s.status, s.httpStatus)
+	}
+	if !strings.Contains(s.err, "redirect") {
+		t.Errorf("err = %q, want it to mention the redirect", s.err)
+	}
+}
+
+// A CR-published base URL with a trailing slash must not produce "//" paths.
+func TestProbeJoinsTrailingSlash(t *testing.T) {
+	urls := allURLs()
+	urls["rekor"] = "https://rekor.example.com/"
+	urls["tsa"] = "https://tsa.example.com/api/v1/timestamp/"
+	cr := makeSecuresignCR("securesign-sample", testNamespace, allHealthyConditions(), urls)
+	h := newTestHealthService(cr)
+
+	var mu sync.Mutex
+	var probed []string
+	h.probeHTTP = func(_ context.Context, url string) (time.Duration, int, error) {
+		mu.Lock()
+		probed = append(probed, url)
+		mu.Unlock()
+		return time.Millisecond, http.StatusOK, nil
+	}
+	h.collect(context.Background())
+
+	mu.Lock()
+	defer mu.Unlock()
+	for _, u := range probed {
+		if strings.Contains(strings.TrimPrefix(u, "https://"), "//") {
+			t.Errorf("probe URL %q contains a double slash", u)
+		}
+	}
+	resp, _, _ := h.GetSystemHealth(context.Background(), false)
+	rekor, _ := findService(resp, "rekor")
+	if rekor.EndpointUrl == nil || *rekor.EndpointUrl != "https://rekor.example.com" {
+		t.Errorf("rekor endpointUrl = %v, want it without trailing slash", rekor.EndpointUrl)
+	}
+}
+
+// Without TAS_DEPLOYMENT_NAME the single Securesign CR in the namespace is used.
+func TestDiscoverSingleSecuresign(t *testing.T) {
+	cr := makeSecuresignCR("my-tas", testNamespace, allHealthyConditions(), allURLs())
+	h := newTestHealthService(cr)
+	h.crName = ""
+	h.collect(context.Background())
+
+	resp, _, _ := h.GetSystemHealth(context.Background(), false)
+	if resp.SecuresignStatus != models.SystemHealthResponseSecuresignStatusHealthy {
+		t.Errorf("securesignStatus = %q (reason %v), want healthy via discovery", resp.SecuresignStatus, resp.SecuresignStatusReason)
+	}
+}
+
+func TestDiscoverAmbiguousOrMissingSecuresign(t *testing.T) {
+	for name, objs := range map[string][]runtime.Object{
+		"none":     nil,
+		"multiple": {makeSecuresignCR("b-tas", testNamespace, nil, nil), makeSecuresignCR("a-tas", testNamespace, nil, nil)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newTestHealthService(objs...)
+			h.crName = ""
+			h.collect(context.Background())
+
+			resp, _, _ := h.GetSystemHealth(context.Background(), false)
+			if resp.SecuresignStatus != models.SystemHealthResponseSecuresignStatusUnknown {
+				t.Errorf("securesignStatus = %q, want unknown", resp.SecuresignStatus)
+			}
+			r := resp.SecuresignStatusReason
+			if r == nil {
+				t.Fatal("securesignStatusReason must explain the failure")
+			}
+			if name == "multiple" {
+				if !strings.Contains(*r, "set TAS_DEPLOYMENT_NAME") {
+					t.Errorf("reason = %q, want it to mention TAS_DEPLOYMENT_NAME", *r)
+				}
+				if strings.Contains(*r, "a-tas") || strings.Contains(*r, testNamespace) {
+					t.Errorf("reason = %q must not expose CR names or the namespace", *r)
+				}
+			}
+			if name == "none" && !strings.Contains(*r, "no Securesign CR in the namespace") {
+				t.Errorf("reason = %q", *r)
+			}
+		})
+	}
+}
+
+func TestResolveNamespace(t *testing.T) {
+	dir := t.TempDir()
+	nsFile := filepath.Join(dir, "namespace")
+	orig := serviceAccountNamespaceFile
+	serviceAccountNamespaceFile = nsFile
+	defer func() { serviceAccountNamespaceFile = orig }()
+
+	t.Setenv("NAMESPACE", "")
+	if got := resolveNamespace(); got != "trusted-artifact-signer" {
+		t.Errorf("default = %q, want trusted-artifact-signer", got)
+	}
+	if err := os.WriteFile(nsFile, []byte("tas-prod\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := resolveNamespace(); got != "tas-prod" {
+		t.Errorf("in-cluster = %q, want tas-prod", got)
+	}
+	t.Setenv("NAMESPACE", "explicit")
+	if got := resolveNamespace(); got != "explicit" {
+		t.Errorf("env = %q, want explicit", got)
+	}
+}
+
+// The deprecated flat status fields mirror services[] for older clients.
+func TestDeprecatedFlatStatusFields(t *testing.T) {
+	conds := allHealthyConditions()
+	conds[3] = cond("CTlogAvailable", "False")
+	cr := makeSecuresignCR("securesign-sample", testNamespace, conds, allURLs())
+	h := newTestHealthService(cr)
+
+	resp, _, _ := h.GetSystemHealth(context.Background(), false)
+	if resp.RekorStatus != models.SystemHealthResponseRekorStatusUnknown {
+		t.Errorf("before any round rekorStatus = %q, want unknown", resp.RekorStatus)
+	}
+
+	h.collect(context.Background())
+	resp, _, _ = h.GetSystemHealth(context.Background(), false)
+	if resp.CtlogStatus != models.SystemHealthResponseCtlogStatusUnhealthy {
+		t.Errorf("ctlogStatus = %q, want unhealthy", resp.CtlogStatus)
+	}
+	for name, got := range map[string]string{
+		"rekor": string(resp.RekorStatus), "fulcio": string(resp.FulcioStatus), "trillian": string(resp.TrillianStatus),
+		"tsa": string(resp.TsaStatus), "tuf": string(resp.TufStatus),
+	} {
+		if got != "healthy" {
+			t.Errorf("%sStatus = %q, want healthy", name, got)
+		}
+	}
+}
+
+// A transient CR read failure must not blank the HTTP-probed services: they
+// keep being probed at the endpoints discovered in earlier rounds, while the
+// condition-only services and securesignStatus report unknown with the reason.
+func TestCRReadFailureKeepsProbingLastKnownURLs(t *testing.T) {
+	cr := makeSecuresignCR("securesign-sample", testNamespace, allHealthyConditions(), allURLs())
+	h := newTestHealthService(cr)
+	h.collect(context.Background())
+
+	// The CR becomes unreadable (simulated with an empty fake API server).
+	h.dynamicClient = newTestHealthService().dynamicClient
+	var mu sync.Mutex
+	var probed []string
+	h.probeHTTP = func(_ context.Context, url string) (time.Duration, int, error) {
+		mu.Lock()
+		probed = append(probed, url)
+		mu.Unlock()
+		return time.Millisecond, http.StatusOK, nil
+	}
+	h.collect(context.Background())
+
+	mu.Lock()
+	if len(probed) != 4 {
+		t.Errorf("probed %v, want the 4 last-known endpoints", probed)
+	}
+	mu.Unlock()
+
+	resp, _, _ := h.GetSystemHealth(context.Background(), false)
+	for _, name := range []string{"rekor", "fulcio", "tsa", "tuf"} {
+		s, _ := findService(resp, name)
+		if s.Status != models.ServiceHealthStatusHealthy {
+			t.Errorf("%s status = %q, want healthy (probed at last-known URL)", name, s.Status)
+		}
+	}
+	for _, name := range []string{"ctlog", "trillian"} {
+		s, _ := findService(resp, name)
+		if s.Status != models.ServiceHealthStatusUnknown {
+			t.Errorf("%s status = %q, want unknown", name, s.Status)
+		}
+	}
+	if resp.SecuresignStatus != models.SystemHealthResponseSecuresignStatusUnknown || resp.SecuresignStatusReason == nil {
+		t.Errorf("securesignStatus = %q reason = %v, want unknown with a reason", resp.SecuresignStatus, resp.SecuresignStatusReason)
+	}
+}
+
+func TestPublicReadError(t *testing.T) {
+	gr := securesignGVR.GroupResource()
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"not found", apierrors.NewNotFound(gr, "my-cr"), "not found; check TAS_DEPLOYMENT_NAME and NAMESPACE"},
+		{"forbidden", apierrors.NewForbidden(gr, "my-cr", errors.New("denied")),
+			"permission denied; the console needs get and list access to securesigns.rhtas.redhat.com"},
+		{"unauthorized", apierrors.NewUnauthorized("bad token"), "not authorized by the Kubernetes API"},
+		{"deadline", fmt.Errorf("get: %w", context.DeadlineExceeded), "request timed out"},
+		{"server timeout", apierrors.NewServerTimeout(gr, "get", 1), "request timed out"},
+		{"throttled", apierrors.NewTooManyRequests("slow down", 1), "Kubernetes API is throttling requests"},
+		{"none", fmt.Errorf("%w in namespace ns-x", errNoSecuresign), "no Securesign CR in the namespace"},
+		{"multiple", fmt.Errorf("%w in namespace ns-x (a, b)", errMultipleSecuresign),
+			"several Securesign CRs in the namespace; set TAS_DEPLOYMENT_NAME to select one"},
+		{"network", errors.New(`Get "https://api.cluster.example:6443/apis/...": dial tcp: lookup api.cluster.example: no such host`),
+			"Kubernetes API request failed; see the console logs for details"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := publicReadError(tt.err); got != tt.want {
+				t.Errorf("publicReadError = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// Neither securesignStatusReason nor the sample errors may expose the CR name,
+// namespace or API server details from the raw Kubernetes error.
+func TestReadErrorDetailsNotExposed(t *testing.T) {
+	h := newTestHealthService() // no CR: Get returns NotFound naming the CR
+	h.collect(context.Background())
+
+	resp, _, _ := h.GetSystemHealth(context.Background(), true)
+	texts := []string{}
+	if resp.SecuresignStatusReason != nil {
+		texts = append(texts, *resp.SecuresignStatusReason)
+	}
+	for _, s := range resp.Services {
+		for _, ps := range history(t, s) {
+			if ps.Error != nil {
+				texts = append(texts, *ps.Error)
+			}
+		}
+	}
+	if len(texts) == 0 {
+		t.Fatal("expected reasons to check")
+	}
+	for _, txt := range texts {
+		for _, secret := range []string{"securesign-sample", testNamespace, "securesigns.rhtas.redhat.com \""} {
+			if strings.Contains(txt, secret) {
+				t.Errorf("exposed %q in %q", secret, txt)
+			}
+		}
 	}
 }
