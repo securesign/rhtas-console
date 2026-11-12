@@ -1342,9 +1342,11 @@ components:
           type: string
           enum: ["healthy", "unhealthy", "unknown"]
           description: |
-            Current health status. Condition-derived failures apply immediately; HTTP
-            probe failures only mark the service unhealthy after a configurable number
-            of consecutive failures (PROBE_FAILURE_THRESHOLD, default 2). unknown when
+            Current health status. An explicit False condition on the Securesign CR
+            (the operator reports the component unavailable) makes the service
+            unhealthy immediately, even if its endpoint still responds. HTTP probe
+            failures only mark the service unhealthy after a configurable number of
+            consecutive failures (PROBE_FAILURE_THRESHOLD, default 2). unknown when
             the outcome cannot be determined, e.g. the Securesign CR is unreadable or
             the condition is not reported.
           example: healthy

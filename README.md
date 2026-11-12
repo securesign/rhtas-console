@@ -347,9 +347,11 @@ round reads the Securesign CR once, then:
 
 Results are published only when a round completes, and `updatedAt` is the time that
 round completed (`null` until the first round finishes, which clients should treat as
-"collecting"). HTTP probe failures mark a service `unhealthy` only after
-`PROBE_FAILURE_THRESHOLD` consecutive failures; an explicit `False` CR condition applies
-immediately. An unreadable CR or an unreported condition yields `unknown`, never `unhealthy`.
+"collecting"). An explicit `False` CR condition (the operator reports the component
+unavailable) makes the service `unhealthy` immediately, even if its endpoint still answers;
+the probe's latency and status code are still recorded. HTTP probe failures mark a service
+`unhealthy` only after `PROBE_FAILURE_THRESHOLD` consecutive failures. An unreadable CR or
+an unreported condition yields `unknown`, never `unhealthy`.
 
 | Variable | Default | Description |
 |----------|---------|-------------|

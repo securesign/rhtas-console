@@ -488,9 +488,11 @@ type ServiceHealth struct {
 	// sample's `source` tells which applies.
 	Probed bool `json:"probed"`
 
-	// Status Current health status. Condition-derived failures apply immediately; HTTP
-	// probe failures only mark the service unhealthy after a configurable number
-	// of consecutive failures (PROBE_FAILURE_THRESHOLD, default 2). unknown when
+	// Status Current health status. An explicit False condition on the Securesign CR
+	// (the operator reports the component unavailable) makes the service
+	// unhealthy immediately, even if its endpoint still responds. HTTP probe
+	// failures only mark the service unhealthy after a configurable number of
+	// consecutive failures (PROBE_FAILURE_THRESHOLD, default 2). unknown when
 	// the outcome cannot be determined, e.g. the Securesign CR is unreadable or
 	// the condition is not reported.
 	Status ServiceHealthStatus `json:"status"`
@@ -502,9 +504,11 @@ type ServiceHealth struct {
 // ServiceHealthName Component service identifier.
 type ServiceHealthName string
 
-// ServiceHealthStatus Current health status. Condition-derived failures apply immediately; HTTP
-// probe failures only mark the service unhealthy after a configurable number
-// of consecutive failures (PROBE_FAILURE_THRESHOLD, default 2). unknown when
+// ServiceHealthStatus Current health status. An explicit False condition on the Securesign CR
+// (the operator reports the component unavailable) makes the service
+// unhealthy immediately, even if its endpoint still responds. HTTP probe
+// failures only mark the service unhealthy after a configurable number of
+// consecutive failures (PROBE_FAILURE_THRESHOLD, default 2). unknown when
 // the outcome cannot be determined, e.g. the Securesign CR is unreadable or
 // the condition is not reported.
 type ServiceHealthStatus string

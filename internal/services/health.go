@@ -112,6 +112,9 @@ type sample struct {
 	httpStatus int
 	source     models.ProbeSampleSource
 	err        string
+	// operatorFailure marks a failure reported by the operator (an explicit
+	// False condition). It applies immediately, without the HTTP debounce.
+	operatorFailure bool
 }
 
 func (s sample) success() bool { return s.status == models.ServiceHealthStatusHealthy }
@@ -143,9 +146,10 @@ func newRingBuffer(capacity, failureThreshold int, probed bool) *ringBuffer {
 
 // add appends a sample and updates the derived service status.
 //
-// Condition-derived failures are reported immediately (the operator already
-// debounces them). HTTP probe failures only mark the service unhealthy after
-// failureThreshold consecutive failures; until then the previous status is kept.
+// Failures reported by the operator (an explicit False condition) apply
+// immediately; the operator already debounces them. HTTP probe failures only
+// mark the service unhealthy after failureThreshold consecutive failures;
+// until then the previous status is kept.
 func (b *ringBuffer) add(s sample) {
 	if len(b.samples) >= b.cap && b.cap > 0 {
 		b.samples = b.samples[1:]
@@ -159,7 +163,7 @@ func (b *ringBuffer) add(s sample) {
 		newStatus = models.ServiceHealthStatusHealthy
 	case models.ServiceHealthStatusUnhealthy:
 		b.consecutiveFail++
-		if s.source == models.Condition || b.consecutiveFail >= b.failureThreshold {
+		if s.operatorFailure || b.consecutiveFail >= b.failureThreshold {
 			newStatus = models.ServiceHealthStatusUnhealthy
 		}
 	default:
@@ -393,7 +397,8 @@ func (h *healthService) collect(ctx context.Context) {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				samples[i] = h.probeService(ctx, spec, url, now)
+				s := h.probeService(ctx, spec, url, now)
+				samples[i] = applyOperatorVerdict(s, conditions[spec.condition], spec.condition, readErr)
 			}()
 		} else {
 			// No endpoint to probe (condition-only component, or the URL is not
@@ -464,6 +469,26 @@ func (h *healthService) probeService(ctx context.Context, spec serviceSpec, url 
 	return s
 }
 
+// applyOperatorVerdict combines an HTTP probe sample with the component's CR
+// condition. An explicit False condition means the operator reports the
+// component unavailable, so the sample is unhealthy even if the endpoint
+// responded (e.g. an old pod still serving during a failed rollout). The probe
+// measurements (latency, status code) are kept. A True, Unknown or missing
+// condition, or an unreadable CR, leaves the probe result unchanged.
+func applyOperatorVerdict(s sample, cond crCondition, condType string, readErr error) sample {
+	if readErr != nil || cond.status != "False" {
+		return s
+	}
+	msg := "Securesign condition " + describeCondition(condType, cond)
+	if s.err != "" {
+		msg += "; probe: " + s.err
+	}
+	s.status = models.ServiceHealthStatusUnhealthy
+	s.operatorFailure = true
+	s.err = msg
+	return s
+}
+
 // conditionSample builds a sample from a Securesign CR condition observation.
 // Only an explicit False is a failure; an unreadable CR or a missing or
 // Unknown condition yields an unknown sample whose error says which.
@@ -480,6 +505,7 @@ func conditionSample(cond crCondition, condType string, readErr error, now time.
 		s.status = models.ServiceHealthStatusHealthy
 	case cond.status == "False":
 		s.status = models.ServiceHealthStatusUnhealthy
+		s.operatorFailure = true
 		s.err = "Securesign condition " + describeCondition(condType, cond)
 	case cond.status == "":
 		s.err = fmt.Sprintf("Securesign condition %s not reported", condType)

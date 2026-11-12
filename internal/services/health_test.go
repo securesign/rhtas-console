@@ -1121,3 +1121,88 @@ func TestReadErrorDetailsNotExposed(t *testing.T) {
 		}
 	}
 }
+
+// An explicit False condition is the operator's verdict: the service is
+// unhealthy immediately even if its endpoint still answers 2xx, while the
+// probe measurements are kept.
+func TestOperatorFalseOverridesHealthyProbe(t *testing.T) {
+	conds := []interface{}{
+		cond("Ready", "False"),
+		map[string]interface{}{"type": "RekorAvailable", "status": "False", "reason": "Failure"},
+		cond("FulcioAvailable", "True"),
+		cond("CTlogAvailable", "True"),
+		cond("TrillianAvailable", "True"),
+		cond("TsaAvailable", "True"),
+		cond("TufAvailable", "True"),
+	}
+	cr := makeSecuresignCR("securesign-sample", testNamespace, conds, allURLs())
+	h := newTestHealthService(cr)   // default probe: 200 OK for every endpoint
+	h.collect(context.Background()) // a single round: no debounce for operator failures
+
+	resp, _, _ := h.GetSystemHealth(context.Background(), true)
+	rekor, _ := findService(resp, "rekor")
+	if rekor.Status != models.ServiceHealthStatusUnhealthy {
+		t.Errorf("rekor status = %q, want unhealthy (RekorAvailable=False)", rekor.Status)
+	}
+	if resp.RekorStatus != models.SystemHealthResponseRekorStatusUnhealthy {
+		t.Errorf("legacy rekorStatus = %q, want unhealthy", resp.RekorStatus)
+	}
+	got := history(t, rekor)
+	if len(got) != 1 {
+		t.Fatalf("history = %+v", got)
+	}
+	ps := got[0]
+	if ps.Status != models.ProbeSampleStatusUnhealthy || ps.Source != models.Http {
+		t.Errorf("sample status=%q source=%q, want unhealthy/http", ps.Status, ps.Source)
+	}
+	if ps.Error == nil || *ps.Error != "Securesign condition RekorAvailable=False (reason: Failure)" {
+		t.Errorf("sample error = %v, want the operator condition", ps.Error)
+	}
+	if ps.LatencyMs == nil || ps.HttpStatusCode == nil || *ps.HttpStatusCode != http.StatusOK {
+		t.Errorf("probe measurements must be kept: latency=%v code=%v", ps.LatencyMs, ps.HttpStatusCode)
+	}
+
+	fulcio, _ := findService(resp, "fulcio")
+	if fulcio.Status != models.ServiceHealthStatusHealthy {
+		t.Errorf("fulcio status = %q, want healthy (condition True, probe OK)", fulcio.Status)
+	}
+}
+
+// When both the operator and the probe report a failure, the error carries both.
+func TestOperatorFalseAndProbeFailureCombined(t *testing.T) {
+	conds := allHealthyConditions()
+	conds[5] = cond("TsaAvailable", "False")
+	cr := makeSecuresignCR("securesign-sample", testNamespace, conds, allURLs())
+	h := newTestHealthService(cr)
+	h.probeHTTP = func(_ context.Context, url string) (time.Duration, int, error) {
+		if strings.HasPrefix(url, "https://tsa.example.com") {
+			return 0, 0, errors.New("connection refused")
+		}
+		return time.Millisecond, http.StatusOK, nil
+	}
+	h.collect(context.Background())
+
+	resp, _, _ := h.GetSystemHealth(context.Background(), true)
+	tsa, _ := findService(resp, "tsa")
+	if tsa.Status != models.ServiceHealthStatusUnhealthy {
+		t.Errorf("tsa status = %q, want unhealthy after one round", tsa.Status)
+	}
+	if e := history(t, tsa)[0].Error; e == nil || *e != "Securesign condition TsaAvailable=False; probe: connection refused" {
+		t.Errorf("tsa error = %v", e)
+	}
+}
+
+// An Unknown or missing condition is not an operator failure: the probe decides.
+func TestUnknownConditionLeavesProbeInCharge(t *testing.T) {
+	conds := allHealthyConditions()
+	conds[6] = cond("TufAvailable", "Unknown")
+	cr := makeSecuresignCR("securesign-sample", testNamespace, conds, allURLs())
+	h := newTestHealthService(cr)
+	h.collect(context.Background())
+
+	resp, _, _ := h.GetSystemHealth(context.Background(), false)
+	tuf, _ := findService(resp, "tuf")
+	if tuf.Status != models.ServiceHealthStatusHealthy {
+		t.Errorf("tuf status = %q, want healthy (probe OK, condition Unknown)", tuf.Status)
+	}
+}
