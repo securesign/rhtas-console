@@ -2,17 +2,21 @@ package services
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"io"
 	"log"
 	"math"
+	"net"
 	"net/http"
 	"os"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/securesign/rhtas-console/internal/httpclient"
@@ -21,6 +25,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -34,9 +39,12 @@ var securesignGVR = schema.GroupVersionResource{
 
 // Default prober tuning. All overridable via environment variables.
 const (
-	defaultProbeIntervalSeconds = 30
-	defaultProbeHistorySize     = 120 // ~1h at a 30s interval
-	defaultProbeTimeoutSeconds  = 5
+	defaultProbeIntervalSeconds = 10
+	defaultProbeHistorySize     = 360 // ~1h at a 10s interval
+	// watchRetryDelay is the pause before re-establishing a Securesign watch
+	// that ended or failed (e.g. missing watch permission, API restart).
+	watchRetryDelay            = 10 * time.Second
+	defaultProbeTimeoutSeconds = 5
 	// defaultFailureThreshold is the number of consecutive failed HTTP probes
 	// required before a service is reported unhealthy. It absorbs one-off
 	// timeouts (e.g. cold connections through the ingress router) that would
@@ -111,7 +119,10 @@ type sample struct {
 	hasLatency bool
 	httpStatus int
 	source     models.ProbeSampleSource
-	err        string
+	// err is the short, client-safe reason returned by the API; rawErr is the
+	// full error (it can contain the probe URL) and is only logged.
+	err    string
+	rawErr string
 	// operatorFailure marks a failure reported by the operator (an explicit
 	// False condition). It applies immediately, without the HTTP debounce.
 	operatorFailure bool
@@ -127,8 +138,12 @@ type ringBuffer struct {
 	consecutiveFail  int
 	lastStateChange  *time.Time
 	status           models.ServiceHealthStatus
-	endpointURL      string
-	probed           bool
+	// publicURL is the endpoint published in the Securesign CR status. It is
+	// what the API reports; a PROBE_URL_* override is never exposed.
+	publicURL string
+	// lastProbeErr is the last raw probe error that was logged.
+	lastProbeErr string
+	probed       bool
 }
 
 func newRingBuffer(capacity, failureThreshold int, probed bool) *ringBuffer {
@@ -200,12 +215,18 @@ type healthService struct {
 	lastReadErr string
 	// lastRoundAt is when the most recent probe round completed (nil before the first).
 	lastRoundAt *time.Time
-	// probeURLs optionally overrides the endpoint discovered from the CR status
-	// for a service (e.g. an in-cluster Service URL instead of the external route).
+	// probeURLs optionally overrides the endpoint probed for a service (e.g. an
+	// in-cluster Service URL instead of the external route). Overrides are only
+	// used as probe targets and are never returned by the API.
 	probeURLs map[string]string
 
 	stopOnce sync.Once
 	stopCh   chan struct{}
+	// trigger requests an immediate probe round (buffered, size 1, so bursts
+	// of Securesign changes coalesce into one round).
+	trigger chan struct{}
+	// lastWatchErr is the last watch error that was logged (watch goroutine only).
+	lastWatchErr string
 
 	// now and probeHTTP are injectable for testing.
 	now       func() time.Time
@@ -237,6 +258,7 @@ func NewHealthService() (HealthService, error) {
 		httpClient:       newProbeClient(timeout),
 		probeURLs:        probeURLOverrides(),
 		stopCh:           make(chan struct{}),
+		trigger:          make(chan struct{}, 1),
 		now:              func() time.Time { return time.Now().UTC() },
 	}
 	h.probeHTTP = h.defaultProbeHTTP
@@ -324,6 +346,9 @@ func envInt(key string, def int) int {
 }
 
 func (h *healthService) Start(ctx context.Context) {
+	if h.trigger == nil {
+		h.trigger = make(chan struct{}, 1)
+	}
 	go func() {
 		// Collect immediately without blocking server startup; until the first
 		// round completes every service reports unknown.
@@ -339,9 +364,141 @@ func (h *healthService) Start(ctx context.Context) {
 				return
 			case <-ticker.C:
 				h.collect(ctx)
+			case <-h.trigger:
+				// A Securesign change (e.g. a component condition flipping to
+				// False when its pod restarts) is reflected immediately instead
+				// of waiting for the next tick.
+				h.collect(ctx)
+				ticker.Reset(h.interval)
 			}
 		}
 	}()
+	go h.watchSecuresign(ctx)
+}
+
+// requestCollect asks the collector for an immediate round. It never blocks;
+// a pending request already covers it.
+func (h *healthService) requestCollect() {
+	select {
+	case h.trigger <- struct{}{}:
+	default:
+	}
+}
+
+// watchSecuresign watches the Securesign CR and requests a probe round on every
+// change, so short outages reported by the operator (a component condition
+// briefly False during a pod restart) are not missed between polling rounds.
+// Polling continues regardless; if the watch cannot be established (e.g. the
+// ServiceAccount lacks the watch verb) it is retried and logged once.
+func (h *healthService) watchSecuresign(ctx context.Context) {
+	client := h.dynamicClient.Resource(securesignGVR).Namespace(h.namespace)
+	opts := metav1.ListOptions{}
+	if h.crName != "" {
+		opts.FieldSelector = "metadata.name=" + h.crName
+	}
+	for {
+		// List first to record the current state, then watch from the list's
+		// resource version (standard list-then-watch). A watch that ends, or
+		// whose resource version expired, starts over with a fresh list.
+		if list, err := client.List(ctx, opts); err != nil {
+			h.logWatchError(err)
+		} else {
+			last := make(map[string]string, len(list.Items))
+			for i := range list.Items {
+				last[list.Items[i].GetName()] = healthSignature(&list.Items[i])
+			}
+			watchOpts := opts
+			watchOpts.ResourceVersion = list.GetResourceVersion()
+			if w, err := client.Watch(ctx, watchOpts); err != nil {
+				h.logWatchError(err)
+			} else {
+				h.logWatchError(nil)
+				h.drainWatch(ctx, w, last)
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-h.stopCh:
+			return
+		case <-time.After(watchRetryDelay):
+		}
+	}
+}
+
+// drainWatch requests a probe round when a Securesign CR is added or deleted,
+// or when its conditions or published URLs change, until the watch ends.
+// Updates that do not affect health (e.g. metadata only) are ignored.
+func (h *healthService) drainWatch(ctx context.Context, w watch.Interface, last map[string]string) {
+	defer w.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-h.stopCh:
+			return
+		case ev, ok := <-w.ResultChan():
+			if !ok {
+				return
+			}
+			if ev.Type == watch.Error {
+				h.logWatchError(apierrors.FromObject(ev.Object))
+				return
+			}
+			obj, ok := ev.Object.(*unstructured.Unstructured)
+			if !ok {
+				continue
+			}
+			name := obj.GetName()
+			if ev.Type == watch.Deleted {
+				delete(last, name)
+				h.requestCollect()
+				continue
+			}
+			if sig := healthSignature(obj); sig != last[name] {
+				last[name] = sig
+				h.requestCollect()
+			}
+		}
+	}
+}
+
+// healthSignature summarizes the parts of a Securesign CR that affect health:
+// condition types, statuses and reasons, and the component URLs.
+func healthSignature(obj *unstructured.Unstructured) string {
+	var parts []string
+	if conds, found, _ := unstructured.NestedSlice(obj.Object, "status", "conditions"); found {
+		for _, c := range conds {
+			if m, ok := c.(map[string]interface{}); ok {
+				parts = append(parts, fmt.Sprintf("%v=%v/%v", m["type"], m["status"], m["reason"]))
+			}
+		}
+	}
+	for _, spec := range serviceSpecs {
+		if spec.urlStatusPath != nil {
+			url, _, _ := unstructured.NestedString(obj.Object, spec.urlStatusPath...)
+			parts = append(parts, spec.name+"="+url)
+		}
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, ";")
+}
+
+// logWatchError logs watch failures when they start or change, and recovery.
+func (h *healthService) logWatchError(err error) {
+	msg := ""
+	if err != nil {
+		msg = err.Error()
+	}
+	if msg == h.lastWatchErr {
+		return
+	}
+	if err != nil {
+		log.Printf("health: cannot watch Securesign CRs, changes are only seen every %s: %v", h.interval, err)
+	} else if h.lastWatchErr != "" {
+		log.Printf("health: watching Securesign CRs again")
+	}
+	h.lastWatchErr = msg
 }
 
 func (h *healthService) Stop() {
@@ -370,30 +527,42 @@ func (h *healthService) collect(ctx context.Context) {
 	h.logReadError(readErr)
 	now := h.now()
 
-	// When the CR cannot be read (e.g. a transient API server error), keep
-	// probing the endpoints discovered in earlier rounds instead of losing the
-	// HTTP-probed services to unknown.
-	if readErr != nil {
+	// When the Securesign CR is gone (deleted, or none in the namespace), there
+	// is no deployment to probe: report every service unknown instead of
+	// probing endpoints left over from the removed deployment.
+	absent := isSecuresignAbsent(readErr)
+
+	// When the CR cannot be read for another reason (e.g. a transient API
+	// server error), keep probing the endpoints discovered in earlier rounds
+	// instead of losing the HTTP-probed services to unknown.
+	if readErr != nil && !absent {
 		h.mu.RLock()
 		for _, spec := range serviceSpecs {
-			if buf := h.buffers[spec.name]; buf != nil && spec.urlStatusPath != nil && buf.endpointURL != "" {
-				urls[spec.name] = buf.endpointURL
+			if buf := h.buffers[spec.name]; buf != nil && spec.urlStatusPath != nil && buf.publicURL != "" {
+				urls[spec.name] = buf.publicURL
 			}
 		}
 		h.mu.RUnlock()
 	}
 
-	endpoints := make([]string, len(serviceSpecs))
+	// publicURLs are what the API reports (CR status URLs); targets are what is
+	// probed (the PROBE_URL_* override when set, else the public URL).
+	publicURLs := make([]string, len(serviceSpecs))
+	targets := make([]string, len(serviceSpecs))
 	samples := make([]sample, len(serviceSpecs))
 	var wg sync.WaitGroup
 	for i, spec := range serviceSpecs {
 		if spec.urlStatusPath != nil {
-			endpoints[i] = h.probeURLs[spec.name]
-			if endpoints[i] == "" {
-				endpoints[i] = strings.TrimRight(urls[spec.name], "/")
+			publicURLs[i] = strings.TrimRight(urls[spec.name], "/")
+			targets[i] = h.probeURLs[spec.name]
+			if targets[i] == "" {
+				targets[i] = publicURLs[i]
+			}
+			if absent {
+				targets[i] = ""
 			}
 		}
-		if url := endpoints[i]; url != "" {
+		if url := targets[i]; url != "" {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
@@ -420,7 +589,19 @@ func (h *healthService) collect(ctx context.Context) {
 		if buf == nil {
 			continue
 		}
-		buf.endpointURL = endpoints[i]
+		// Keep the last known public URL while the CR is temporarily unreadable;
+		// forget it once the CR is gone.
+		if publicURLs[i] != "" || readErr == nil || absent {
+			buf.publicURL = publicURLs[i]
+		}
+		if samples[i].rawErr != buf.lastProbeErr {
+			if samples[i].rawErr != "" {
+				log.Printf("health: %s probe failed: %s", spec.name, samples[i].rawErr)
+			} else {
+				log.Printf("health: %s probe recovered", spec.name)
+			}
+			buf.lastProbeErr = samples[i].rawErr
+		}
 		buf.add(samples[i])
 	}
 }
@@ -447,7 +628,8 @@ func (h *healthService) logReadError(err error) {
 // base URL. Only a 2xx response is healthy; redirects are not followed and
 // count as failures.
 func (h *healthService) probeService(ctx context.Context, spec serviceSpec, url string, now time.Time) sample {
-	latency, statusCode, err := h.probeHTTP(ctx, strings.TrimRight(url, "/")+spec.probePath)
+	target := strings.TrimRight(url, "/") + spec.probePath
+	latency, statusCode, err := h.probeHTTP(ctx, target)
 	s := sample{
 		timestamp:  now,
 		source:     models.Http,
@@ -458,13 +640,16 @@ func (h *healthService) probeService(ctx context.Context, spec serviceSpec, url 
 	}
 	switch {
 	case err != nil:
-		s.err = err.Error()
+		s.err = publicProbeError(err)
+		s.rawErr = err.Error()
 	case statusCode >= 200 && statusCode < 300:
 		s.status = models.ServiceHealthStatusHealthy
 	case statusCode >= 300 && statusCode < 400:
 		s.err = fmt.Sprintf("unexpected redirect (status code %d)", statusCode)
+		s.rawErr = fmt.Sprintf("GET %s: %s", target, s.err)
 	default:
 		s.err = fmt.Sprintf("unexpected status code %d", statusCode)
+		s.rawErr = fmt.Sprintf("GET %s: %s", target, s.err)
 	}
 	return s
 }
@@ -487,6 +672,40 @@ func applyOperatorVerdict(s sample, cond crCondition, condType string, readErr e
 	s.operatorFailure = true
 	s.err = msg
 	return s
+}
+
+// publicProbeError maps a probe transport error to a short reason that is safe
+// to return to API clients. Go's HTTP errors embed the request URL, which can
+// be an internal PROBE_URL_* target, so the raw error is only logged.
+func publicProbeError(err error) string {
+	var dnsErr *net.DNSError
+	var netErr net.Error
+	var unknownAuthority x509.UnknownAuthorityError
+	var hostnameErr x509.HostnameError
+	var certInvalid x509.CertificateInvalidError
+	var tlsRecordErr tls.RecordHeaderError
+	switch {
+	case errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &netErr) && netErr.Timeout()):
+		return "request timed out"
+	case errors.As(err, &dnsErr):
+		return "DNS lookup failed"
+	case errors.Is(err, syscall.ECONNREFUSED):
+		return "connection refused"
+	case errors.Is(err, syscall.ECONNRESET) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF):
+		return "connection closed by the server"
+	case errors.As(err, &unknownAuthority):
+		return "TLS error: certificate signed by an unknown authority"
+	case errors.As(err, &hostnameErr):
+		return "TLS error: certificate does not match the host name"
+	case errors.As(err, &certInvalid):
+		return "TLS error: invalid certificate"
+	case errors.As(err, &tlsRecordErr):
+		return "TLS error: endpoint did not speak TLS"
+	case errors.Is(err, context.Canceled):
+		return "probe cancelled"
+	default:
+		return "request failed"
+	}
 }
 
 // conditionSample builds a sample from a Securesign CR condition observation.
@@ -584,8 +803,8 @@ func buildServiceHealth(name string, buf *ringBuffer, includeHistory bool) model
 	}
 
 	sh.Probed = buf.probed
-	if buf.endpointURL != "" {
-		url := buf.endpointURL
+	if buf.publicURL != "" {
+		url := buf.publicURL
 		sh.EndpointUrl = &url
 	}
 	sh.ConsecutiveFailures = buf.consecutiveFail
@@ -744,6 +963,12 @@ func (h *healthService) getSecuresign(ctx context.Context) (*unstructured.Unstru
 		sort.Strings(names)
 		return nil, fmt.Errorf("%w in namespace %s (%s)", errMultipleSecuresign, h.namespace, strings.Join(names, ", "))
 	}
+}
+
+// isSecuresignAbsent reports whether a CR read error means the Securesign CR
+// does not exist (as opposed to a transient or permission error).
+func isSecuresignAbsent(err error) bool {
+	return err != nil && (errors.Is(err, errNoSecuresign) || apierrors.IsNotFound(err))
 }
 
 var (

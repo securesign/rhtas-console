@@ -338,8 +338,11 @@ See `config/rbac/health-role.yaml` for the complete RBAC configuration required 
 
 ### System health configuration
 
-`/api/v1/system/health` is served from an in-process background prober. Every probe
-round reads the Securesign CR once, then:
+`/api/v1/system/health` is served from an in-process background prober. A probe round
+runs every `PROBE_INTERVAL_SECONDS`, and also immediately when the Securesign CR's
+conditions or URLs change (the console watches the CR), so short outages reported by the
+operator, such as a component pod restarting, are not missed between rounds. Every round
+reads the Securesign CR once, then:
 
 - reports `securesignStatus` from the CR `Ready` condition;
 - HTTP-probes Rekor, Fulcio, TSA and TUF (all in parallel);
@@ -357,20 +360,31 @@ an unreported condition yields `unknown`, never `unhealthy`.
 |----------|---------|-------------|
 | `NAMESPACE` | the pod's namespace, else `trusted-artifact-signer` | Namespace of the Securesign CR. |
 | `TAS_DEPLOYMENT_NAME` | unset | Name of the Securesign CR. When unset, the only Securesign CR in the namespace is used; if there are none or several, health is reported `unknown` with the reason. |
-| `PROBE_INTERVAL_SECONDS` | `30` | Interval between probe rounds. |
+| `PROBE_INTERVAL_SECONDS` | `10` | Interval between probe rounds (rounds also run on Securesign changes). |
 | `PROBE_TIMEOUT_SECONDS` | `5` | Per-probe timeout (connection and request). |
-| `PROBE_HISTORY_SIZE` | `120` | Probe samples retained per service (about 1h at the default interval). |
+| `PROBE_HISTORY_SIZE` | `360` | Probe samples retained per service (about 1h at the default interval). |
 | `PROBE_FAILURE_THRESHOLD` | `2` | Consecutive HTTP probe failures before a service is reported `unhealthy`. |
-| `PROBE_URL_REKOR`, `PROBE_URL_FULCIO`, `PROBE_URL_TSA`, `PROBE_URL_TUF` | unset | Base URL to probe instead of the URL published in the Securesign CR status, e.g. an in-cluster Service URL such as `http://rekor-server.<namespace>.svc`. For TSA, include the `/api/v1/timestamp` path, as in the CR status. |
+| `PROBE_URL_REKOR`, `PROBE_URL_FULCIO`, `PROBE_URL_TSA`, `PROBE_URL_TUF` | unset | Base URL to probe instead of the URL published in the Securesign CR status, e.g. an in-cluster Service URL such as `http://rekor-server.<namespace>.svc`. For TSA, include the `/api/v1/timestamp` path, as in the CR status. The override is only used as the probe target: `endpointUrl` in the API still reports the URL from the CR status. |
 
-If the Securesign CR cannot be read (missing RBAC, wrong name or namespace, API server
-unavailable), every status is `unknown` and `securesignStatusReason` gives a short reason
-(e.g. permission denied, not found, timeout). The full Kubernetes error, which can include
-the API server address and resource names, is only written to the console logs.
-The console's ServiceAccount needs `get` and `list` on `securesigns.rhtas.redhat.com` in
-that namespace (see `config/rbac/health-role.yaml`).
+If the Securesign CR cannot be read, `securesignStatus` is `unknown` and
+`securesignStatusReason` gives a short reason (e.g. permission denied, not found, timeout):
 
-Only a `2xx` probe response is healthy; redirects are not followed.
+- If the CR does not exist (deleted, wrong name, or none in the namespace), nothing is
+  deployed: every service is `unknown` and no endpoints are probed.
+- For other errors (e.g. API server unavailable, timeout, permission denied), CT log and
+  Trillian are `unknown`, while Rekor, Fulcio, TSA and TUF keep being probed at their last
+  known endpoints.
+
+The full Kubernetes error, which can include the API server address and resource names, is
+only written to the console logs. The console's ServiceAccount needs `get`, `list` and
+`watch` on `securesigns.rhtas.redhat.com` in that namespace (see
+`config/rbac/health-role.yaml`). Without `watch`, health still works but changes are only
+seen at the next probe round.
+
+Only a `2xx` probe response is healthy; redirects are not followed. Probe errors in the
+API are short reasons (e.g. `request timed out`, `connection refused`) without URLs; the
+full error (including HTTP status failures such as `503`) is logged when it first appears
+or changes.
 
 The response also keeps the deprecated per-component fields (`rekorStatus`,
 `fulcioStatus`, `ctlogStatus`, `trillianStatus`, `tsaStatus`, `tufStatus`) for

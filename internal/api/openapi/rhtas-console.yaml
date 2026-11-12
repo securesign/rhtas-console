@@ -435,7 +435,7 @@ paths:
                 trillianStatus: healthy
                 tsaStatus: healthy
                 tufStatus: healthy
-                probeIntervalSeconds: 30
+                probeIntervalSeconds: 10
                 windowSeconds: 3600
                 updatedAt: "2026-03-18T12:00:00Z"
                 services:
@@ -1302,7 +1302,7 @@ components:
         probeIntervalSeconds:
           type: integer
           description: Interval, in seconds, between consecutive probes.
-          example: 30
+          example: 10
         windowSeconds:
           type: integer
           description: Approximate time window, in seconds, covered by the retained probe history.
@@ -1362,7 +1362,7 @@ components:
         endpointUrl:
           type: string
           nullable: true
-          description: Probe target URL, or null when the service has no reachable endpoint.
+          description: Public endpoint published in the Securesign CR status, or null when not probed or not known. A PROBE_URL_* override (e.g. an in-cluster Service URL) is only used as the probe target and is never returned.
           example: "https://rekor.example.com"
         latencyP50Ms:
           type: number
@@ -1467,7 +1467,7 @@ components:
         error:
           type: string
           nullable: true
-          description: Error detail when the probe failed, otherwise null.
+          description: Short reason when the check failed or its outcome is unknown (e.g. "request timed out", "connection refused", "unexpected status code 503"), otherwise null. It never contains the probed URL; full transport errors are written to the console logs.
           example: null
       required:
         - timestamp

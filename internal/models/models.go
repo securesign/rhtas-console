@@ -405,7 +405,7 @@ type ParsedCertificate struct {
 
 // ProbeSample A single probe observation.
 type ProbeSample struct {
-	// Error Error detail when the probe failed, otherwise null.
+	// Error Short reason when the check failed or its outcome is unknown (e.g. "request timed out", "connection refused", "unexpected status code 503"), otherwise null. It never contains the probed URL; full transport errors are written to the console logs.
 	Error *string `json:"error"`
 
 	// HttpStatusCode HTTP status code returned by the probe, or null when not an HTTP probe or no response was received.
@@ -448,7 +448,7 @@ type ServiceHealth struct {
 	// ConsecutiveFailures Number of consecutive failing probes ending at the most recent sample. Unknown observations reset the count.
 	ConsecutiveFailures int `json:"consecutiveFailures"`
 
-	// EndpointUrl Probe target URL, or null when the service has no reachable endpoint.
+	// EndpointUrl Public endpoint published in the Securesign CR status, or null when not probed or not known. A PROBE_URL_* override (e.g. an in-cluster Service URL) is only used as the probe target and is never returned.
 	EndpointUrl *string `json:"endpointUrl"`
 
 	// ErrorRate Fraction of failed probes (0..1) over the retained samples with a known outcome. Null when there is no such sample yet.
