@@ -64,6 +64,13 @@ func main() {
 		})
 	})
 
+	// Start the background health prober if the health service initialized.
+	proberCtx, stopProber := context.WithCancel(context.Background())
+	defer stopProber()
+	if healthService != nil {
+		healthService.Start(proberCtx)
+	}
+
 	api.RegisterRoutes(r, artifactService, rekorService, trustService, healthService)
 
 	server := &http.Server{
@@ -106,6 +113,11 @@ func main() {
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		log.Printf("Server shutdown failed: %v", err)
 	}
+
+	if healthService != nil {
+		healthService.Stop()
+	}
+	stopProber()
 
 	if err := trustService.Close(); err != nil {
 		log.Printf("Failed to close trustService: %v", err)

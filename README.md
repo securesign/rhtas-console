@@ -89,7 +89,7 @@ The backend exposes the following RESTful endpoints, as defined in the OpenAPI s
 | GET    | `/api/v1/trust/targets`                     | Retrieves all TUF targets. |
 | GET    | `/api/v1/trust/target`                      | Retrieves a specific TUF target. |
 | GET    | `/api/v1/trust/targets/certificates`        | Retrieves certificates for TUF targets. |
-| GET    | `/api/v1/system/health`                     | Retrieves the aggregated health status of RHTAS components (TAS, Rekor, TUF). |
+| GET    | `/api/v1/system/health`                     | Retrieves the health of the RHTAS deployment and its components (Rekor, Fulcio, CT log, Trillian, TSA, TUF). Add `?history=true` for per-service probe samples. |
 
 #### Example: Verify an artifact
 
@@ -335,6 +335,64 @@ This grants the console backend read access to:
 - Deployments: (for checking pod health)
 
 See `config/rbac/health-role.yaml` for the complete RBAC configuration required for the `/api/v1/system/health` endpoint.
+
+### System health configuration
+
+`/api/v1/system/health` is served from an in-process background prober. A probe round
+runs every `PROBE_INTERVAL_SECONDS`, and also immediately when the Securesign CR's
+conditions or URLs change (the console watches the CR), so short outages reported by the
+operator, such as a component pod restarting, are not missed between rounds. Every round
+reads the Securesign CR once, then:
+
+- reports `securesignStatus` from the CR `Ready` condition;
+- HTTP-probes Rekor, Fulcio, TSA and TUF (all in parallel);
+- reads the CT log and Trillian status from their CR conditions (they have no public endpoint).
+
+Results are published only when a round completes, and `updatedAt` is the time that
+round completed (`null` until the first round finishes, which clients should treat as
+"collecting"). An explicit `False` CR condition (the operator reports the component
+unavailable) makes the service `unhealthy` immediately, even if its endpoint still answers;
+the probe's latency and status code are still recorded. HTTP probe failures mark a service
+`unhealthy` only after `PROBE_FAILURE_THRESHOLD` consecutive failures. An unreadable CR or
+an unreported condition yields `unknown`, never `unhealthy`.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `NAMESPACE` | the pod's namespace, else `trusted-artifact-signer` | Namespace of the Securesign CR. |
+| `TAS_DEPLOYMENT_NAME` | unset | Name of the Securesign CR. When unset, the only Securesign CR in the namespace is used; if there are none or several, health is reported `unknown` with the reason. |
+| `PROBE_INTERVAL_SECONDS` | `10` | Interval between probe rounds (rounds also run on Securesign changes). |
+| `PROBE_TIMEOUT_SECONDS` | `5` | Per-probe timeout (connection and request). |
+| `PROBE_HISTORY_SIZE` | `360` | Probe samples retained per service (about 1h at the default interval). |
+| `PROBE_FAILURE_THRESHOLD` | `2` | Consecutive HTTP probe failures before a service is reported `unhealthy`. |
+| `PROBE_URL_REKOR`, `PROBE_URL_FULCIO`, `PROBE_URL_TSA`, `PROBE_URL_TUF` | unset | Base URL to probe instead of the URL published in the Securesign CR status, e.g. an in-cluster Service URL such as `http://rekor-server.<namespace>.svc`. For TSA, include the `/api/v1/timestamp` path, as in the CR status. The override is only used as the probe target: `endpointUrl` in the API still reports the URL from the CR status. |
+
+If the Securesign CR cannot be read, `securesignStatus` is `unknown` and
+`securesignStatusReason` gives a short reason (e.g. permission denied, not found, timeout):
+
+- If the CR does not exist (deleted, wrong name, or none in the namespace), nothing is
+  deployed: every service is `unknown` and no endpoints are probed.
+- For other errors (e.g. API server unavailable, timeout, permission denied), CT log and
+  Trillian are `unknown`, while Rekor, Fulcio, TSA and TUF keep being probed at their last
+  known endpoints.
+
+The full Kubernetes error, which can include the API server address and resource names, is
+only written to the console logs. The console's ServiceAccount needs `get`, `list` and
+`watch` on `securesigns.rhtas.redhat.com` in that namespace (see
+`config/rbac/health-role.yaml`). Without `watch`, health still works but changes are only
+seen at the next probe round.
+
+Only a `2xx` probe response is healthy; redirects are not followed. Probe errors in the
+API are short reasons (e.g. `request timed out`, `connection refused`) without URLs; the
+full error (including HTTP status failures such as `503`) is logged when it first appears
+or changes.
+
+The response also keeps the deprecated per-component fields (`rekorStatus`,
+`fulcioStatus`, `ctlogStatus`, `trillianStatus`, `tsaStatus`, `tufStatus`) for
+compatibility with older clients; new clients should read `services`.
+
+By default the probes use the external URLs from the CR status, so they also exercise
+the ingress path. Setting the `PROBE_URL_*` variables to in-cluster Service URLs makes the
+check measure the services themselves.
 
 ## Development
 
