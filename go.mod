@@ -4,16 +4,16 @@ go 1.26.0
 
 require (
 	github.com/go-chi/chi/v5 v5.3.0
-	github.com/google/go-containerregistry v0.21.6
-	github.com/oapi-codegen/runtime v1.4.1
-	github.com/sigstore/protobuf-specs v0.5.1
-	github.com/sigstore/sigstore v1.10.8
+	github.com/google/go-containerregistry v0.22.1
+	github.com/oapi-codegen/runtime v1.9.0
+	github.com/sigstore/protobuf-specs v0.5.2
+	github.com/sigstore/sigstore v1.11.3
 	github.com/sigstore/sigstore-go v1.1.4
-	github.com/theupdateframework/go-tuf v0.7.0
 	github.com/theupdateframework/go-tuf/v2 v2.4.2
-	google.golang.org/protobuf v1.36.11
-	k8s.io/apimachinery v0.33.1
-	k8s.io/client-go v0.33.1
+	github.com/theupdateframework/go-tuf/v2 v2.4.2
+	google.golang.org/protobuf v1.36.12
+	k8s.io/apimachinery v0.37.2
+	k8s.io/client-go v0.37.2
 )
 
 require (
@@ -127,5 +127,5 @@ require (
 	github.com/opencontainers/image-spec v1.1.1 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/sirupsen/logrus v1.9.4 // indirect
-	golang.org/x/sync v0.22.0
+	golang.org/x/sync v0.25.0
 )
