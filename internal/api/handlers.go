@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 
 	_ "embed"
 
@@ -160,7 +161,17 @@ func (h *Handler) GetApiV1SystemHealth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, statusCode, err := h.healthService.GetSystemHealth(r.Context())
+	includeHistory := false
+	if v := r.URL.Query().Get("history"); v != "" {
+		parsed, err := strconv.ParseBool(v)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid history parameter: must be true or false")
+			return
+		}
+		includeHistory = parsed
+	}
+
+	resp, statusCode, err := h.healthService.GetSystemHealth(r.Context(), includeHistory)
 	if err != nil {
 		writeError(w, statusCode, err.Error())
 		return

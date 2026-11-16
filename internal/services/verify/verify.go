@@ -28,6 +28,7 @@ import (
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
+	"github.com/securesign/rhtas-console/internal/httpclient"
 	"github.com/securesign/rhtas-console/internal/models"
 	"github.com/sigstore/sigstore/pkg/signature"
 	"github.com/theupdateframework/go-tuf/v2/metadata/fetcher"
@@ -292,6 +293,7 @@ func VerifyLayer(verifyOpts VerifyOptions, b *bundle.Bundle) (verified bool, ver
 		}
 		fetcher := fetcher.NewDefaultFetcher()
 		fetcher.SetHTTPUserAgent(util.ConstructUserAgent())
+		fetcher.SetHTTPClient(httpclient.Default)
 		opts.Fetcher = fetcher
 
 		// Load the tuf root.json if provided, if not use public good
@@ -1546,7 +1548,7 @@ func getBundleMsgSignature(simpleSigningLayer *v1.Descriptor) (*protobundle.Bund
 // setOptsRoot fetches the root.json from the repository and sets it in the options.
 func setOptsRoot(opts *tuf.Options) error {
 	rootURL := opts.RepositoryBaseURL + "/root.json"
-	resp, err := http.Get(rootURL)
+	resp, err := httpclient.Default.Get(rootURL)
 	if err != nil {
 		return fmt.Errorf("failed to fetch root.json: %w", err)
 	}
