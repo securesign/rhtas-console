@@ -482,6 +482,14 @@ paths:
                         httpStatusCode: null
                         source: condition
                         error: "Securesign condition CTlogAvailable=False"
+        "400":
+          description: Invalid query parameter (e.g. `history` is not a boolean)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: "invalid history parameter: must be true or false"
         "500":
           description: Internal server error
           content:
