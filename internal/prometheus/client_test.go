@@ -19,7 +19,7 @@ const vectorBody = `{"status":"success","data":{"resultType":"vector","result":[
 
 func TestQueryVector(t *testing.T) {
 	var gotQuery, gotNamespace, gotAuth string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v1/query" {
 			t.Errorf("path = %q, want /api/v1/query", r.URL.Path)
 		}
@@ -34,7 +34,12 @@ func TestQueryVector(t *testing.T) {
 	if err := os.WriteFile(tokenPath, []byte("s3cret\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	c, err := New(Config{URL: srv.URL + "/", TokenPath: tokenPath, Namespace: "tas"})
+	// A token requires TLS: trust the test server's self-signed certificate.
+	caPath := filepath.Join(t.TempDir(), "ca.pem")
+	if err := os.WriteFile(caPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := New(Config{URL: srv.URL + "/", TokenPath: tokenPath, CAPath: caPath, Namespace: "tas"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,5 +178,56 @@ func TestCABundle(t *testing.T) {
 	}
 	if _, err := c.Query(context.Background(), "up"); err != nil {
 		t.Errorf("query with CA bundle failed: %v", err)
+	}
+}
+
+// Redirects are not followed, so the bearer token is never sent to another
+// URL (Go keeps Authorization on same-host redirects, even HTTPS to HTTP).
+func TestRedirectsAreNotFollowed(t *testing.T) {
+	var targetHit bool
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		targetHit = true
+		_, _ = w.Write([]byte(vectorBody))
+	}))
+	defer target.Close()
+	redirecting := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+r.URL.RequestURI(), http.StatusFound)
+	}))
+	defer redirecting.Close()
+
+	caPath := filepath.Join(t.TempDir(), "ca.pem")
+	if err := os.WriteFile(caPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: redirecting.Certificate().Raw}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tokenPath := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(tokenPath, []byte("s3cret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := New(Config{URL: redirecting.URL, CAPath: caPath, TokenPath: tokenPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = c.Query(context.Background(), "up")
+	var se *StatusError
+	if !errors.As(err, &se) || se.Code != http.StatusFound {
+		t.Errorf("err = %v, want StatusError 302 (redirect not followed)", err)
+	}
+	if targetHit {
+		t.Error("the redirect target must not be contacted")
+	}
+}
+
+// A bearer token is never sent over plain HTTP; plain HTTP without a token
+// stays possible (e.g. a local Prometheus).
+func TestPlainHTTPRejectsToken(t *testing.T) {
+	if _, err := New(Config{URL: "http://prometheus:9090", TokenPath: "/var/run/secrets/token"}); err == nil ||
+		!strings.Contains(err.Error(), "plain HTTP") {
+		t.Errorf("err = %v, want a refusal to send a token over plain HTTP", err)
+	}
+	if _, err := New(Config{URL: "http://prometheus:9090"}); err != nil {
+		t.Errorf("plain HTTP without a token should be allowed: %v", err)
+	}
+	if _, err := New(Config{URL: "https://prometheus:9091", TokenPath: "/var/run/secrets/token"}); err != nil {
+		t.Errorf("https with a token should be allowed: %v", err)
 	}
 }

@@ -360,9 +360,9 @@ an unreported condition yields `unknown`, never `unhealthy`.
 |----------|---------|-------------|
 | `NAMESPACE` | the pod's namespace, else `trusted-artifact-signer` | Namespace of the Securesign CR. |
 | `TAS_DEPLOYMENT_NAME` | unset | Name of the Securesign CR. When unset, the only Securesign CR in the namespace is used; if there are none or several, health is reported `unknown` with the reason. |
-| `PROBE_INTERVAL_SECONDS` | `10` | Interval between probe rounds (rounds also run on Securesign changes). |
-| `PROBE_TIMEOUT_SECONDS` | `5` | Per-probe timeout (connection and request). |
-| `PROBE_HISTORY_SIZE` | `360` | Probe samples retained per service (about 1h at the default interval). |
+| `PROBE_INTERVAL_SECONDS` | `10` | Interval between probe rounds (rounds also run on Securesign changes). Maximum 3600. |
+| `PROBE_TIMEOUT_SECONDS` | `5` | Per-probe timeout (connection and request). Maximum 300. |
+| `PROBE_HISTORY_SIZE` | `360` | Probe samples retained per service (about 1h at the default interval). Maximum 100000. |
 | `PROBE_FAILURE_THRESHOLD` | `2` | Consecutive HTTP probe failures before a service is reported `unhealthy`. |
 | `PROBE_URL_REKOR`, `PROBE_URL_FULCIO`, `PROBE_URL_TSA`, `PROBE_URL_TUF` | unset | Base URL to probe instead of the URL published in the Securesign CR status, e.g. an in-cluster Service URL such as `http://rekor-server.<namespace>.svc`. For TSA, include the `/api/v1/timestamp` path, as in the CR status. The override is only used as the probe target: `endpointUrl` in the API still reports the URL from the CR status. |
 
@@ -407,8 +407,13 @@ traffic is excluded. Prometheus is queried in the background every
 |----------|---------|-------------|
 | `PROMETHEUS_URL` | unset (feature disabled) | Prometheus-compatible query endpoint, e.g. the OpenShift Thanos querier (`https://thanos-querier.openshift-monitoring.svc:9091`, or the namespace-scoped port `9092`). |
 | `PROMETHEUS_TOKEN_PATH` | the pod's ServiceAccount token | File holding the bearer token. Read on every query, so rotated tokens are picked up. Set to an empty value to send no token. |
-| `PROMETHEUS_CA_PATH` | system CAs | PEM bundle used to verify the endpoint's TLS certificate (e.g. the OpenShift service CA). TLS verification is always enabled. |
-| `PROMETHEUS_REFRESH_SECONDS` | `60` | Interval between query rounds. |
+| `PROMETHEUS_CA_PATH` | system CAs | PEM bundle used to verify the endpoint's TLS certificate (e.g. the OpenShift service CA). For `https` URLs, TLS verification is always enabled. |
+| `PROMETHEUS_REFRESH_SECONDS` | `60` | Interval between query rounds. Maximum 3600. |
+
+A bearer token is never sent over plain HTTP: an `http://` URL is only accepted with no token
+(`PROMETHEUS_TOKEN_PATH` set to an empty value), and is otherwise reported as an invalid
+configuration. Redirects from the endpoint are not followed. Values above the documented
+maximums are capped (and logged).
 
 `metrics.status` is:
 

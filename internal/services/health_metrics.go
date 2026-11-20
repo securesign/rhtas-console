@@ -31,12 +31,18 @@ const (
 	serviceAccountTokenFile = "/var/run/secrets/kubernetes.io/serviceaccount/token"
 )
 
-// metricFamilies maps each signing service to the request counter whose
-// presence in Prometheus shows that the service is scraped (monitored).
-var metricFamilies = map[string]string{
-	svcFulcio: "grpc_server_handled_total",
-	svcRekor:  "rekor_qps_by_api",
-	svcTsa:    "timestamp_authority_http_requests_total",
+// monitoredSelector returns, per signing service, a selector whose presence in
+// Prometheus shows that this service (and not another one using the same
+// generic metric, such as another gRPC server) is scraped.
+func monitoredSelector(svc, ns string) string {
+	switch svc {
+	case svcFulcio:
+		return fmt.Sprintf(`grpc_server_handled_total{namespace=%s, grpc_service="dev.sigstore.fulcio.v2.CA"}`, ns)
+	case svcRekor:
+		return fmt.Sprintf(`rekor_qps_by_api{namespace=%s}`, ns)
+	default: // svcTsa
+		return fmt.Sprintf(`timestamp_authority_http_requests_total{namespace=%s}`, ns)
+	}
 }
 
 // metricsServices is the stable order of services in byService.
@@ -86,7 +92,7 @@ func newMetricsCollectorFromEnv(namespace string) *metricsCollector {
 	}
 	m := &metricsCollector{
 		namespace: namespace,
-		interval:  time.Duration(envInt("PROMETHEUS_REFRESH_SECONDS", defaultMetricsRefreshSeconds)) * time.Second,
+		interval:  time.Duration(envIntMax("PROMETHEUS_REFRESH_SECONDS", defaultMetricsRefreshSeconds, maxIntervalSeconds)) * time.Second,
 		now:       func() time.Time { return time.Now().UTC() },
 	}
 	tokenPath, ok := os.LookupEnv("PROMETHEUS_TOKEN_PATH")
@@ -135,6 +141,9 @@ func (m *metricsCollector) run(ctx context.Context, stop <-chan struct{}) {
 // refresh runs all queries in parallel and publishes the result atomically.
 // On failure the previous snapshot is kept (see response for staleness).
 func (m *metricsCollector) refresh(ctx context.Context) {
+	if m.client == nil { // invalid configuration: nothing to query
+		return
+	}
 	ctx, cancel := context.WithTimeout(ctx, metricsQueryTimeout)
 	defer cancel()
 
@@ -183,32 +192,42 @@ func (m *metricsCollector) queries() promQueries {
 	ns := strconv.Quote(m.namespace)
 	w := fmt.Sprintf("%ds", int(metricsWindow.Seconds()))
 	recent := fmt.Sprintf("%ds", int(metricsRecentWindow.Seconds()))
-	families := make([]string, 0, len(metricFamilies))
+	monitored := make([]string, 0, len(metricsServices))
 	q := promQueries{byCode: map[string]string{}, recentByCode: map[string]string{}}
 	for _, svc := range metricsServices {
-		families = append(families, metricFamilies[svc])
+		monitored = append(monitored, fmt.Sprintf(`label_replace(count(%s), "service", %q, "", "")`, monitoredSelector(svc, ns), svc))
 		q.byCode[svc] = fmt.Sprintf(`sum by (%s) (%s)`, codeLabel(svc), windowCount(requestSelector(svc, ns), w))
 		q.recentByCode[svc] = fmt.Sprintf(`sum by (%s) (%s)`, codeLabel(svc), windowCount(requestSelector(svc, ns), recent))
 	}
-	q.monitored = fmt.Sprintf(`count by (__name__) ({namespace=%s, __name__=~%s})`, ns, strconv.Quote(strings.Join(families, "|")))
+	q.monitored = strings.Join(monitored, " or ")
 	q.certs = fmt.Sprintf(`sum(%s)`, windowCount(fmt.Sprintf(`fulcio_new_certs{namespace=%s}`, ns), w))
 	q.entries = fmt.Sprintf(`sum(%s)`, windowCount(fmt.Sprintf(`rekor_new_entries{namespace=%s}`, ns), w))
 	return q
 }
 
+// windowStartLookback is how far before the window start a series' last value
+// is looked up, so that a scrape gap at the window boundary is not mistaken
+// for a new series (whose whole value would then be counted).
+const windowStartLookback = "3600s"
+
 // windowCount returns, per series, how much a counter grew over the window:
-// its last value in the window minus its value at the window start, or its
-// whole last value when the series did not exist at the window start.
 //
-// increase() is not used on purpose: it misses the first events of a series
-// created inside the window (a new status code appearing goes from "absent" to
-// N, which increase() cannot see) and extrapolates small counts (e.g. 4 events
-// reported as 6.3). Both distort error counts, where new codes are the norm.
-// Series that disappeared during the window (e.g. a replaced pod) are still
-// counted through last_over_time; after a counter reset within a series, the
-// count since the reset is used (a slight undercount).
+//   - normally: its last value in the window minus its value at the window
+//     start (the last sample in the hour before the window);
+//   - after a counter reset within the series (e.g. a container restart that
+//     keeps the same labels): increase(), which handles resets;
+//   - for a series created inside the window: its whole last value.
+//
+// increase() is not used everywhere on purpose: it misses the first events of
+// a series created inside the window (a new status code going from "absent" to
+// N) and extrapolates small counts (e.g. 4 events reported as 6.3). Both
+// distort error counts, where new codes are the norm. Series that disappeared
+// during the window (e.g. a replaced pod) are still counted through
+// last_over_time.
 func windowCount(selector, window string) string {
-	return fmt.Sprintf(`((last_over_time(%[1]s[%[2]s]) - (%[1]s offset %[2]s)) >= 0 or last_over_time(%[1]s[%[2]s]))`, selector, window)
+	last := fmt.Sprintf(`last_over_time(%s[%s])`, selector, window)
+	start := fmt.Sprintf(`last_over_time(%s[%s] offset %s)`, selector, windowStartLookback, window)
+	return fmt.Sprintf(`((%[1]s - %[2]s) >= 0 or (increase(%[3]s[%[4]s]) and %[2]s) or %[1]s)`, last, start, selector, window)
 }
 
 // query runs one round of queries and builds a snapshot.
@@ -250,12 +269,10 @@ func (m *metricsCollector) query(ctx context.Context) (*metricsSnapshot, error) 
 	}
 
 	monitored := map[string]bool{}
-	present := map[string]bool{}
 	for _, s := range results[0] {
-		present[s.Labels["__name__"]] = true
-	}
-	for svc, family := range metricFamilies {
-		monitored[svc] = present[family]
+		if s.Value > 0 {
+			monitored[s.Labels["service"]] = true
+		}
 	}
 
 	snap := &metricsSnapshot{at: m.now()}

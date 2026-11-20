@@ -248,7 +248,7 @@ func NewHealthService() (HealthService, error) {
 		return nil, fmt.Errorf("failed to create dynamic client: %w", err)
 	}
 
-	timeout := time.Duration(envInt("PROBE_TIMEOUT_SECONDS", defaultProbeTimeoutSeconds)) * time.Second
+	timeout := time.Duration(envIntMax("PROBE_TIMEOUT_SECONDS", defaultProbeTimeoutSeconds, maxProbeTimeoutSeconds)) * time.Second
 	namespace := resolveNamespace()
 
 	h := &healthService{
@@ -257,9 +257,9 @@ func NewHealthService() (HealthService, error) {
 		metrics:       newMetricsCollectorFromEnv(namespace),
 		// Empty means: discover the single Securesign CR in the namespace.
 		crName:           os.Getenv("TAS_DEPLOYMENT_NAME"),
-		interval:         time.Duration(envInt("PROBE_INTERVAL_SECONDS", defaultProbeIntervalSeconds)) * time.Second,
+		interval:         time.Duration(envIntMax("PROBE_INTERVAL_SECONDS", defaultProbeIntervalSeconds, maxIntervalSeconds)) * time.Second,
 		timeout:          timeout,
-		historySize:      envInt("PROBE_HISTORY_SIZE", defaultProbeHistorySize),
+		historySize:      envIntMax("PROBE_HISTORY_SIZE", defaultProbeHistorySize, maxProbeHistorySize),
 		failureThreshold: envInt("PROBE_FAILURE_THRESHOLD", defaultFailureThreshold),
 		httpClient:       newProbeClient(timeout),
 		probeURLs:        probeURLOverrides(),
@@ -349,6 +349,24 @@ func envInt(key string, def int) int {
 		}
 	}
 	return def
+}
+
+// Upper bounds for numeric settings, so that a huge value cannot overflow a
+// time.Duration (a non-positive ticker interval panics) or exhaust memory.
+const (
+	maxIntervalSeconds     = 3600
+	maxProbeTimeoutSeconds = 300
+	maxProbeHistorySize    = 100000
+)
+
+// envIntMax is envInt capped at maxValue (logged when the cap applies).
+func envIntMax(key string, def, maxValue int) int {
+	n := envInt(key, def)
+	if n > maxValue {
+		log.Printf("health: %s=%d exceeds the maximum %d; using %d", key, n, maxValue, maxValue)
+		return maxValue
+	}
+	return n
 }
 
 func (h *healthService) Start(ctx context.Context) {

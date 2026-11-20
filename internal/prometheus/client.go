@@ -82,11 +82,18 @@ func New(cfg Config) (*Client, error) {
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return nil, fmt.Errorf("invalid prometheus URL %q: must be an absolute http or https URL", cfg.URL)
 	}
+	// Never send a bearer token in cleartext.
+	if u.Scheme == "http" && cfg.TokenPath != "" {
+		return nil, fmt.Errorf("refusing to send a bearer token over plain HTTP to %s: use an https URL, or configure no token", u.Host)
+	}
 	timeout := cfg.Timeout
 	if timeout <= 0 {
 		timeout = 10 * time.Second
 	}
 	hc := httpclient.New(timeout, timeout)
+	// Redirects are not followed: the query API never needs them, and Go keeps
+	// the Authorization header on same-host redirects, even from HTTPS to HTTP.
+	hc.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	if cfg.CAPath != "" {
 		pem, err := os.ReadFile(cfg.CAPath)
 		if err != nil {

@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"net/http"
@@ -53,11 +54,11 @@ func s(labels map[string]string, v float64) prometheus.Sample {
 
 func code(c string) map[string]string     { return map[string]string{"code": c} }
 func grpcCode(c string) map[string]string { return map[string]string{"grpc_code": c} }
-func name(n string) map[string]string     { return map[string]string{"__name__": n} }
+func service(n string) map[string]string  { return map[string]string{"service": n} }
 
 // Query keys used by fakeProm (distinctive parts of each fixed query).
 const (
-	qMonitored = "count by (__name__)"
+	qMonitored = "label_replace(count("
 	qFulcio    = "CreateSigningCertificate"
 	qRekor     = `path="/api/v1/log/entries"`
 	qTSA       = `path="/api/v1/timestamp"`
@@ -71,9 +72,9 @@ const (
 
 func allMonitored() []prometheus.Sample {
 	return []prometheus.Sample{
-		s(name("grpc_server_handled_total"), 1),
-		s(name("rekor_qps_by_api"), 1),
-		s(name("timestamp_authority_http_requests_total"), 1),
+		s(service("fulcio"), 4),
+		s(service("rekor"), 3),
+		s(service("tsa"), 3),
 	}
 }
 
@@ -169,16 +170,21 @@ func TestMetricsQueriesAreScoped(t *testing.T) {
 			t.Errorf("queries missing %q", want)
 		}
 	}
-	// increase() is avoided: it misses series created inside the window and
-	// extrapolates small counts.
-	if strings.Contains(joined, "increase(") {
-		t.Error("queries must not use increase()")
+	// increase() is only used for series that existed at the window start
+	// (counter resets), never alone: it misses series created inside the
+	// window and extrapolates small counts.
+	for _, q := range fp.queries {
+		if strings.Contains(q, "increase(") && !strings.Contains(q, ") and last_over_time(") {
+			t.Errorf("increase() must only be used for reset series: %s", q)
+		}
 	}
 }
 
 func TestWindowCount(t *testing.T) {
-	got := windowCount(`m{namespace="tas"}`, "3600s")
-	want := `((last_over_time(m{namespace="tas"}[3600s]) - (m{namespace="tas"} offset 3600s)) >= 0 or last_over_time(m{namespace="tas"}[3600s]))`
+	got := windowCount(`m{namespace="tas"}`, "300s")
+	want := `((last_over_time(m{namespace="tas"}[300s]) - last_over_time(m{namespace="tas"}[3600s] offset 300s)) >= 0` +
+		` or (increase(m{namespace="tas"}[300s]) and last_over_time(m{namespace="tas"}[3600s] offset 300s))` +
+		` or last_over_time(m{namespace="tas"}[300s]))`
 	if got != want {
 		t.Errorf("windowCount =\n%s\nwant\n%s", got, want)
 	}
@@ -209,7 +215,7 @@ func TestMetricsIdle(t *testing.T) {
 // null counts instead of zeros.
 func TestMetricsPartiallyMonitored(t *testing.T) {
 	fp := &fakeProm{answers: map[string][]prometheus.Sample{
-		qMonitored: {s(name("rekor_qps_by_api"), 1)},
+		qMonitored: {s(service("rekor"), 3)},
 		qRekor:     {s(code("201"), 10), s(code("500"), 1)},
 		qEntries:   {s(map[string]string{}, 10)},
 	}}
@@ -375,7 +381,7 @@ func TestMetricsDisabledWithoutURL(t *testing.T) {
 func TestMetricsEndToEndInHealthResponse(t *testing.T) {
 	var mu sync.Mutex
 	var namespaces, auths []string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		namespaces = append(namespaces, r.URL.Query().Get("namespace"))
 		auths = append(auths, r.Header.Get("Authorization"))
@@ -384,7 +390,7 @@ func TestMetricsEndToEndInHealthResponse(t *testing.T) {
 		result := []map[string]any{}
 		switch {
 		case strings.Contains(q, qMonitored):
-			result = append(result, map[string]any{"metric": map[string]string{"__name__": "rekor_qps_by_api"}, "value": []any{1, "1"}})
+			result = append(result, map[string]any{"metric": map[string]string{"service": "rekor"}, "value": []any{1, "3"}})
 		case strings.Contains(q, qRekor):
 			result = append(result, map[string]any{"metric": map[string]string{"code": "201"}, "value": []any{1, "4"}})
 		case strings.Contains(q, qEntries):
@@ -398,12 +404,20 @@ func TestMetricsEndToEndInHealthResponse(t *testing.T) {
 	if err := os.WriteFile(tokenPath, []byte("tok"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	caPath := filepath.Join(t.TempDir(), "ca.pem")
+	if err := os.WriteFile(caPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw}), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("PROMETHEUS_URL", srv.URL)
+	t.Setenv("PROMETHEUS_CA_PATH", caPath)
 	t.Setenv("PROMETHEUS_TOKEN_PATH", tokenPath)
 
 	cr := makeSecuresignCR("securesign-sample", testNamespace, allHealthyConditions(), allURLs())
 	h := newTestHealthService(cr)
 	h.metrics = newMetricsCollectorFromEnv(testNamespace)
+	if h.metrics == nil || h.metrics.configErr != nil {
+		t.Fatalf("collector = %+v", h.metrics)
+	}
 	h.metrics.refresh(context.Background())
 
 	resp, _, _ := h.GetSystemHealth(context.Background(), false)
@@ -520,7 +534,7 @@ func TestMetricsRecentWindow(t *testing.T) {
 // Services without metrics have no recent counts either.
 func TestMetricsRecentNullWhenUnmonitored(t *testing.T) {
 	fp := &fakeProm{answers: map[string][]prometheus.Sample{
-		qMonitored:   {s(name("rekor_qps_by_api"), 1)},
+		qMonitored:   {s(service("rekor"), 3)},
 		qRekorRecent: {s(code("201"), 1)},
 	}}
 	m, _ := newTestCollector(fp)
@@ -534,5 +548,60 @@ func TestMetricsRecentNullWhenUnmonitored(t *testing.T) {
 		} else if e.Recent != nil {
 			t.Errorf("%s recent = %+v, want nil (not monitored)", e.Name, e.Recent)
 		}
+	}
+}
+
+// A generic metric reported by another server must not make a service look
+// monitored: Fulcio is detected through its own gRPC service only.
+func TestMonitoredUsesServiceSpecificSelectors(t *testing.T) {
+	m, _ := newTestCollector(&fakeProm{})
+	q := m.queries().monitored
+	for _, want := range []string{
+		`grpc_server_handled_total{namespace="tas", grpc_service="dev.sigstore.fulcio.v2.CA"}`,
+		`rekor_qps_by_api{namespace="tas"}`,
+		`timestamp_authority_http_requests_total{namespace="tas"}`,
+		`"service", "fulcio"`,
+	} {
+		if !strings.Contains(q, want) {
+			t.Errorf("monitored query missing %q:\n%s", want, q)
+		}
+	}
+
+	// Prometheus has metrics for Rekor only (e.g. another gRPC server reports
+	// grpc_server_handled_total, but not Fulcio's service): Fulcio is not monitored.
+	fp := &fakeProm{answers: map[string][]prometheus.Sample{qMonitored: {s(service("rekor"), 3)}}}
+	m, _ = newTestCollector(fp)
+	m.refresh(context.Background())
+	for _, e := range m.response().ErrorRates.ByService {
+		if e.Name == models.ServiceErrorRateNameFulcio && (e.Monitored || e.Requests != nil) {
+			t.Errorf("fulcio = %+v, want monitored=false with null counts", e)
+		}
+	}
+	if a := m.response().SigningActivity; a.CertificatesIssued != nil {
+		t.Errorf("certificatesIssued = %v, want nil when Fulcio is not monitored", *a.CertificatesIssued)
+	}
+}
+
+// Huge numeric settings are capped instead of overflowing a time.Duration
+// (a non-positive ticker interval would panic).
+func TestNumericSettingsAreCapped(t *testing.T) {
+	t.Setenv("PROMETHEUS_URL", "https://prometheus.example")
+	t.Setenv("PROMETHEUS_TOKEN_PATH", "")
+	t.Setenv("PROMETHEUS_REFRESH_SECONDS", "9223372036854775807")
+	m := newMetricsCollectorFromEnv("tas")
+	if m == nil || m.configErr != nil {
+		t.Fatalf("collector = %+v", m)
+	}
+	if m.interval != time.Duration(maxIntervalSeconds)*time.Second {
+		t.Errorf("interval = %v, want the %ds cap", m.interval, maxIntervalSeconds)
+	}
+
+	t.Setenv("PROBE_HISTORY_SIZE", "999999999")
+	if got := envIntMax("PROBE_HISTORY_SIZE", defaultProbeHistorySize, maxProbeHistorySize); got != maxProbeHistorySize {
+		t.Errorf("history size = %d, want the %d cap", got, maxProbeHistorySize)
+	}
+	t.Setenv("PROBE_TIMEOUT_SECONDS", "42")
+	if got := envIntMax("PROBE_TIMEOUT_SECONDS", defaultProbeTimeoutSeconds, maxProbeTimeoutSeconds); got != 42 {
+		t.Errorf("timeout = %d, want 42 (below the cap)", got)
 	}
 }
