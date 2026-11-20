@@ -228,6 +228,10 @@ type healthService struct {
 	// lastWatchErr is the last watch error that was logged (watch goroutine only).
 	lastWatchErr string
 
+	// metrics computes signing error rates and activity from Prometheus. Nil
+	// when PROMETHEUS_URL is not set (metrics reported as disabled).
+	metrics *metricsCollector
+
 	// now and probeHTTP are injectable for testing.
 	now       func() time.Time
 	probeHTTP func(ctx context.Context, url string) (latency time.Duration, statusCode int, err error)
@@ -245,10 +249,12 @@ func NewHealthService() (HealthService, error) {
 	}
 
 	timeout := time.Duration(envInt("PROBE_TIMEOUT_SECONDS", defaultProbeTimeoutSeconds)) * time.Second
+	namespace := resolveNamespace()
 
 	h := &healthService{
 		dynamicClient: dynamicClient,
-		namespace:     resolveNamespace(),
+		namespace:     namespace,
+		metrics:       newMetricsCollectorFromEnv(namespace),
 		// Empty means: discover the single Securesign CR in the namespace.
 		crName:           os.Getenv("TAS_DEPLOYMENT_NAME"),
 		interval:         time.Duration(envInt("PROBE_INTERVAL_SECONDS", defaultProbeIntervalSeconds)) * time.Second,
@@ -374,6 +380,9 @@ func (h *healthService) Start(ctx context.Context) {
 		}
 	}()
 	go h.watchSecuresign(ctx)
+	if h.metrics != nil {
+		go h.metrics.run(ctx, h.stopCh)
+	}
 }
 
 // requestCollect asks the collector for an immediate round. It never blocks;
@@ -786,6 +795,7 @@ func (h *healthService) GetSystemHealth(_ context.Context, includeHistory bool) 
 		ProbeIntervalSeconds:   int(h.interval.Seconds()),
 		WindowSeconds:          int(h.interval.Seconds()) * h.historySize,
 		UpdatedAt:              h.lastRoundAt,
+		Metrics:                h.metrics.response(),
 	}, http.StatusOK, nil
 }
 
