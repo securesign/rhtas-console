@@ -228,6 +228,10 @@ type healthService struct {
 	// lastWatchErr is the last watch error that was logged (watch goroutine only).
 	lastWatchErr string
 
+	// metrics computes signing error rates and activity from Prometheus. Nil
+	// when PROMETHEUS_URL is not set (metrics reported as disabled).
+	metrics *metricsCollector
+
 	// now and probeHTTP are injectable for testing.
 	now       func() time.Time
 	probeHTTP func(ctx context.Context, url string) (latency time.Duration, statusCode int, err error)
@@ -244,16 +248,18 @@ func NewHealthService() (HealthService, error) {
 		return nil, fmt.Errorf("failed to create dynamic client: %w", err)
 	}
 
-	timeout := time.Duration(envInt("PROBE_TIMEOUT_SECONDS", defaultProbeTimeoutSeconds)) * time.Second
+	timeout := time.Duration(envIntMax("PROBE_TIMEOUT_SECONDS", defaultProbeTimeoutSeconds, maxProbeTimeoutSeconds)) * time.Second
+	namespace := resolveNamespace()
 
 	h := &healthService{
 		dynamicClient: dynamicClient,
-		namespace:     resolveNamespace(),
+		namespace:     namespace,
+		metrics:       newMetricsCollectorFromEnv(namespace),
 		// Empty means: discover the single Securesign CR in the namespace.
 		crName:           os.Getenv("TAS_DEPLOYMENT_NAME"),
-		interval:         time.Duration(envInt("PROBE_INTERVAL_SECONDS", defaultProbeIntervalSeconds)) * time.Second,
+		interval:         time.Duration(envIntMax("PROBE_INTERVAL_SECONDS", defaultProbeIntervalSeconds, maxIntervalSeconds)) * time.Second,
 		timeout:          timeout,
-		historySize:      envInt("PROBE_HISTORY_SIZE", defaultProbeHistorySize),
+		historySize:      envIntMax("PROBE_HISTORY_SIZE", defaultProbeHistorySize, maxProbeHistorySize),
 		failureThreshold: envInt("PROBE_FAILURE_THRESHOLD", defaultFailureThreshold),
 		httpClient:       newProbeClient(timeout),
 		probeURLs:        probeURLOverrides(),
@@ -345,6 +351,24 @@ func envInt(key string, def int) int {
 	return def
 }
 
+// Upper bounds for numeric settings, so that a huge value cannot overflow a
+// time.Duration (a non-positive ticker interval panics) or exhaust memory.
+const (
+	maxIntervalSeconds     = 3600
+	maxProbeTimeoutSeconds = 300
+	maxProbeHistorySize    = 100000
+)
+
+// envIntMax is envInt capped at maxValue (logged when the cap applies).
+func envIntMax(key string, def, maxValue int) int {
+	n := envInt(key, def)
+	if n > maxValue {
+		log.Printf("health: %s=%d exceeds the maximum %d; using %d", key, n, maxValue, maxValue)
+		return maxValue
+	}
+	return n
+}
+
 func (h *healthService) Start(ctx context.Context) {
 	if h.trigger == nil {
 		h.trigger = make(chan struct{}, 1)
@@ -374,6 +398,9 @@ func (h *healthService) Start(ctx context.Context) {
 		}
 	}()
 	go h.watchSecuresign(ctx)
+	if h.metrics != nil {
+		go h.metrics.run(ctx, h.stopCh)
+	}
 }
 
 // requestCollect asks the collector for an immediate round. It never blocks;
@@ -786,6 +813,7 @@ func (h *healthService) GetSystemHealth(_ context.Context, includeHistory bool) 
 		ProbeIntervalSeconds:   int(h.interval.Seconds()),
 		WindowSeconds:          int(h.interval.Seconds()) * h.historySize,
 		UpdatedAt:              h.lastRoundAt,
+		Metrics:                h.metrics.response(),
 	}, http.StatusOK, nil
 }
 

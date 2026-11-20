@@ -360,9 +360,9 @@ an unreported condition yields `unknown`, never `unhealthy`.
 |----------|---------|-------------|
 | `NAMESPACE` | the pod's namespace, else `trusted-artifact-signer` | Namespace of the Securesign CR. |
 | `TAS_DEPLOYMENT_NAME` | unset | Name of the Securesign CR. When unset, the only Securesign CR in the namespace is used; if there are none or several, health is reported `unknown` with the reason. |
-| `PROBE_INTERVAL_SECONDS` | `10` | Interval between probe rounds (rounds also run on Securesign changes). |
-| `PROBE_TIMEOUT_SECONDS` | `5` | Per-probe timeout (connection and request). |
-| `PROBE_HISTORY_SIZE` | `360` | Probe samples retained per service (about 1h at the default interval). |
+| `PROBE_INTERVAL_SECONDS` | `10` | Interval between probe rounds (rounds also run on Securesign changes). Maximum 3600. |
+| `PROBE_TIMEOUT_SECONDS` | `5` | Per-probe timeout (connection and request). Maximum 300. |
+| `PROBE_HISTORY_SIZE` | `360` | Probe samples retained per service (about 1h at the default interval). Maximum 100000. |
 | `PROBE_FAILURE_THRESHOLD` | `2` | Consecutive HTTP probe failures before a service is reported `unhealthy`. |
 | `PROBE_URL_REKOR`, `PROBE_URL_FULCIO`, `PROBE_URL_TSA`, `PROBE_URL_TUF` | unset | Base URL to probe instead of the URL published in the Securesign CR status, e.g. an in-cluster Service URL such as `http://rekor-server.<namespace>.svc`. For TSA, include the `/api/v1/timestamp` path, as in the CR status. The override is only used as the probe target: `endpointUrl` in the API still reports the URL from the CR status. |
 
@@ -393,6 +393,54 @@ compatibility with older clients; new clients should read `services`.
 By default the probes use the external URLs from the CR status, so they also exercise
 the ingress path. Setting the `PROBE_URL_*` variables to in-cluster Service URLs makes the
 check measure the services themselves.
+
+### Signing metrics (Prometheus)
+
+When `PROMETHEUS_URL` is set, the health response's `metrics` object reports signing error
+rates and activity over the last hour, computed from the components' Prometheus metrics.
+Only signing operations are counted (Fulcio `CreateSigningCertificate`, Rekor
+`POST /api/v1/log/entries`, TSA `POST /api/v1/timestamp`), so probe and health-check
+traffic is excluded. Prometheus is queried in the background every
+`PROMETHEUS_REFRESH_SECONDS`, never per API request.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PROMETHEUS_URL` | unset (feature disabled) | Prometheus-compatible query endpoint, e.g. the OpenShift Thanos querier (`https://thanos-querier.openshift-monitoring.svc:9091`, or the namespace-scoped port `9092`). |
+| `PROMETHEUS_TOKEN_PATH` | the pod's ServiceAccount token | File holding the bearer token. Read on every query, so rotated tokens are picked up. Set to an empty value to send no token. |
+| `PROMETHEUS_CA_PATH` | system CAs | PEM bundle used to verify the endpoint's TLS certificate (e.g. the OpenShift service CA). For `https` URLs, TLS verification is always enabled. |
+| `PROMETHEUS_REFRESH_SECONDS` | `60` | Interval between query rounds. Maximum 3600. |
+
+A bearer token is never sent over plain HTTP: an `http://` URL is only accepted with no token
+(`PROMETHEUS_TOKEN_PATH` set to an empty value), and is otherwise reported as an invalid
+configuration. Redirects from the endpoint are not followed. Values above the documented
+maximums are capped (and logged).
+
+`metrics.status` is:
+
+- `disabled`: `PROMETHEUS_URL` is not set. `errorRates` and `signingActivity` are `null`.
+- `available`: data from the last successful query round (kept for up to two refresh
+  intervals if later rounds fail).
+- `unavailable`: Prometheus cannot be queried, or it has no metrics for any of Fulcio, Rekor
+  and TSA. `reason` gives a short explanation; the full error is logged when it first
+  appears or changes.
+
+Services without metrics in Prometheus are reported with `monitored: false` and `null`
+counts. An idle deployment reports zero counts and `errorRate: null`.
+
+Each service also has `recent` counts over the last `recentWindowSeconds` (5 minutes), so
+clients can tell whether failures are still happening: errors in the hour with recent
+requests succeeding means the service has recovered; `recent.requests: 0` means no recent
+signing activity.
+
+Prerequisites:
+
+- Component monitoring enabled in the Securesign CR (`spec.<component>.monitoring.metrics.enabled`
+  and `spec.<component>.monitoring.serviceMonitor.enabled` for Fulcio, Rekor and TSA).
+- A Prometheus that scrapes the namespace. On OpenShift, enable user-workload monitoring
+  (`enableUserWorkload: true` in `openshift-monitoring/cluster-monitoring-config`).
+- Read access to metrics for the console ServiceAccount: `cluster-monitoring-view` for the
+  Thanos querier port `9091`, or `view` on the namespace for the namespace-scoped port `9092`
+  (the console always sends the `namespace` parameter that this port requires).
 
 ## Development
 

@@ -262,7 +262,7 @@ func TestGetApiV1SystemHealth(t *testing.T) {
 				return models.SystemHealthResponse{
 					SecuresignStatus: models.SystemHealthResponseSecuresignStatusHealthy,
 					Services: []models.ServiceHealth{
-						{Name: models.Rekor, Status: models.ServiceHealthStatusHealthy},
+						{Name: models.ServiceHealthNameRekor, Status: models.ServiceHealthStatusHealthy},
 					},
 				}, http.StatusOK, nil
 			},
