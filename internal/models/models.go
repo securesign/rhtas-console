@@ -256,11 +256,21 @@ type CertificateInfo struct {
 	// CertExpiration Expiration date and time of the certificate (notAfter).
 	CertExpiration string `json:"certExpiration"`
 
+	// ChainIndex Position of the certificate inside its TUF target file (0 = first).
+	ChainIndex int `json:"chainIndex"`
+
+	// IsCA Basic Constraints CA flag.
+	IsCA bool `json:"isCA"`
+
 	// Issuer Certificate issuer
 	Issuer string `json:"issuer"`
 
 	// Pem Certificate in PEM-encoded format.
-	Pem string `json:"pem"`
+	Pem  string          `json:"pem"`
+	Role CertificateRole `json:"role"`
+
+	// SerialNumber Certificate serial number, uppercase hexadecimal.
+	SerialNumber string `json:"serialNumber"`
 
 	// Status Status of the certificate, derived from trusted_root.json validFor window and X.509 validity. pending — not yet in service, the validFor start date is in the future. active — in service, cert is valid. expiring — in service, cert expires within 30 days. expired — the X.509 cert has actually expired. revoked — cert still valid but taken out of service.
 	Status CertificateStatus `json:"status"`

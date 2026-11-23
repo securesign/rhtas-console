@@ -22,6 +22,7 @@ import (
 
 	"github.com/securesign/rhtas-console/internal/httpclient"
 	"github.com/securesign/rhtas-console/internal/models"
+	"github.com/securesign/rhtas-console/internal/services/verify"
 	"github.com/sigstore/sigstore-go/pkg/root"
 	"github.com/sigstore/sigstore-go/pkg/tuf"
 	"github.com/sigstore/sigstore-go/pkg/util"
@@ -319,6 +320,10 @@ func (s *trustService) GetCertificatesInfo(ctx context.Context, tufRepoUrl strin
 					Status:         computeCertStatus(pc.notAfter, vfPtr, now),
 					Type:           targetType,
 					Pem:            pc.info.Pem,
+					Role:           pc.info.Role,
+					ChainIndex:     pc.info.ChainIndex,
+					IsCA:           pc.info.IsCA,
+					SerialNumber:   pc.info.SerialNumber,
 				}
 				if vfPtr != nil {
 					if !vfPtr.start.IsZero() {
@@ -878,10 +883,12 @@ type parsedCertEntry struct {
 	notAfter    time.Time
 }
 
-// extractCertDetails extracts subject, issuer & status from a PEM certificate
+// extractCertDetails extracts subject, issuer, chain details & status from the
+// certificates of a PEM bundle, in file order.
 func extractCertDetails(certPEM string) ([]parsedCertEntry, error) {
 	var results []parsedCertEntry
 	rest := []byte(certPEM)
+	index := 0
 	for {
 		block, remaining := pem.Decode(rest)
 		if block == nil {
@@ -906,16 +913,30 @@ func extractCertDetails(certPEM string) ([]parsedCertEntry, error) {
 				Issuer:         cert.Issuer.String(),
 				CertExpiration: cert.NotAfter.UTC().Format(time.RFC3339),
 				Pem:            string(pemBytes),
+				Role:           verify.IdentifyCertRole(cert),
+				ChainIndex:     index,
+				IsCA:           cert.IsCA,
+				SerialNumber:   serialHex(cert),
 			},
 			fingerprint: certFingerprint(cert.Raw),
 			notAfter:    cert.NotAfter,
 		})
+		index++
 	}
 
 	if len(results) == 0 {
 		return nil, fmt.Errorf("no valid certificates found")
 	}
 	return results, nil
+}
+
+// serialHex renders a certificate serial number as uppercase hexadecimal with
+// whole bytes, matching `openssl x509 -serial` (e.g. a leading "0" is kept).
+func serialHex(cert *x509.Certificate) string {
+	if cert.SerialNumber == nil {
+		return ""
+	}
+	return strings.ToUpper(hex.EncodeToString(cert.SerialNumber.Bytes()))
 }
 
 func certFingerprint(raw []byte) string {

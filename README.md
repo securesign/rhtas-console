@@ -88,7 +88,7 @@ The backend exposes the following RESTful endpoints, as defined in the OpenAPI s
 | GET    | `/api/v1/trust/metadata-info`               | Retrieves metadata info for all TUF roles (root, targets, snapshot, timestamp), including version, expiration date, and status (valid, expiring, expired). |
 | GET    | `/api/v1/trust/targets`                     | Retrieves all TUF targets. |
 | GET    | `/api/v1/trust/target`                      | Retrieves a specific TUF target. |
-| GET    | `/api/v1/trust/targets/certificates`        | Retrieves certificates for TUF targets. |
+| GET    | `/api/v1/trust/targets/certificates`        | Retrieves certificates for TUF targets, including each certificate's chain role (leaf, intermediate, root), position in its target file, CA flag and serial number. |
 | GET    | `/api/v1/system/health`                     | Retrieves the health of the RHTAS deployment and its components (Rekor, Fulcio, CT log, Trillian, TSA, TUF). Add `?history=true` for per-service probe samples. |
 
 #### Example: Verify an artifact

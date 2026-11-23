@@ -626,7 +626,7 @@ func extractSignatureViewFromLayer(layer *v1.Descriptor, b *bundle.Bundle) (sign
 
 		for _, c := range chainCerts {
 			sn := c.Cert.SerialNumber.String()
-			role := identifyCertRole(c.Cert)
+			role := IdentifyCertRole(c.Cert)
 			sanList := mergeSANs(c.Cert)
 			pc := models.ParsedCertificate{
 				Role:         role,
@@ -754,7 +754,7 @@ func extractAttestationViewFromLayer(layer *v1.Descriptor, b *bundle.Bundle) (at
 
 		for _, c := range chainCerts {
 			sn := c.Cert.SerialNumber.String()
-			role := identifyCertRole(c.Cert)
+			role := IdentifyCertRole(c.Cert)
 			sanList := mergeSANs(c.Cert)
 			pc := models.ParsedCertificate{
 				Role:         role,
@@ -1974,8 +1974,12 @@ func parsePEMCertificates(pemData string) ([]CertWithPEM, error) {
 	return result, nil
 }
 
-// identifyCertRole classifies a certificate as leaf, intermediate, root, or unknown.
-func identifyCertRole(cert *x509.Certificate) models.CertificateRole {
+// IdentifyCertRole classifies a certificate as leaf, intermediate, root, or
+// unknown from the certificate itself: leaf when it is not a CA, root when it
+// is a self-signed CA (its signature verifies with its own key), intermediate
+// for any other CA. Names alone are not enough: operator-generated chains can
+// use the same subject and issuer for every certificate.
+func IdentifyCertRole(cert *x509.Certificate) models.CertificateRole {
 	if cert == nil {
 		return models.CertificateRoleUnknown
 	}

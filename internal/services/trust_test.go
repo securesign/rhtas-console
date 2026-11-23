@@ -1008,3 +1008,129 @@ func TestNewTrustService(t *testing.T) {
 		t.Errorf("unexpected target result: code=%d content=%q", code, tc.Content)
 	}
 }
+
+// chainCert describes one certificate of a generated test chain.
+type chainCert struct {
+	isCA     bool
+	notAfter time.Time
+	serial   int64
+}
+
+// buildChain generates certificates that all use the same subject and issuer
+// name (as operator-generated TSA chains do). Each certificate is signed by
+// the next one; the last is self-signed. Returns the PEM bundle in order.
+func buildChain(t *testing.T, specs []chainCert) string {
+	t.Helper()
+	name := pkix.Name{CommonName: "tsa-server.example.com", Organization: []string{"Red Hat"}}
+	keys := make([]*ecdsa.PrivateKey, len(specs))
+	for i := range specs {
+		k, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		keys[i] = k
+	}
+	templates := make([]*x509.Certificate, len(specs))
+	for i, sp := range specs {
+		templates[i] = &x509.Certificate{
+			SerialNumber:          big.NewInt(sp.serial),
+			Subject:               name,
+			NotBefore:             time.Now().Add(-time.Hour),
+			NotAfter:              sp.notAfter,
+			IsCA:                  sp.isCA,
+			BasicConstraintsValid: true,
+			KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		}
+	}
+	// Sign from the root (last) down to the leaf (first).
+	ders := make([][]byte, len(specs))
+	for i := len(specs) - 1; i >= 0; i-- {
+		parent, parentKey := templates[i], keys[i]
+		if i < len(specs)-1 {
+			parent, parentKey = templates[i+1], keys[i+1]
+		}
+		der, err := x509.CreateCertificate(rand.Reader, templates[i], parent, &keys[i].PublicKey, parentKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ders[i] = der
+	}
+	var bundle strings.Builder
+	for _, der := range ders {
+		bundle.Write(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
+	}
+	return bundle.String()
+}
+
+// A TSA-style chain whose certificates share the same subject and issuer is
+// returned as three distinguishable entries: leaf, intermediate and root, with
+// distinct serial numbers and their own expiry dates.
+func TestExtractCertDetailsChainRoles(t *testing.T) {
+	leafExp := time.Now().Add(30 * 24 * time.Hour).UTC().Truncate(time.Second)
+	interExp := time.Now().Add(365 * 24 * time.Hour).UTC().Truncate(time.Second)
+	rootExp := time.Now().Add(3650 * 24 * time.Hour).UTC().Truncate(time.Second)
+	bundle := buildChain(t, []chainCert{
+		{isCA: false, notAfter: leafExp, serial: 0x0123},
+		{isCA: true, notAfter: interExp, serial: 0x6F78},
+		{isCA: true, notAfter: rootExp, serial: 0x0AC9},
+	})
+
+	results, err := extractCertDetails(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 3 {
+		t.Fatalf("got %d certificates, want 3", len(results))
+	}
+	want := []struct {
+		role   models.CertificateRole
+		isCA   bool
+		serial string
+		exp    time.Time
+	}{
+		{models.CertificateRoleLeaf, false, "0123", leafExp},
+		{models.CertificateRoleIntermediate, true, "6F78", interExp},
+		{models.CertificateRoleRoot, true, "0AC9", rootExp},
+	}
+	for i, w := range want {
+		got := results[i].info
+		if got.Subject != results[0].info.Subject || got.Issuer != results[0].info.Issuer {
+			t.Fatalf("test setup: all certificates must share subject and issuer")
+		}
+		if got.Role != w.role || got.IsCA != w.isCA || got.ChainIndex != i || got.SerialNumber != w.serial {
+			t.Errorf("cert %d = role %q isCA %v index %d serial %q; want %q %v %d %q",
+				i, got.Role, got.IsCA, got.ChainIndex, got.SerialNumber, w.role, w.isCA, i, w.serial)
+		}
+		if got.CertExpiration != w.exp.Format(time.RFC3339) {
+			t.Errorf("cert %d expiry = %s, want %s", i, got.CertExpiration, w.exp.Format(time.RFC3339))
+		}
+	}
+}
+
+// A single self-signed CA certificate (like Fulcio's target) is a root.
+func TestExtractCertDetailsSingleRoot(t *testing.T) {
+	bundle := buildChain(t, []chainCert{{isCA: true, notAfter: time.Now().Add(time.Hour), serial: 0x342D}})
+	results, err := extractCertDetails(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := results[0].info
+	if len(results) != 1 || got.Role != models.CertificateRoleRoot || !got.IsCA || got.ChainIndex != 0 || got.SerialNumber != "342D" {
+		t.Errorf("got %+v", got)
+	}
+}
+
+// Serial numbers keep whole bytes, like `openssl x509 -serial`.
+func TestSerialHex(t *testing.T) {
+	for _, tt := range []struct {
+		serial int64
+		want   string
+	}{{0x01, "01"}, {0x0123, "0123"}, {0xABCDEF, "ABCDEF"}} {
+		if got := serialHex(&x509.Certificate{SerialNumber: big.NewInt(tt.serial)}); got != tt.want {
+			t.Errorf("serialHex(%#x) = %q, want %q", tt.serial, got, tt.want)
+		}
+	}
+	if got := serialHex(&x509.Certificate{}); got != "" {
+		t.Errorf("nil serial = %q, want empty", got)
+	}
+}
