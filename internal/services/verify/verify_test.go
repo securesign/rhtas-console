@@ -394,9 +394,9 @@ func TestGetSANFromCert(t *testing.T) {
 
 func TestIdentifyCertRole(t *testing.T) {
 	t.Run("nil cert", func(t *testing.T) {
-		got := identifyCertRole(nil)
+		got := IdentifyCertRole(nil)
 		if got != models.CertificateRoleUnknown {
-			t.Errorf("identifyCertRole(nil) = %q, want %q", got, models.CertificateRoleUnknown)
+			t.Errorf("IdentifyCertRole(nil) = %q, want %q", got, models.CertificateRoleUnknown)
 		}
 	})
 
@@ -407,9 +407,9 @@ func TestIdentifyCertRole(t *testing.T) {
 		if err != nil {
 			t.Fatalf("parse root: %v", err)
 		}
-		got := identifyCertRole(certs[0].Cert)
+		got := IdentifyCertRole(certs[0].Cert)
 		if got != models.CertificateRoleRoot {
-			t.Errorf("identifyCertRole(root) = %q, want %q", got, models.CertificateRoleRoot)
+			t.Errorf("IdentifyCertRole(root) = %q, want %q", got, models.CertificateRoleRoot)
 		}
 	})
 
@@ -418,9 +418,9 @@ func TestIdentifyCertRole(t *testing.T) {
 		if err != nil {
 			t.Fatalf("parse intermediate: %v", err)
 		}
-		got := identifyCertRole(certs[0].Cert)
+		got := IdentifyCertRole(certs[0].Cert)
 		if got != models.CertificateRoleIntermediate {
-			t.Errorf("identifyCertRole(intermediate) = %q, want %q", got, models.CertificateRoleIntermediate)
+			t.Errorf("IdentifyCertRole(intermediate) = %q, want %q", got, models.CertificateRoleIntermediate)
 		}
 	})
 
@@ -429,9 +429,9 @@ func TestIdentifyCertRole(t *testing.T) {
 		if err != nil {
 			t.Fatalf("parse leaf: %v", err)
 		}
-		got := identifyCertRole(certs[0].Cert)
+		got := IdentifyCertRole(certs[0].Cert)
 		if got != models.CertificateRoleLeaf {
-			t.Errorf("identifyCertRole(leaf) = %q, want %q", got, models.CertificateRoleLeaf)
+			t.Errorf("IdentifyCertRole(leaf) = %q, want %q", got, models.CertificateRoleLeaf)
 		}
 	})
 }

@@ -865,6 +865,25 @@ components:
         pem:
           type: string
           description: Certificate in PEM-encoded format.
+        role:
+          $ref: "#/components/schemas/CertificateRole"
+          description: |
+            Position of the certificate in its chain, derived from the certificate itself (not from
+            subject or issuer names, which can be identical across a chain): leaf when it is not a
+            CA, root when it is a CA whose signature verifies with its own public key, intermediate
+            for any other CA.
+        chainIndex:
+          type: integer
+          description: Position of the certificate inside its TUF target file (0 = first).
+          example: 0
+        isCA:
+          type: boolean
+          description: Basic Constraints CA flag.
+          example: false
+        serialNumber:
+          type: string
+          description: Certificate serial number, uppercase hexadecimal.
+          example: "6F7867D1CE34032B35D9DC7E0A1770D927B653A1"
       required:
         - subject
         - issuer
@@ -873,6 +892,10 @@ components:
         - target
         - certExpiration
         - pem
+        - role
+        - chainIndex
+        - isCA
+        - serialNumber
     CertificateInfoList:
       type: object
       properties:
