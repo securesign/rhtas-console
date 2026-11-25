@@ -182,7 +182,7 @@ func TestMetricsQueriesAreScoped(t *testing.T) {
 	// (counter resets), never alone: it misses series created inside the
 	// window and extrapolates small counts.
 	for _, q := range fp.queries {
-		if strings.Contains(q, "increase(") && !strings.Contains(q, ") and last_over_time(") {
+		if strings.Contains(q, "increase(") && !strings.Contains(q, "min_over_time(") {
 			t.Errorf("increase() must only be used for reset series: %s", q)
 		}
 	}
@@ -190,7 +190,7 @@ func TestMetricsQueriesAreScoped(t *testing.T) {
 
 func TestWindowCount(t *testing.T) {
 	got := windowCount(`m{namespace="tas"}`, "300s")
-	want := `((increase(m{namespace="tas"}[300s]) and (resets(m{namespace="tas"}[300s]) > 0) and last_over_time(m{namespace="tas"}[3600s] offset 300s))` +
+	want := `((increase(m{namespace="tas"}[300s]) and (min_over_time(m{namespace="tas"}[300s]) < last_over_time(m{namespace="tas"}[3600s] offset 300s)))` +
 		` or ((last_over_time(m{namespace="tas"}[300s]) - last_over_time(m{namespace="tas"}[3600s] offset 300s)) >= 0)` +
 		` or last_over_time(m{namespace="tas"}[300s]))`
 	if got != want {

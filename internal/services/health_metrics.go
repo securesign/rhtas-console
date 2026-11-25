@@ -215,12 +215,15 @@ const windowStartLookback = "3600s"
 
 // windowCount returns, per series, how much a counter grew over the window:
 //
-//   - after a counter reset within the window (resets() > 0, e.g. a container
-//     restart that keeps the same labels) for a series that existed at the
-//     window start: increase(), which handles resets. This is decided by
-//     resets(), not by the sign of the difference: a counter that restarts
-//     and then grows past its old value would otherwise look like a normal
-//     increase and lose everything counted before the old value;
+//   - after a counter reset within the window, for a series that existed at the
+//     window start (e.g. a container restart that keeps the same labels):
+//     increase(), which handles resets. A reset is detected by a sample below
+//     the value at the window start (min_over_time < start), not by the sign
+//     of last - start: a counter that restarts and then grows past its old
+//     value would otherwise look like a normal increase and lose everything
+//     counted before the old value. resets() is not used because the
+//     OpenShift Thanos querier reports 0 for it on deduplicated series (verified
+//     live), while min_over_time works on both Prometheus and Thanos;
 //   - normally: its last value in the window minus its value at the window
 //     start (the last sample in the hour before the window);
 //   - for a series created inside the window: its whole last value.
@@ -234,7 +237,7 @@ const windowStartLookback = "3600s"
 func windowCount(selector, window string) string {
 	last := fmt.Sprintf(`last_over_time(%s[%s])`, selector, window)
 	start := fmt.Sprintf(`last_over_time(%s[%s] offset %s)`, selector, windowStartLookback, window)
-	return fmt.Sprintf(`((increase(%[3]s[%[4]s]) and (resets(%[3]s[%[4]s]) > 0) and %[2]s) or ((%[1]s - %[2]s) >= 0) or %[1]s)`, last, start, selector, window)
+	return fmt.Sprintf(`((increase(%[3]s[%[4]s]) and (min_over_time(%[3]s[%[4]s]) < %[2]s)) or ((%[1]s - %[2]s) >= 0) or %[1]s)`, last, start, selector, window)
 }
 
 // query runs one round of queries and builds a snapshot.
