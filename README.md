@@ -400,8 +400,9 @@ When `PROMETHEUS_URL` is set, the health response's `metrics` object reports sig
 rates and activity over the last hour, computed from the components' Prometheus metrics.
 Only signing operations are counted (Fulcio `CreateSigningCertificate`, Rekor
 `POST /api/v1/log/entries`, TSA `POST /api/v1/timestamp`), so probe and health-check
-traffic is excluded. Prometheus is queried in the background every
-`PROMETHEUS_REFRESH_SECONDS`, never per API request.
+traffic is excluded. Only `2xx` HTTP responses (and gRPC `OK`) count as successes; these
+endpoints do not redirect, so a `3xx` is counted as a server error. Prometheus is queried in
+the background every `PROMETHEUS_REFRESH_SECONDS`, never per API request.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -424,8 +425,9 @@ maximums are capped (and logged).
   and TSA. `reason` gives a short explanation; the full error is logged when it first
   appears or changes.
 
-Services without metrics in Prometheus are reported with `monitored: false` and `null`
-counts. An idle deployment reports zero counts and `errorRate: null`.
+Services with no metrics in Prometheus during the last hour are reported with
+`monitored: false` and `null` counts. A service that is down keeps its hourly counts until
+its last scrape is more than an hour old. An idle deployment reports zero counts and `errorRate: null`.
 
 Each service also has `recent` counts over the last `recentWindowSeconds` (5 minutes), so
 clients can tell whether failures are still happening: errors in the hour with recent

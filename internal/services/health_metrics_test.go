@@ -170,6 +170,14 @@ func TestMetricsQueriesAreScoped(t *testing.T) {
 			t.Errorf("queries missing %q", want)
 		}
 	}
+	// The monitored check looks back over the window, so a service that is down
+	// (no longer scraped) keeps its hourly history instead of becoming unmonitored
+	// after the 5-minute staleness of an instant selector.
+	for _, q := range fp.queries {
+		if strings.HasPrefix(q, qMonitored) && !strings.Contains(q, "count(last_over_time(") {
+			t.Errorf("monitored query must use last_over_time: %s", q)
+		}
+	}
 	// increase() is only used for series that existed at the window start
 	// (counter resets), never alone: it misses series created inside the
 	// window and extrapolates small counts.
@@ -182,8 +190,8 @@ func TestMetricsQueriesAreScoped(t *testing.T) {
 
 func TestWindowCount(t *testing.T) {
 	got := windowCount(`m{namespace="tas"}`, "300s")
-	want := `((last_over_time(m{namespace="tas"}[300s]) - last_over_time(m{namespace="tas"}[3600s] offset 300s)) >= 0` +
-		` or (increase(m{namespace="tas"}[300s]) and last_over_time(m{namespace="tas"}[3600s] offset 300s))` +
+	want := `((increase(m{namespace="tas"}[300s]) and (resets(m{namespace="tas"}[300s]) > 0) and last_over_time(m{namespace="tas"}[3600s] offset 300s))` +
+		` or ((last_over_time(m{namespace="tas"}[300s]) - last_over_time(m{namespace="tas"}[3600s] offset 300s)) >= 0)` +
 		` or last_over_time(m{namespace="tas"}[300s]))`
 	if got != want {
 		t.Errorf("windowCount =\n%s\nwant\n%s", got, want)
@@ -344,6 +352,9 @@ func TestClassify(t *testing.T) {
 		{svcRekor, code("408"), outcomeTimeout},
 		{svcRekor, code("504"), outcomeTimeout},
 		{svcRekor, code("502"), outcomeServer},
+		{svcRekor, code("301"), outcomeServer},
+		{svcTsa, code("307"), outcomeServer},
+		{svcTsa, code("200"), outcomeSuccess},
 		{svcTsa, code(""), outcomeServer},
 	}
 	for _, tt := range tests {

@@ -32,7 +32,7 @@ const (
 )
 
 // monitoredSelector returns, per signing service, a selector whose presence in
-// Prometheus shows that this service (and not another one using the same
+// Prometheus (within the last window) shows that this service (and not another one using the same
 // generic metric, such as another gRPC server) is scraped.
 func monitoredSelector(svc, ns string) string {
 	switch svc {
@@ -195,7 +195,10 @@ func (m *metricsCollector) queries() promQueries {
 	monitored := make([]string, 0, len(metricsServices))
 	q := promQueries{byCode: map[string]string{}, recentByCode: map[string]string{}}
 	for _, svc := range metricsServices {
-		monitored = append(monitored, fmt.Sprintf(`label_replace(count(%s), "service", %q, "", "")`, monitoredSelector(svc, ns), svc))
+		// last_over_time over the window, not an instant selector: an instant
+		// selector goes stale 5 minutes after the last scrape, which would drop
+		// the hourly history of a service that is down (and so no longer scraped).
+		monitored = append(monitored, fmt.Sprintf(`label_replace(count(last_over_time(%s[%s])), "service", %q, "", "")`, monitoredSelector(svc, ns), w, svc))
 		q.byCode[svc] = fmt.Sprintf(`sum by (%s) (%s)`, codeLabel(svc), windowCount(requestSelector(svc, ns), w))
 		q.recentByCode[svc] = fmt.Sprintf(`sum by (%s) (%s)`, codeLabel(svc), windowCount(requestSelector(svc, ns), recent))
 	}
@@ -212,10 +215,14 @@ const windowStartLookback = "3600s"
 
 // windowCount returns, per series, how much a counter grew over the window:
 //
+//   - after a counter reset within the window (resets() > 0, e.g. a container
+//     restart that keeps the same labels) for a series that existed at the
+//     window start: increase(), which handles resets. This is decided by
+//     resets(), not by the sign of the difference: a counter that restarts
+//     and then grows past its old value would otherwise look like a normal
+//     increase and lose everything counted before the old value;
 //   - normally: its last value in the window minus its value at the window
 //     start (the last sample in the hour before the window);
-//   - after a counter reset within the series (e.g. a container restart that
-//     keeps the same labels): increase(), which handles resets;
 //   - for a series created inside the window: its whole last value.
 //
 // increase() is not used everywhere on purpose: it misses the first events of
@@ -227,7 +234,7 @@ const windowStartLookback = "3600s"
 func windowCount(selector, window string) string {
 	last := fmt.Sprintf(`last_over_time(%s[%s])`, selector, window)
 	start := fmt.Sprintf(`last_over_time(%s[%s] offset %s)`, selector, windowStartLookback, window)
-	return fmt.Sprintf(`((%[1]s - %[2]s) >= 0 or (increase(%[3]s[%[4]s]) and %[2]s) or %[1]s)`, last, start, selector, window)
+	return fmt.Sprintf(`((increase(%[3]s[%[4]s]) and (resets(%[3]s[%[4]s]) > 0) and %[2]s) or ((%[1]s - %[2]s) >= 0) or %[1]s)`, last, start, selector, window)
 }
 
 // query runs one round of queries and builds a snapshot.
@@ -446,7 +453,9 @@ var grpcOutcomes = map[string]outcome{
 	"Unimplemented":      outcomeServer,
 }
 
-// classify maps a sample's status label to an outcome. Unrecognized codes are
+// classify maps a sample's status label to an outcome. Only 2xx is a success:
+// the counted signing endpoints never redirect, so a 3xx (e.g. from a proxy)
+// means the request was not processed. 3xx and any other unrecognized code are
 // treated as server errors.
 func classify(svc string, labels map[string]string) outcome {
 	if svc == svcFulcio {
@@ -465,8 +474,6 @@ func classify(svc string, labels map[string]string) outcome {
 		return outcomeTimeout
 	case code >= 400 && code < 500:
 		return outcomeClient
-	case code >= 300 && code < 400:
-		return outcomeSuccess
 	default:
 		return outcomeServer
 	}
