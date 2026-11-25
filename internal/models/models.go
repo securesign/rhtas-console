@@ -61,14 +61,21 @@ const (
 	ProbeSampleStatusUnknown   ProbeSampleStatus = "unknown"
 )
 
+// Defines values for ServiceErrorRateName.
+const (
+	ServiceErrorRateNameFulcio ServiceErrorRateName = "fulcio"
+	ServiceErrorRateNameRekor  ServiceErrorRateName = "rekor"
+	ServiceErrorRateNameTsa    ServiceErrorRateName = "tsa"
+)
+
 // Defines values for ServiceHealthName.
 const (
-	Ctlog    ServiceHealthName = "ctlog"
-	Fulcio   ServiceHealthName = "fulcio"
-	Rekor    ServiceHealthName = "rekor"
-	Trillian ServiceHealthName = "trillian"
-	Tsa      ServiceHealthName = "tsa"
-	Tuf      ServiceHealthName = "tuf"
+	ServiceHealthNameCtlog    ServiceHealthName = "ctlog"
+	ServiceHealthNameFulcio   ServiceHealthName = "fulcio"
+	ServiceHealthNameRekor    ServiceHealthName = "rekor"
+	ServiceHealthNameTrillian ServiceHealthName = "trillian"
+	ServiceHealthNameTsa      ServiceHealthName = "tsa"
+	ServiceHealthNameTuf      ServiceHealthName = "tuf"
 )
 
 // Defines values for ServiceHealthStatus.
@@ -76,6 +83,13 @@ const (
 	ServiceHealthStatusHealthy   ServiceHealthStatus = "healthy"
 	ServiceHealthStatusUnhealthy ServiceHealthStatus = "unhealthy"
 	ServiceHealthStatusUnknown   ServiceHealthStatus = "unknown"
+)
+
+// Defines values for SystemHealthMetricsStatus.
+const (
+	Available   SystemHealthMetricsStatus = "available"
+	Disabled    SystemHealthMetricsStatus = "disabled"
+	Unavailable SystemHealthMetricsStatus = "unavailable"
 )
 
 // Defines values for SystemHealthResponseCtlogStatus.
@@ -448,11 +462,40 @@ type ProbeSampleSource string
 // counted as a failure.
 type ProbeSampleStatus string
 
+// RecentErrorRate defines model for RecentErrorRate.
+type RecentErrorRate struct {
+	// ErrorRate errors / requests (0..1). Null when there were no recent requests.
+	ErrorRate *float32 `json:"errorRate"`
+	Errors    int64    `json:"errors"`
+	Requests  int64    `json:"requests"`
+}
+
 // RekorPublicKey defines model for RekorPublicKey.
 type RekorPublicKey struct {
 	// PublicKey Rekor public key in PEM format
 	PublicKey string `json:"publicKey"`
 }
+
+// ServiceErrorRate defines model for ServiceErrorRate.
+type ServiceErrorRate struct {
+	// ErrorRate errors / requests (0..1). Null when not monitored or there were no requests.
+	ErrorRate *float32 `json:"errorRate"`
+	Errors    *int64   `json:"errors"`
+
+	// Monitored Whether Prometheus has metrics for this service. When false, the counts are null.
+	Monitored bool                 `json:"monitored"`
+	Name      ServiceErrorRateName `json:"name"`
+
+	// Recent The same counts over the last `recentWindowSeconds` only. Lets clients tell whether
+	// failures are still happening (failing now), have stopped (recovered: errors in the
+	// window but recent requests succeed), or whether there was no recent activity.
+	// Null when not monitored.
+	Recent   *RecentErrorRate `json:"recent"`
+	Requests *int64           `json:"requests"`
+}
+
+// ServiceErrorRateName defines model for ServiceErrorRate.Name.
+type ServiceErrorRateName string
 
 // ServiceHealth Detailed health and probe metrics for a single component service.
 type ServiceHealth struct {
@@ -540,6 +583,76 @@ type SignatureView struct {
 	Timestamp *time.Time `json:"timestamp,omitempty"`
 }
 
+// SigningActivity Successful signing operations over the window. Each count is null when the service is not monitored.
+type SigningActivity struct {
+	// CertificatesIssued Certificates issued by Fulcio.
+	CertificatesIssued *int64 `json:"certificatesIssued"`
+
+	// LogEntriesAdded Entries added to the Rekor log.
+	LogEntriesAdded *int64 `json:"logEntriesAdded"`
+
+	// TimestampsIssued Successful TSA timestamp requests.
+	TimestampsIssued *int64 `json:"timestampsIssued"`
+}
+
+// SigningErrorRates Signing request outcomes over the window. Server errors are HTTP 5xx (except 504) and gRPC
+// Internal, Unavailable, Unknown, DataLoss, Aborted, Unimplemented; client errors are HTTP 4xx
+// (except 408) and gRPC InvalidArgument, NotFound, AlreadyExists, PermissionDenied,
+// Unauthenticated, FailedPrecondition, OutOfRange, ResourceExhausted, Canceled; timeouts are
+// HTTP 504/408 and gRPC DeadlineExceeded.
+type SigningErrorRates struct {
+	ByService    []ServiceErrorRate `json:"byService"`
+	ClientErrors int64              `json:"clientErrors"`
+
+	// ErrorRate totalErrors / totalRequests (0..1). Null when there were no requests.
+	ErrorRate *float32 `json:"errorRate"`
+
+	// RecentWindowSeconds Time window, in seconds, covered by each service's `recent` counts.
+	RecentWindowSeconds int   `json:"recentWindowSeconds"`
+	ServerErrors        int64 `json:"serverErrors"`
+	Timeouts            int64 `json:"timeouts"`
+
+	// TotalErrors Sum of serverErrors, clientErrors and timeouts.
+	TotalErrors int64 `json:"totalErrors"`
+
+	// TotalRequests Signing requests handled by the monitored services.
+	TotalRequests int64 `json:"totalRequests"`
+}
+
+// SystemHealthMetrics Signing error rates and activity computed from Prometheus metrics of the RHTAS
+// components (requires component monitoring and a configured Prometheus endpoint).
+// Counts cover the last `windowSeconds` and only signing operations (Fulcio
+// CreateSigningCertificate, Rekor POST /api/v1/log/entries, TSA POST /api/v1/timestamp),
+// so probe and health-check traffic is excluded.
+type SystemHealthMetrics struct {
+	// ErrorRates Null unless status is available.
+	ErrorRates *SigningErrorRates `json:"errorRates"`
+
+	// Reason Short reason when status is unavailable (never contains URLs), otherwise null.
+	Reason *string `json:"reason"`
+
+	// SigningActivity Null unless status is available.
+	SigningActivity *SigningActivity `json:"signingActivity"`
+
+	// Status disabled: no Prometheus endpoint is configured (PROMETHEUS_URL unset).
+	// available: errorRates and signingActivity hold data from the last successful query round.
+	// unavailable: Prometheus could not be queried, or no RHTAS component metrics were found;
+	// see reason.
+	Status SystemHealthMetricsStatus `json:"status"`
+
+	// UpdatedAt When the data was last successfully queried. Null when no query has succeeded.
+	UpdatedAt *time.Time `json:"updatedAt"`
+
+	// WindowSeconds Time window, in seconds, covered by the counts.
+	WindowSeconds int `json:"windowSeconds"`
+}
+
+// SystemHealthMetricsStatus disabled: no Prometheus endpoint is configured (PROMETHEUS_URL unset).
+// available: errorRates and signingActivity hold data from the last successful query round.
+// unavailable: Prometheus could not be queried, or no RHTAS component metrics were found;
+// see reason.
+type SystemHealthMetricsStatus string
+
 // SystemHealthResponse Health of the RHTAS deployment and its component services.
 // `securesignStatus` is the operator's own verdict for the whole deployment.
 // Each entry in `services` carries detailed, per-service probe metrics derived
@@ -555,6 +668,13 @@ type SystemHealthResponse struct {
 	// FulcioStatus Fulcio status. Deprecated, kept for compatibility; use the `fulcio` entry in `services`.
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	FulcioStatus SystemHealthResponseFulcioStatus `json:"fulcioStatus"`
+
+	// Metrics Signing error rates and activity computed from Prometheus metrics of the RHTAS
+	// components (requires component monitoring and a configured Prometheus endpoint).
+	// Counts cover the last `windowSeconds` and only signing operations (Fulcio
+	// CreateSigningCertificate, Rekor POST /api/v1/log/entries, TSA POST /api/v1/timestamp),
+	// so probe and health-check traffic is excluded.
+	Metrics SystemHealthMetrics `json:"metrics"`
 
 	// ProbeIntervalSeconds Interval, in seconds, between consecutive probes.
 	ProbeIntervalSeconds int `json:"probeIntervalSeconds"`

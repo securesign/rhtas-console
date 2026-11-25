@@ -438,6 +438,42 @@ paths:
                 probeIntervalSeconds: 10
                 windowSeconds: 3600
                 updatedAt: "2026-03-18T12:00:00Z"
+                metrics:
+                  status: available
+                  reason: null
+                  windowSeconds: 3600
+                  updatedAt: "2026-03-18T12:00:00Z"
+                  errorRates:
+                    totalRequests: 80
+                    totalErrors: 12
+                    errorRate: 0.15
+                    serverErrors: 2
+                    clientErrors: 10
+                    timeouts: 0
+                    recentWindowSeconds: 300
+                    byService:
+                      - name: fulcio
+                        monitored: true
+                        requests: 40
+                        errors: 10
+                        errorRate: 0.25
+                        recent: { requests: 3, errors: 0, errorRate: 0 }
+                      - name: rekor
+                        monitored: true
+                        requests: 40
+                        errors: 2
+                        errorRate: 0.05
+                        recent: { requests: 2, errors: 0, errorRate: 0 }
+                      - name: tsa
+                        monitored: false
+                        requests: null
+                        errors: null
+                        errorRate: null
+                        recent: null
+                  signingActivity:
+                    certificatesIssued: 30
+                    logEntriesAdded: 38
+                    timestampsIssued: null
                 services:
                   - name: rekor
                     status: healthy
@@ -1327,6 +1363,8 @@ components:
           deprecated: true
           description: TUF status. Deprecated, kept for compatibility; use the `tuf` entry in `services`.
           example: healthy
+        metrics:
+          $ref: "#/components/schemas/SystemHealthMetrics"
         services:
           type: array
           description: Per-service health detail.
@@ -1361,6 +1399,198 @@ components:
         - probeIntervalSeconds
         - windowSeconds
         - updatedAt
+        - metrics
+    SystemHealthMetrics:
+      type: object
+      description: |
+        Signing error rates and activity computed from Prometheus metrics of the RHTAS
+        components (requires component monitoring and a configured Prometheus endpoint).
+        Counts cover the last `windowSeconds` and only signing operations (Fulcio
+        CreateSigningCertificate, Rekor POST /api/v1/log/entries, TSA POST /api/v1/timestamp),
+        so probe and health-check traffic is excluded.
+      properties:
+        status:
+          type: string
+          enum: ["available", "disabled", "unavailable"]
+          description: |
+            disabled: no Prometheus endpoint is configured (PROMETHEUS_URL unset).
+            available: errorRates and signingActivity hold data from the last successful query round.
+            unavailable: Prometheus could not be queried, or no RHTAS component metrics were found;
+            see reason.
+          example: available
+        reason:
+          type: string
+          nullable: true
+          description: Short reason when status is unavailable (never contains URLs), otherwise null.
+          example: null
+        windowSeconds:
+          type: integer
+          description: Time window, in seconds, covered by the counts.
+          example: 3600
+        updatedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the data was last successfully queried. Null when no query has succeeded.
+          example: "2026-03-18T12:00:00Z"
+        errorRates:
+          nullable: true
+          description: Null unless status is available.
+          allOf:
+            - $ref: "#/components/schemas/SigningErrorRates"
+        signingActivity:
+          nullable: true
+          description: Null unless status is available.
+          allOf:
+            - $ref: "#/components/schemas/SigningActivity"
+      required:
+        - status
+        - reason
+        - windowSeconds
+        - updatedAt
+        - errorRates
+        - signingActivity
+    SigningErrorRates:
+      type: object
+      description: |
+        Signing request outcomes over the window. Server errors are HTTP 5xx (except 504) and gRPC
+        Internal, Unavailable, Unknown, DataLoss, Aborted, Unimplemented; client errors are HTTP 4xx
+        (except 408) and gRPC InvalidArgument, NotFound, AlreadyExists, PermissionDenied,
+        Unauthenticated, FailedPrecondition, OutOfRange, ResourceExhausted, Canceled; timeouts are
+        HTTP 504/408 and gRPC DeadlineExceeded.
+      properties:
+        totalRequests:
+          type: integer
+          format: int64
+          description: Signing requests handled by the monitored services.
+          example: 5120
+        totalErrors:
+          type: integer
+          format: int64
+          description: Sum of serverErrors, clientErrors and timeouts.
+          example: 2184
+        errorRate:
+          type: number
+          nullable: true
+          description: totalErrors / totalRequests (0..1). Null when there were no requests.
+          example: 0.4266
+        serverErrors:
+          type: integer
+          format: int64
+          example: 1512
+        clientErrors:
+          type: integer
+          format: int64
+          example: 1
+        timeouts:
+          type: integer
+          format: int64
+          example: 488
+        byService:
+          type: array
+          items:
+            $ref: "#/components/schemas/ServiceErrorRate"
+        recentWindowSeconds:
+          type: integer
+          description: Time window, in seconds, covered by each service's `recent` counts.
+          example: 300
+      required:
+        - totalRequests
+        - totalErrors
+        - errorRate
+        - serverErrors
+        - clientErrors
+        - timeouts
+        - byService
+        - recentWindowSeconds
+    ServiceErrorRate:
+      type: object
+      properties:
+        name:
+          type: string
+          enum: ["fulcio", "rekor", "tsa"]
+          example: rekor
+        monitored:
+          type: boolean
+          description: Whether Prometheus has metrics for this service. When false, the counts are null.
+          example: true
+        requests:
+          type: integer
+          format: int64
+          nullable: true
+          example: 3100
+        errors:
+          type: integer
+          format: int64
+          nullable: true
+          example: 1500
+        errorRate:
+          type: number
+          nullable: true
+          description: errors / requests (0..1). Null when not monitored or there were no requests.
+          example: 0.48
+        recent:
+          nullable: true
+          description: |
+            The same counts over the last `recentWindowSeconds` only. Lets clients tell whether
+            failures are still happening (failing now), have stopped (recovered: errors in the
+            window but recent requests succeed), or whether there was no recent activity.
+            Null when not monitored.
+          allOf:
+            - $ref: "#/components/schemas/RecentErrorRate"
+      required:
+        - name
+        - monitored
+        - requests
+        - errors
+        - errorRate
+        - recent
+    RecentErrorRate:
+      type: object
+      properties:
+        requests:
+          type: integer
+          format: int64
+          example: 1
+        errors:
+          type: integer
+          format: int64
+          example: 0
+        errorRate:
+          type: number
+          nullable: true
+          description: errors / requests (0..1). Null when there were no recent requests.
+          example: 0
+      required:
+        - requests
+        - errors
+        - errorRate
+    SigningActivity:
+      type: object
+      description: Successful signing operations over the window. Each count is null when the service is not monitored.
+      properties:
+        certificatesIssued:
+          type: integer
+          format: int64
+          nullable: true
+          description: Certificates issued by Fulcio.
+          example: 312
+        logEntriesAdded:
+          type: integer
+          format: int64
+          nullable: true
+          description: Entries added to the Rekor log.
+          example: 305
+        timestampsIssued:
+          type: integer
+          format: int64
+          nullable: true
+          description: Successful TSA timestamp requests.
+          example: 298
+      required:
+        - certificatesIssued
+        - logEntriesAdded
+        - timestampsIssued
     ServiceHealth:
       type: object
       description: Detailed health and probe metrics for a single component service.
