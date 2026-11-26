@@ -5,15 +5,15 @@ go 1.26.10
 require (
 	github.com/go-chi/chi/v5 v5.5.0
 	github.com/google/go-containerregistry v0.22.1
-	github.com/oapi-codegen/runtime v1.8.0
+	github.com/oapi-codegen/runtime v1.9.1
 	github.com/sigstore/protobuf-specs v0.5.2
-	github.com/sigstore/sigstore v1.10.11
-	github.com/sigstore/sigstore-go v1.3.0
-	github.com/theupdateframework/go-tuf v0.7.0
+	github.com/sigstore/sigstore v1.11.4
+	github.com/sigstore/sigstore-go v1.4.1
+	github.com/theupdateframework/go-tuf/v2 v2.4.2
 	github.com/theupdateframework/go-tuf/v2 v2.4.2
 	google.golang.org/protobuf v1.36.12
-	k8s.io/apimachinery v0.37.1
-	k8s.io/client-go v0.37.1
+	k8s.io/apimachinery v0.37.2
+	k8s.io/client-go v0.37.2
 )
 
 require (
